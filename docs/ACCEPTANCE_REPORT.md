@@ -2,7 +2,7 @@
 
 日期：2026-10-09（Asia/Shanghai）
 基线：`master` 合并提交 `c422ac5`；多架构修复分支 `fix/ghcr-multiarch`。
-结果：实现、PR 合并、master CI、GHCR 首次发布及 linux/amd64 匿名拉取通过；arm64 默认拉取发现镜像缺少该架构，已补多架构 workflow 修复，待新镜像验收。
+结果：实现、PR 合并、master CI、GHCR 首次发布及 linux/amd64 匿名拉取通过；arm64 默认拉取发现镜像缺少该架构。已补双架构发布 workflow，并调整 Dockerfile 为原生跨架构 Go 编译以缩短构建时间；双架构镜像发布和 arm64 验收待完成。
 
 ## 完成内容
 
@@ -44,7 +44,7 @@ Docker 本地镜像实测大小为 **30,505,844 bytes（约 29.1 MiB）**，架�
 
 PR #1 已于 2026-10-09 合并到 `master`，合并提交为 `c422ac5`。master CI 和 `Publish Docker image` workflow run `37933980989` 均通过；GHCR 发布了 `master` 标签，镜像版本 digest 为 `sha256:0bc85b75e1b4621f0eb37323c6856c053f4e3336b495d63fd87260f1e34e91ab`。用户已确认将 GHCR 包设为 Public，源码仓库仍为 Private。使用空 Docker 配置执行 `docker pull --platform=linux/amd64 ghcr.io/nyakooo/grok-bot-dock:master` 成功。
 
-arm64 默认拉取验收发现首次镜像只包含 `linux/amd64`。Workflow 已增加 `linux/amd64,linux/arm64` 构建；多架构镜像还需合并发布，并验证 arm64 匿名拉取及运行健康：
+arm64 默认拉取验收发现首次镜像只包含 `linux/amd64`。Workflow 已增加 `linux/amd64,linux/arm64` 构建；为避免在 x86 runner 上通过 QEMU 编译 Go，Dockerfile 改为在原生 builder 上交叉编译。使用 `docker buildx build --platform linux/amd64,linux/arm64 --output=type=oci` 的本地双架构 OCI 构建通过，索引包含 amd64 与 arm64。GH Actions 多架构镜像还需合并发布，并验证 arm64 匿名拉取及运行健康：
 
 ```sh
 docker --config /tmp/empty-docker-config pull ghcr.io/nyakooo/grok-bot-dock:master
