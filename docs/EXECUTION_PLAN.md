@@ -33,7 +33,7 @@
 - [x] 自动化验证：构建 → 启动 → curl 推送 Markdown → 列表/搜索 → SSE → 重启后持久化。
 - [x] 在资源受限环境测量容器内存、CPU、镜像大小；记录结果，不虚构。
 - [x] 更新 README、技术设计、TODO 完成情况；生成 docs/ACCEPTANCE_REPORT.md（完成项、测试命令、结果、已知限制）。
-- [x] 提交所有实现；通过 PR #1（校验通过）合并 master，合并提交 `c422ac5`。
+- [x] 提交所有实现；PR #1 合并 Bolt Dock V1，PR #2–#3 完成 GHCR 多架构发布修复；均通过校验并合入 master，当前提交 `ee9c48e`。
 
 ## 完成定义
 一个标准 API 能让新 Bot 自动出现卡片；报告 Markdown 正确安全渲染；可翻阅历史并跨 Bot 搜索；在线浏览器获得实时事件及授权通知；Docker 单容器可重启持久运行。Grok 端自动调用能力需要另做实测，不以假设充当验收成功。
@@ -52,15 +52,15 @@
 - [x] 验收：推送 grok 和 codex 两个同名 bot_id 的报告，验证各自独立、来源列表自动出现、筛选/搜索/计数正确；从未推送的来源不得显示。
 
 ## P4 补充：GitHub Actions、公开 GHCR 镜像、Compose
-- [x] 新增 `.github/workflows/docker-publish.yml`：配置 master 和版本标签触发，校验通过后发布 GHCR 镜像，使用 packages: write 与最小权限。
+- [x] 新增 `.github/workflows/docker-publish.yml`：配置 master 和版本标签触发，校验通过后发布 GHCR 镜像，使用 packages: write 与最小权限；master 标签发布 amd64/arm64。
 - [x] 配置镜像命名 `ghcr.io/nyakooo/grok-bot-dock`；master → :master，vX.Y.Z → 对应版本和 :latest；发布使用 GITHUB_TOKEN，不输出凭据。
 - [x] 保持 GitHub 源码仓库 private；master 首次发布已创建 GHCR 包 `grok-bot-dock`，标签 `master`。
 - [x] 将 GHCR 包单独设为 Public，并从无凭据 Docker 配置验证 `linux/amd64` 匿名 pull。
 - [x] 提供默认拉取 GHCR 的 Compose 与真正可运行的本地构建 Compose 配置，包含持久化 /data、健康检查、重启策略、可配置端口与 token。
 - [x] README 写明一键拉取部署及一键本地构建命令，均附 `docker image prune -f`；警告其清理宿主机所有悬空镜像且不删除数据卷。
 - [x] GitHub Actions master 校验及 GHCR `master` 镜像发布通过；本地 Docker 构建、Compose 启动、健康检查、持久化及更新已验证。
-- [ ] GHCR `master` 标签增加 `linux/arm64`；首次发布只有 `linux/amd64`，不支持当前 arm64 验收主机的默认拉取。
-- [ ] 多架构 `master` 镜像发布后，在无凭据 Docker 配置下验证 arm64 匿名拉取及容器健康。
+- [x] GHCR `master` 标签提供 `linux/amd64` 与 `linux/arm64`；Go 在原生 builder 上交叉编译。
+- [x] 无凭据 Docker 配置默认拉取 arm64 镜像；验证容器 `/healthz` 及 Docker health 状态。
 
 ## P2 补充：网页一键复制 AI 指令
 - [x] 在 Web UI 添加「复制 AI 推送指令」按钮，保持无侧边栏 UI 基线。
@@ -68,6 +68,6 @@
 - [x] 提示词明确仅最终正式报告可推送，草稿、测试、日志、中间结果、失败任务不推送；external_id 幂等及 Markdown 格式必须完整。
 - [x] 提供复制成功反馈和失败时手动复制降级；真实浏览器验证复制反馈，单测覆盖检索模型与提示词边界。
 
-## 待发布事项
+## GHCR 发布验收
 
-GHCR 首次发布已完成：PR #1 于 2026-10-09 合并到 master（`c422ac5`），`Publish Docker image` workflow run `37933980989` 成功，发布了 `ghcr.io/nyakooo/grok-bot-dock:master`。用户已确认并将 GHCR 包设为 Public，源码仓库保持 Private。使用空的 Docker 配置验证 `linux/amd64` 匿名拉取成功；该镜像索引只有 `linux/amd64`，当前 arm64 主机默认拉取失败。后续需合并多架构 workflow 修复并重新发布，再验证 arm64 匿名拉取和健康检查。
+GHCR 首次发布及后续多架构修复均已验收：PR #1–#3 已合并至 master（最新提交 `ee9c48e`），GHCR 包为 Public，GitHub 源码仓库保持 Private。workflow run `37936261007` 成功发布 digest `sha256:4f9c4bf58ac018c481321e90fdba2a6bd236a62d815208c2e7c3da66a2fec9dc`；镜像索引包含 amd64 和 arm64。空 Docker 配置下默认匿名拉取在本机选择 arm64，容器健康检查通过。

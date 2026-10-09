@@ -1,8 +1,8 @@
 # Bolt Dock V1 验收报告
 
 日期：2026-10-09（Asia/Shanghai）
-基线：`master` 合并提交 `c422ac5`；多架构修复分支 `fix/ghcr-multiarch`。
-结果：实现、PR 合并、master CI、GHCR 首次发布及 linux/amd64 匿名拉取通过；arm64 默认拉取发现镜像缺少该架构。已补双架构发布 workflow，并调整 Dockerfile 为原生跨架构 Go 编译以缩短构建时间；双架构镜像发布和 arm64 验收待完成。
+基线：远端 `master` 最新提交 `ee9c48e`；实现 PR #1，GHCR 多架构修复 PR #2–#3。
+结果：实现、所有 PR、master CI、GHCR 公开双架构发布、amd64/arm64 匿名拉取和 arm64 容器健康验收均通过。
 
 ## 完成内容
 
@@ -40,16 +40,18 @@
 
 Docker 本地镜像实测大小为 **30,505,844 bytes（约 29.1 MiB）**，架构 `arm64`。在限制为 2 CPU / 1600 MiB 的本地容器中，空闲/请求后的单次内存读数约 **4.9 MiB**；瞬时 CPU 读数 **0.00%–1.75%**。这是一组轻量本地采样，不代表持续负载峰值或不同宿主机表现。
 
-## 尚未完成的发布验收
+## 发布验收
 
-PR #1 已于 2026-10-09 合并到 `master`，合并提交为 `c422ac5`。master CI 和 `Publish Docker image` workflow run `37933980989` 均通过；GHCR 发布了 `master` 标签，镜像版本 digest 为 `sha256:0bc85b75e1b4621f0eb37323c6856c053f4e3336b495d63fd87260f1e34e91ab`。用户已确认将 GHCR 包设为 Public，源码仓库仍为 Private。使用空 Docker 配置执行 `docker pull --platform=linux/amd64 ghcr.io/nyakooo/grok-bot-dock:master` 成功。
+PR #1 于 2026-10-09 合并 Bolt Dock V1（`c422ac5`）；PR #2–#3 完成并合并 GHCR 多架构发布（最新 master 提交 `ee9c48e`）。三个 PR 的 CI 全部通过。Master CI 和 `Publish Docker image` workflow run `37936261007` 成功。
 
-arm64 默认拉取验收发现首次镜像只包含 `linux/amd64`。Workflow 已增加 `linux/amd64,linux/arm64` 构建；为避免在 x86 runner 上通过 QEMU 编译 Go，Dockerfile 改为在原生 builder 上交叉编译。使用 `docker buildx build --platform linux/amd64,linux/arm64 --output=type=oci` 的本地双架构 OCI 构建通过，索引包含 amd64 与 arm64。GH Actions 多架构镜像还需合并发布，并验证 arm64 匿名拉取及运行健康：
+用户确认后，GHCR 包 `ghcr.io/nyakooo/grok-bot-dock` 已设为 Public，源码仓库仍为 Private。公开 `master` 镜像 index digest 为 `sha256:4f9c4bf58ac018c481321e90fdba2a6bd236a62d815208c2e7c3da66a2fec9dc`，包含 `linux/amd64` 与 `linux/arm64`。使用不含 registry 凭据的 Docker 配置默认匿名拉取后，本机获得 `linux/arm64` 镜像；容器以 UID `10001` 启动，`GET /healthz` 返回 `{"status":"ok"}`，Docker 健康状态为 `healthy`。
 
 ```sh
-docker --config /tmp/empty-docker-config pull ghcr.io/nyakooo/grok-bot-dock:master
+docker --config /tmp/bolt-dock-anonymous-docker-config \
+  --host unix:///Users/nyako/.docker/run/docker.sock \
+  pull ghcr.io/nyakooo/grok-bot-dock:master
 ```
 
-以上命令需使用未配置 registry 凭据的 Docker 配置；本机默认目标为 arm64。
+以上命令需使用未配置 registry 凭据的 Docker 配置；本机默认目标为 arm64。Dockerfile 原生交叉编译后的本地 OCI 双架构构建也通过，镜像索引包含两种架构。
 
 真实域名、生产 HTTPS 代理配置、实际 AI 平台发起外部 POST 的能力，以及正式通知权限都没有配置或声称完成；部署方需在对应环境验证。Grok 等平台是否支持自动 HTTP POST 仍按执行计划保持未验证。
