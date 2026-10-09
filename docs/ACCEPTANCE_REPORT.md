@@ -54,4 +54,6 @@ docker --config /tmp/bolt-dock-anonymous-docker-config \
 
 以上命令需使用未配置 registry 凭据的 Docker 配置；本机默认目标为 arm64。Dockerfile 原生交叉编译后的本地 OCI 双架构构建也通过，镜像索引包含两种架构。
 
+最终报告通过 PR #4 合并后，master CI run `37937104497` 和发布 run `37937104513` 均成功。该发布重新生成了相同应用代码的多架构镜像；随后再次以无凭据配置拉取 `master`，得到 index digest `sha256:9cea7890b51b7cedad788950aec5d4870fb17ba79d4ae07d70411c684e430f83`，架构为 `linux/arm64`；启动容器后 `/healthz` 返回正常且 Docker health 为 `healthy`。PR #4 合并提交为 `d2bf913`。
+
 真实域名、生产 HTTPS 代理配置、实际 AI 平台发起外部 POST 的能力，以及正式通知权限都没有配置或声称完成；部署方需在对应环境验证。Grok 等平台是否支持自动 HTTP POST 仍按执行计划保持未验证。
