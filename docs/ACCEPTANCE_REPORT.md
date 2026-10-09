@@ -56,4 +56,12 @@ docker --config /tmp/bolt-dock-anonymous-docker-config \
 
 最终报告通过 PR #4 合并后，master CI run `37937104497` 和发布 run `37937104513` 均成功。该发布重新生成了相同应用代码的多架构镜像；随后再次以无凭据配置拉取 `master`，得到 index digest `sha256:9cea7890b51b7cedad788950aec5d4870fb17ba79d4ae07d70411c684e430f83`，架构为 `linux/arm64`；启动容器后 `/healthz` 返回正常且 Docker health 为 `healthy`。PR #4 合并提交为 `d2bf913`。
 
+## 删除功能补充验收
+
+- `DELETE /api/v1/reports/{id}` 需要 Bearer Token；删除后报告详情为 404，FTS 搜索不再命中，Bot 保留且最新报告回退到剩余记录。
+- `DELETE /api/v1/bots?source=&bot_id=` 需要 Bearer Token；级联删除 Bot 的所有报告及其 FTS 项；来源还有其他 Bot 时保留，最后一个 Bot 删除后清理空来源。两种接口都对不存在的目标返回 404，并发送对应 SSE 删除事件。
+- `go test ./...`、`go test -race ./...`、`go vet ./...` 通过；新增测试覆盖鉴权、报告删除、Bot 级联删除、FTS 清理、来源清理和最新报告时间回退。
+- 前端 `npm test`（6 项）、`npm run build`、`npm audit --audit-level=high` 通过；Playwright 在隔离临时数据库中验证了 Bot 历史、阅读页面和搜索结果的报告删除，Bot 卡片级联删除，确认提示、计数、空状态及来源下拉刷新。
+- 浏览器验收只写入隔离测试服务，没有向正式服务发送或删除数据。
+
 真实域名、生产 HTTPS 代理配置、实际 AI 平台发起外部 POST 的能力，以及正式通知权限都没有配置或声称完成；部署方需在对应环境验证。Grok 等平台是否支持自动 HTTP POST 仍按执行计划保持未验证。

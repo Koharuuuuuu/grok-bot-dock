@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -79,6 +80,71 @@ func TestReportPushAndReadFlow(t *testing.T) {
 	index := request(h, "GET", "/", "", "")
 	if index.Code != 200 || !bytes.Contains(index.Body.Bytes(), []byte("Bolt Dock")) {
 		t.Fatalf("static app: %d", index.Code)
+	}
+}
+
+func TestDeleteReportAndBotRequiresAuthAndPublishesChanges(t *testing.T) {
+	h, db, hub := testHandler(t, 1<<20)
+	created := request(h, http.MethodPost, "/api/v1/reports", postBody("grok", "# removable-report-token", "r1"), "test-secret")
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create report: %d %s", created.Code, created.Body.String())
+	}
+	var createdBody struct {
+		ReportID int64 `json:"report_id"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &createdBody); err != nil || createdBody.ReportID < 1 {
+		t.Fatalf("invalid create response: %#v err=%v", createdBody, err)
+	}
+	if got := request(h, http.MethodDelete, "/api/v1/reports/"+strconv.FormatInt(createdBody.ReportID, 10), "", ""); got.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated delete report status=%d", got.Code)
+	}
+	ch := hub.Subscribe()
+	defer hub.Unsubscribe(ch)
+	deleted := request(h, http.MethodDelete, "/api/v1/reports/"+strconv.FormatInt(createdBody.ReportID, 10), "", "test-secret")
+	if deleted.Code != http.StatusOK || !bytes.Contains(deleted.Body.Bytes(), []byte(`"ok":true`)) {
+		t.Fatalf("delete report: %d %s", deleted.Code, deleted.Body.String())
+	}
+	if event := string(<-ch); !strings.Contains(event, "event: report.deleted") || !strings.Contains(event, `"id":`+strconv.FormatInt(createdBody.ReportID, 10)) {
+		t.Fatalf("unexpected delete event: %s", event)
+	}
+	if got := request(h, http.MethodGet, "/api/v1/reports/"+strconv.FormatInt(createdBody.ReportID, 10), "", "test-secret"); got.Code != http.StatusNotFound {
+		t.Fatalf("deleted report still exists: %d %s", got.Code, got.Body.String())
+	}
+	if got := request(h, http.MethodDelete, "/api/v1/reports/"+strconv.FormatInt(createdBody.ReportID, 10), "", "test-secret"); got.Code != http.StatusNotFound {
+		t.Fatalf("deleting a missing report status=%d", got.Code)
+	}
+
+	second := request(h, http.MethodPost, "/api/v1/reports", postBody("grok", "# bot-cascade-token", "r2"), "test-secret")
+	if second.Code != http.StatusCreated {
+		t.Fatalf("create second report: %d %s", second.Code, second.Body.String())
+	}
+	if event := string(<-ch); !strings.Contains(event, "event: report.created") {
+		t.Fatalf("unexpected create event: %s", event)
+	}
+	botDeletePath := "/api/v1/bots?source=grok&bot_id=daily"
+	if got := request(h, http.MethodDelete, botDeletePath, "", ""); got.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated delete bot status=%d", got.Code)
+	}
+	botDeleted := request(h, http.MethodDelete, botDeletePath, "", "test-secret")
+	if botDeleted.Code != http.StatusOK || !bytes.Contains(botDeleted.Body.Bytes(), []byte(`"deleted_reports":1`)) {
+		t.Fatalf("delete bot and cascade: %d %s", botDeleted.Code, botDeleted.Body.String())
+	}
+	if event := string(<-ch); !strings.Contains(event, "event: bot.deleted") || !strings.Contains(event, `"bot_id":"daily"`) {
+		t.Fatalf("unexpected bot delete event: %s", event)
+	}
+	bots := request(h, http.MethodGet, "/api/v1/bots", "", "test-secret")
+	if !bytes.Contains(bots.Body.Bytes(), []byte(`"bot_count":0`)) || !bytes.Contains(bots.Body.Bytes(), []byte(`"report_count":0`)) {
+		t.Fatalf("deleted bot remains in counts: %s", bots.Body.String())
+	}
+	sources := request(h, http.MethodGet, "/api/v1/sources", "", "test-secret")
+	if !bytes.Contains(sources.Body.Bytes(), []byte(`"items":[]`)) {
+		t.Fatalf("empty source remains after deleting last bot: %s", sources.Body.String())
+	}
+	if got := request(h, http.MethodDelete, botDeletePath, "", "test-secret"); got.Code != http.StatusNotFound {
+		t.Fatalf("deleting a missing bot status=%d", got.Code)
+	}
+	if _, err := db.GetReport(context.Background(), createdBody.ReportID); err == nil {
+		t.Fatal("store still contains deleted report")
 	}
 }
 

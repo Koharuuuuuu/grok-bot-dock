@@ -75,6 +75,10 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		s.sse(w, r)
 	case r.Method == "POST" && r.URL.Path == "/api/v1/bots/read":
 		s.markRead(w, r)
+	case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/bots":
+		s.deleteBot(w, r)
+	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/reports/"):
+		s.deleteReport(w, r)
 	case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/api/v1/reports/"):
 		s.report(w, r)
 	case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/api/v1/bots/"):
@@ -281,6 +285,46 @@ func (s *Server) report(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, x)
 }
+
+func (s *Server) deleteReport(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(strings.TrimPrefix(r.URL.Path, "/api/v1/reports/"), 10, 64)
+	if err != nil || id < 1 {
+		writeError(w, 400, "invalid_id", "report id must be a positive integer")
+		return
+	}
+	report, err := s.store.DeleteReport(r.Context(), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, 404, "not_found", "report not found")
+		return
+	}
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	s.hub.Publish("report.deleted", map[string]any{"id": report.ID, "source": report.Source, "bot_id": report.BotID})
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Server) deleteBot(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	source, botID := q.Get("source"), q.Get("bot_id")
+	if !sourcePattern.MatchString(source) || strings.TrimSpace(botID) == "" || len(botID) > 128 {
+		writeError(w, 400, "invalid_bot", "valid source and bot_id are required")
+		return
+	}
+	reports, err := s.store.DeleteBot(r.Context(), source, botID)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, 404, "not_found", "bot not found")
+		return
+	}
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	s.hub.Publish("bot.deleted", map[string]any{"source": source, "bot_id": botID, "deleted_reports": reports})
+	writeJSON(w, 200, map[string]any{"ok": true, "deleted_reports": reports})
+}
+
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	term := strings.TrimSpace(q.Get("q"))

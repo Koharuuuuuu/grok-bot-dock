@@ -48,7 +48,7 @@ curl -X POST "https://YOUR_DOMAIN/api/v1/reports" \
 
 新建返回 HTTP 201；同一 `(source, bot_id, external_id)` 重试返回 HTTP 200 和已有报告 ID。Token 不应写入 AI 提示词或报告正文。服务拒绝没有 `ACCESS_TOKEN` 的启动；阅读 API 和推送 API 均需 Bearer Token。网页登录只在当前页面内存持有 Token；刷新页面后需要重新输入。生产环境应仅经 HTTPS 反向代理公开，并可在代理层增加访问认证和限流。
 
-只读接口：
+数据接口（均要求 Bearer Token，`GET /healthz` 除外）：
 
 | 接口 | 用途 |
 | --- | --- |
@@ -57,8 +57,12 @@ curl -X POST "https://YOUR_DOMAIN/api/v1/reports" \
 | `GET /api/v1/bots?source=` | Bot 卡片、未读状态和统计 |
 | `GET /api/v1/reports?source=&bot_id=&date=&cursor=` | 报告列表和历史分页 |
 | `GET /api/v1/reports/{id}` | 单份报告 |
+| `DELETE /api/v1/reports/{id}` | 永久删除单份报告并更新 FTS 搜索索引 |
+| `DELETE /api/v1/bots?source=&bot_id=` | 删除 Bot 及其全部报告；来源下已无其他 Bot 时同步移除来源 |
 | `GET /api/v1/search?q=&source=&bot_id=&from=&to=&cursor=` | 全文检索及筛选 |
-| `GET /api/v1/events` | 新报告 SSE 事件与心跳 |
+| `GET /api/v1/events` | 新建/删除报告或 Bot 的 SSE 事件与心跳 |
+
+工作台的报告列表、搜索结果和阅读面板均可删除单份报告；Bot 卡片可删除整个 Bot。界面在执行前显示永久删除确认。删除 Bot 会连同其所有报告一起删除，不能恢复；删除最后一个关联 Bot 后，该来源也会从来源筛选中移除。删除后的卡片、统计、历史和搜索结果会刷新，其他打开的工作台通过 SSE 同步。
 
 默认页面将数据库容量标为“全库”，即使其他统计按来源筛选也不会把物理数据库大小伪装成来源大小。
 

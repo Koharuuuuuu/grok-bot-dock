@@ -23,6 +23,8 @@ const searchTo = ref('')
 const searching = ref(false)
 const busy = ref(false)
 const error = ref('')
+const actionNotice = ref('')
+const deleting = ref('')
 const immersive = ref(false)
 const notificationState = ref('')
 const promptOpen = ref(false)
@@ -146,6 +148,36 @@ async function selectReport(report) {
 function closeReader() { selected.value = null; selectedReport.value = null; reports.value = []; immersive.value = false }
 function toggleImmersive() { immersive.value = !immersive.value }
 
+async function deleteReport(report) {
+  const name = report.title || '未命名报告'
+  if (!window.confirm(`确定永久删除报告「${name}」？此操作无法撤销。`)) return
+  deleting.value = `report:${report.id}`
+  actionNotice.value = ''
+  try {
+    await api(`/api/v1/reports/${report.id}`, { method: 'DELETE' })
+    await loadData()
+    if (selected.value?.source === report.source && selected.value?.bot_id === report.bot_id) await loadReports()
+    if (searching.value) await runSearch()
+    actionNotice.value = '报告已删除。'
+  } catch (e) { error.value = e.message }
+  finally { deleting.value = '' }
+}
+
+async function deleteBot(bot) {
+  const count = bot.report_count || 0
+  if (!window.confirm(`确定永久删除 Bot「${bot.bot_name}」及其全部 ${count} 份报告？此操作无法撤销。`)) return
+  deleting.value = `bot:${bot.source}:${bot.bot_id}`
+  actionNotice.value = ''
+  try {
+    const params = new URLSearchParams({ source: bot.source, bot_id: bot.bot_id })
+    await api(`/api/v1/bots?${params}`, { method: 'DELETE' })
+    await loadData()
+    if (searching.value) await runSearch()
+    actionNotice.value = `Bot「${bot.bot_name}」及其 ${count} 份报告已删除。`
+  } catch (e) { error.value = e.message }
+  finally { deleting.value = '' }
+}
+
 async function runSearch(append = false) {
   const term = query.value.trim()
   if (!term) { searching.value = false; searchResults.value = []; await loadData(); return }
@@ -205,9 +237,22 @@ async function startStream() {
           if (message.startsWith(':')) continue
           const event = message.split('\n').find(line => line.startsWith('event: '))?.slice(7)
           const data = message.split('\n').find(line => line.startsWith('data: '))?.slice(6)
-          if (event === 'report.created' && data) {
-            const report = JSON.parse(data); notify(report)
-            clearTimeout(refreshTimer); refreshTimer = setTimeout(async () => { await loadData(); if (refreshesSelectedBot(selected.value, report)) await loadReports() }, 120)
+          if (data) {
+            const payload = JSON.parse(data)
+            if (event === 'report.created') notify(payload)
+            if (['report.created', 'report.deleted', 'bot.deleted'].includes(event)) {
+              clearTimeout(refreshTimer)
+              refreshTimer = setTimeout(async () => {
+                try {
+                  await loadData()
+                  const selectedBotChanged = event === 'report.deleted'
+                    && selected.value?.source === payload.source
+                    && selected.value?.bot_id === payload.bot_id
+                  if (selectedBotChanged || (event === 'report.created' && refreshesSelectedBot(selected.value, payload))) await loadReports()
+                  if (searching.value) await runSearch()
+                } catch {}
+              }, 120)
+            }
           }
         }
       }
@@ -278,24 +323,31 @@ onUnmounted(() => { window.removeEventListener('keydown', onKey); streamAbort?.a
         </div>
         <div v-if="searching" class="search-filters"><span>报告日期</span><label>从<input v-model="searchFrom" type="date" @change="runSearch()"></label><label>至<input v-model="searchTo" type="date" @change="runSearch()"></label></div>
         <div v-if="error" class="error-banner"><span>!</span>{{ error }}<button @click="error = ''">×</button></div>
+        <div v-if="actionNotice" class="action-notice" role="status">{{ actionNotice }}<button aria-label="关闭提示" @click="actionNotice = ''">×</button></div>
         <div v-if="searching" class="result-grid">
-          <button v-for="item in searchResults" :key="item.id" class="result-card" @click="openSearchResult(item)">
-            <div class="result-top"><span class="source-pill">{{ item.source }}</span><span>{{ formatDate(item.executed_at) }}</span></div>
-            <h2><template v-for="(part, index) in highlightParts(item.title || item.bot_name, query)" :key="index"><mark v-if="part.match">{{ part.text }}</mark><span v-else>{{ part.text }}</span></template></h2>
-            <p><template v-for="(part, index) in highlightParts(searchSnippet(item, query), query)" :key="index"><mark v-if="part.match">{{ part.text }}</mark><span v-else>{{ part.text }}</span></template></p>
-            <div class="result-foot"><span>{{ item.bot_name }}</span><span>打开报告 ↗</span></div>
-          </button>
+          <div v-for="item in searchResults" :key="item.id" class="result-row">
+            <button class="result-card" @click="openSearchResult(item)">
+              <div class="result-top"><span class="source-pill">{{ item.source }}</span><span>{{ formatDate(item.executed_at) }}</span></div>
+              <h2><template v-for="(part, index) in highlightParts(item.title || item.bot_name, query)" :key="index"><mark v-if="part.match">{{ part.text }}</mark><span v-else>{{ part.text }}</span></template></h2>
+              <p><template v-for="(part, index) in highlightParts(searchSnippet(item, query), query)" :key="index"><mark v-if="part.match">{{ part.text }}</mark><span v-else>{{ part.text }}</span></template></p>
+              <div class="result-foot"><span>{{ item.bot_name }}</span><span>打开报告 ↗</span></div>
+            </button>
+            <button class="delete-action result-delete" :disabled="Boolean(deleting)" :aria-label="`删除报告：${item.title || item.bot_name}`" @click="deleteReport(item)">删除报告</button>
+          </div>
           <div v-if="!searchResults.length && !busy" class="empty-state"><div class="empty-icon">⌕</div><h2>没有找到匹配报告</h2><p>试试更短的关键词，或切换到其他来源。</p></div>
           <button v-if="searchCursor" class="load-more" @click="runSearch(true)">加载更多</button>
         </div>
         <div v-else-if="!bots.length && !busy" class="empty-state welcome-empty"><div class="empty-icon">✳</div><p class="eyebrow">A QUIET DOCK</p><h2>等待第一份报告靠岸</h2><p>当 Bot 首次推送报告后，它会自动出现在这里。</p><span>仅显示已通过 API 推送的来源</span></div>
         <div v-else class="bot-grid" :class="{ 'with-reader': selected }">
-          <button v-for="bot in bots" :key="`${bot.source}:${bot.bot_id}`" class="bot-card" :class="{ selected: selected?.source === bot.source && selected?.bot_id === bot.bot_id }" @click="openBot(bot)">
-            <div class="card-topline"><span class="source-pill">{{ bot.source }}</span><span v-if="bot.unread_count" class="unread-pill"><i></i> 新报告</span><span v-else class="report-number">{{ bot.report_count }} 份报告</span></div>
-            <div class="bot-identity"><div class="avatar-wrap"><img v-if="bot.avatar_url" :src="bot.avatar_url" alt="" @error="avatarFailed"><span class="avatar-fallback" :class="{ hidden: bot.avatar_url }">✳</span></div><div class="bot-titles"><h2>{{ bot.bot_name }}</h2><p>{{ bot.bot_id }}</p></div><span class="card-arrow">↗</span></div>
-            <div class="card-preview"><span class="preview-label">LATEST REPORT</span><strong>{{ bot.latest_report?.title || '暂无报告' }}</strong><p>{{ bot.latest_report?.summary || '新报告将显示在这里。' }}</p></div>
-            <div class="card-footer"><span><i class="time-icon">◷</i> {{ formatDate(bot.last_report_at) }}</span><span class="view-link">浏览报告 <b>→</b></span></div>
-          </button>
+          <div v-for="bot in bots" :key="`${bot.source}:${bot.bot_id}`" class="bot-card-shell">
+            <button class="bot-card" :class="{ selected: selected?.source === bot.source && selected?.bot_id === bot.bot_id }" @click="openBot(bot)">
+              <div class="card-topline"><span class="source-pill">{{ bot.source }}</span><span v-if="bot.unread_count" class="unread-pill"><i></i> 新报告</span><span v-else class="report-number">{{ bot.report_count }} 份报告</span></div>
+              <div class="bot-identity"><div class="avatar-wrap"><img v-if="bot.avatar_url" :src="bot.avatar_url" alt="" @error="avatarFailed"><span class="avatar-fallback" :class="{ hidden: bot.avatar_url }">✳</span></div><div class="bot-titles"><h2>{{ bot.bot_name }}</h2><p>{{ bot.bot_id }}</p></div><span class="card-arrow">↗</span></div>
+              <div class="card-preview"><span class="preview-label">LATEST REPORT</span><strong>{{ bot.latest_report?.title || '暂无报告' }}</strong><p>{{ bot.latest_report?.summary || '新报告将显示在这里。' }}</p></div>
+              <div class="card-footer"><span><i class="time-icon">◷</i> {{ formatDate(bot.last_report_at) }}</span><span class="view-link">浏览报告 <b>→</b></span></div>
+            </button>
+            <button class="delete-action bot-delete" :disabled="Boolean(deleting)" :aria-label="`删除 Bot：${bot.bot_name}`" @click.stop="deleteBot(bot)">删除 Bot</button>
+          </div>
         </div>
         <div v-if="busy" class="loading-line"><span></span>正在更新…</div>
       </section>
@@ -305,12 +357,15 @@ onUnmounted(() => { window.removeEventListener('keydown', onKey); streamAbort?.a
         <div class="reader-layout">
           <nav class="report-list" aria-label="报告历史">
             <div class="list-heading"><div><span class="eyebrow">{{ selected.source.toUpperCase() }} · HISTORY</span><h2>{{ selected.bot_name }}</h2></div><span class="list-count">{{ reports.length }}</span></div>
-            <button v-for="item in reports" :key="item.id" class="history-item" :class="{ active: selectedReport?.id === item.id }" @click="selectReport(item)"><span class="history-date">{{ formatDate(item.executed_at) }}</span><strong>{{ item.title || item.bot_name }}</strong><span>{{ item.summary || '打开查看完整报告' }}</span></button>
+            <div v-for="item in reports" :key="item.id" class="history-row">
+              <button class="history-item" :class="{ active: selectedReport?.id === item.id }" @click="selectReport(item)"><span class="history-date">{{ formatDate(item.executed_at) }}</span><strong>{{ item.title || item.bot_name }}</strong><span>{{ item.summary || '打开查看完整报告' }}</span></button>
+              <button class="delete-action history-delete" :disabled="Boolean(deleting)" :aria-label="`删除报告：${item.title || item.bot_name}`" @click="deleteReport(item)">删除</button>
+            </div>
             <button v-if="reportCursor" class="history-more" :disabled="busy" @click="loadReports(true)">加载更早报告</button>
             <p v-if="!reports.length && !busy" class="history-empty">这个日期没有报告。</p>
           </nav>
           <article v-if="selectedReport" class="report-document">
-            <div class="document-meta"><span class="source-pill">{{ selectedReport.source }}</span><span>{{ selectedReport.bot_name }}</span><span>·</span><time>{{ formatDate(selectedReport.executed_at) }}</time></div>
+            <div class="document-meta"><span class="source-pill">{{ selectedReport.source }}</span><span>{{ selectedReport.bot_name }}</span><span>·</span><time>{{ formatDate(selectedReport.executed_at) }}</time><button class="delete-action document-delete" :disabled="Boolean(deleting)" @click="deleteReport(selectedReport)">删除报告</button></div>
             <div v-if="selectedReport.tags?.length" class="tag-row"><span v-for="tag in selectedReport.tags" :key="tag"># {{ tag }}</span></div>
             <h1>{{ selectedReport.title || '运行报告' }}</h1>
             <p v-if="selectedReport.summary" class="document-summary">{{ selectedReport.summary }}</p>

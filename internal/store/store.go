@@ -188,6 +188,58 @@ func (s *Store) GetReport(ctx context.Context, id int64) (Report, error) {
 	return scanReport(s.db.QueryRowContext(ctx, reportSelect+" WHERE r.id=?", id), nil)
 }
 
+func (s *Store) DeleteReport(ctx context.Context, id int64) (Report, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Report{}, err
+	}
+	defer tx.Rollback()
+
+	report, err := scanReport(tx.QueryRowContext(ctx, reportSelect+" WHERE r.id=?", id), nil)
+	if err != nil {
+		return Report{}, err
+	}
+	if _, err = tx.ExecContext(ctx, "DELETE FROM reports WHERE id=?", id); err != nil {
+		return Report{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE bots SET
+	last_report_at=COALESCE((SELECT MAX(executed_at) FROM reports WHERE bot_pk=bots.id),'')
+	WHERE source=? AND bot_id=?`, report.Source, report.BotID); err != nil {
+		return Report{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return Report{}, err
+	}
+	return report, nil
+}
+
+func (s *Store) DeleteBot(ctx context.Context, source, botID string) (int, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	var botPK int64
+	if err = tx.QueryRowContext(ctx, "SELECT id FROM bots WHERE source=? AND bot_id=?", source, botID).Scan(&botPK); err != nil {
+		return 0, err
+	}
+	var reportCount int
+	if err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM reports WHERE bot_pk=?", botPK).Scan(&reportCount); err != nil {
+		return 0, err
+	}
+	if _, err = tx.ExecContext(ctx, "DELETE FROM bots WHERE id=?", botPK); err != nil {
+		return 0, err
+	}
+	if _, err = tx.ExecContext(ctx, "DELETE FROM sources WHERE source=? AND NOT EXISTS (SELECT 1 FROM bots WHERE bots.source=sources.source)", source); err != nil {
+		return 0, err
+	}
+	if err = tx.Commit(); err != nil {
+		return 0, err
+	}
+	return reportCount, nil
+}
+
 func (s *Store) Sources(ctx context.Context) ([]Source, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT s.source,COUNT(DISTINCT b.id),COUNT(r.id) FROM sources s LEFT JOIN bots b ON b.source=s.source LEFT JOIN reports r ON r.bot_pk=b.id GROUP BY s.source ORDER BY s.source`)
 	if err != nil {

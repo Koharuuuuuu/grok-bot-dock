@@ -68,6 +68,12 @@
 - [x] 提示词明确仅最终正式报告可推送，草稿、测试、日志、中间结果、失败任务不推送；external_id 幂等及 Markdown 格式必须完整。
 - [x] 提供复制成功反馈和失败时手动复制降级；真实浏览器验证复制反馈，单测覆盖检索模型与提示词边界。
 
+## P2 补充：报告与 Bot 删除
+- [x] 单份报告可从 Bot 历史、搜索结果和阅读面板删除；确认永久删除后更新历史、统计和 FTS 搜索索引，并修正 Bot 最新报告时间。
+- [x] Bot 可按 `(source, bot_id)` 删除；永久级联删除其全部报告及 FTS 条目；当来源不再关联任何 Bot 时删除空来源。
+- [x] 删除 API 与事件受 Bearer Token 保护；报告/Bot 不存在返回 404；成功后发送 SSE 删除事件，其他工作台刷新。
+- [x] API 与存储测试覆盖权限、级联、索引清理、来源保留/移除和最新报告回退；浏览器验收删除确认及 UI 状态刷新。
+
 ## GHCR 发布验收
 
-GHCR 首次发布及后续多架构修复均已验收：PR #1–#3 已合并至 master（最新提交 `ee9c48e`），GHCR 包为 Public，GitHub 源码仓库保持 Private。workflow run `37936261007` 成功发布 digest `sha256:4f9c4bf58ac018c481321e90fdba2a6bd236a62d815208c2e7c3da66a2fec9dc`；镜像索引包含 amd64 和 arm64。空 Docker 配置下默认匿名拉取在本机选择 arm64，容器健康检查通过。
+GHCR 首次发布及后续多架构修复均已验收：PR #1–#3 已合并至 master，实现基线为 `ee9c48e`；PR #4–#5 合并验收报告更新。GHCR 包为 Public，GitHub 源码仓库保持 Private。workflow run `37936261007` 成功发布 digest `sha256:4f9c4bf58ac018c481321e90fdba2a6bd236a62d815208c2e7c3da66a2fec9dc`；镜像索引包含 amd64 和 arm64。空 Docker 配置下默认匿名拉取在本机选择 arm64，容器健康检查通过。

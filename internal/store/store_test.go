@@ -53,6 +53,75 @@ func TestSourceScopedIdentityAndExternalID(t *testing.T) {
 	}
 }
 
+func TestDeleteReportRemovesSearchIndexAndRefreshesBot(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	first := report("grok", "daily", "one", "# older-only-token")
+	first.ExecutedAt = time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	older, _, err := s.CreateReport(ctx, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := report("grok", "daily", "two", "# remove-this-token")
+	latest.ExecutedAt = time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	removed, _, err := s.CreateReport(ctx, latest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.DeleteReport(ctx, removed.ID)
+	if err != nil || got.ID != removed.ID {
+		t.Fatalf("delete report: report=%#v err=%v", got, err)
+	}
+	if _, err = s.DeleteReport(ctx, removed.ID); err == nil {
+		t.Fatal("deleting the same report twice should return not found")
+	}
+	page, err := s.Search(ctx, "remove-this-token", "", "", "", "", "", 20)
+	if err != nil || len(page.Items) != 0 {
+		t.Fatalf("deleted report remains searchable: page=%#v err=%v", page, err)
+	}
+	bots, err := s.Bots(ctx, "")
+	if err != nil || len(bots) != 1 || bots[0].ReportCount != 1 || bots[0].LatestReport == nil || bots[0].LatestReport.ID != older.ID {
+		t.Fatalf("bot latest report was not refreshed: bots=%#v err=%v", bots, err)
+	}
+}
+
+func TestDeleteBotCascadesReportsAndRetainsOrRemovesSources(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	for _, in := range []ReportInput{
+		report("grok", "daily", "g1", "grok-delete-token"),
+		report("grok", "weekly", "g2", "shared-source-token"),
+		report("codex", "daily", "c1", "other-source-token"),
+	} {
+		if _, _, err := s.CreateReport(ctx, in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	count, err := s.DeleteBot(ctx, "grok", "daily")
+	if err != nil || count != 1 {
+		t.Fatalf("delete bot: count=%d err=%v", count, err)
+	}
+	page, err := s.Search(ctx, "grok-delete-token", "", "", "", "", "", 20)
+	if err != nil || len(page.Items) != 0 {
+		t.Fatalf("cascaded report remains searchable: page=%#v err=%v", page, err)
+	}
+	sources, err := s.Sources(ctx)
+	if err != nil || len(sources) != 2 {
+		t.Fatalf("source with remaining bots should remain: sources=%#v err=%v", sources, err)
+	}
+	count, err = s.DeleteBot(ctx, "grok", "weekly")
+	if err != nil || count != 1 {
+		t.Fatalf("delete last bot for source: count=%d err=%v", count, err)
+	}
+	sources, err = s.Sources(ctx)
+	if err != nil || len(sources) != 1 || sources[0].Source != "codex" {
+		t.Fatalf("empty source should be removed: sources=%#v err=%v", sources, err)
+	}
+	if _, err = s.DeleteBot(ctx, "grok", "weekly"); err == nil {
+		t.Fatal("deleting a missing bot should return not found")
+	}
+}
+
 func TestAvatarRetentionAndPersistence(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "persist.db")
 	s, err := Open(db)

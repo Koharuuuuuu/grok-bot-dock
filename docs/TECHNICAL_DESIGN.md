@@ -14,7 +14,9 @@ reports: id, bot_pk(FK), external_id(NULLABLE), executed_at(固定精度 UTC ISO
 ## 4. HTTP API
 `POST /api/v1/reports`：JSON，必填 bot_id、bot_name、executed_at、content；可选 external_id。校验 RFC3339 时间、长度、报文上限（建议 1 MiB，可配置），拒绝空白内容及非法字段；首次写入自动 upsert Bot；事务内插入报告；成功返回 201 + report_id、bot_id；重复 external_id 返回 200 + 已有 report_id；400 校验失败、401 鉴权失败、413 超限、429 限流、500 服务错误。避免在日志中打印 token 和报告正文。
 
-只读接口：`GET /api/v1/sources`（已出现来源及计数），`GET /api/v1/bots?source=`（卡片与统计），`GET /api/v1/bots/{bot_id}/reports?source=&cursor=&date=`，`GET /api/v1/reports?source=&bot_id=&date=&cursor=`，`GET /api/v1/reports/{id}`，`POST /api/v1/bots/read`（记录阅读进度），`GET /api/v1/search?q=&source=&bot_id=&from=&to=&cursor=`，`GET /api/v1/events`（SSE），`GET /healthz`。历史按时间倒序稳定游标分页，默认 20 条；from/to 是含首尾日期，搜索结果有摘要、来源、时间、高亮与跳转目标。数据库统计把主库和 WAL/SHM 文件容量相加，始终作为全库指标显示。
+接口：`GET /api/v1/sources`（已出现来源及计数），`GET /api/v1/bots?source=`（卡片与统计），`GET /api/v1/bots/{bot_id}/reports?source=&cursor=&date=`，`GET /api/v1/reports?source=&bot_id=&date=&cursor=`，`GET /api/v1/reports/{id}`，`DELETE /api/v1/reports/{id}`（删除单份报告），`DELETE /api/v1/bots?source=&bot_id=`（删除 Bot 及其报告），`POST /api/v1/bots/read`（记录阅读进度），`GET /api/v1/search?q=&source=&bot_id=&from=&to=&cursor=`，`GET /api/v1/events`（SSE），`GET /healthz`。除健康检查外，读写接口都要求 Bearer Token。历史按时间倒序稳定游标分页，默认 20 条；from/to 是含首尾日期，搜索结果有摘要、来源、时间、高亮与跳转目标。数据库统计把主库和 WAL/SHM 文件容量相加，始终作为全库指标显示。
+
+删除逻辑：删除报告使用事务删除报告记录，由 SQLite 删除触发器同步移除 FTS 行；Bot 保留，`last_report_at` 回退到剩余报告中的最新时间；报告不存在返回 404。删除 Bot 按 `(source, bot_id)` 定位，事务内级联删除全部报告及其 FTS 行；同一来源仍有 Bot 时保留来源，否则同时删除空来源；Bot 不存在返回 404。成功删除分别广播 `report.deleted`（报告 ID、来源、Bot ID）和 `bot.deleted`（来源、Bot ID、删除报告数）SSE 事件。前端删除控件执行前确认永久删除，成功后刷新卡片、报告历史、统计和搜索；Bot 删除确认明确报告级联范围。
 
 ## 5. 安全与通知
 所有 `/api/` 读写接口共享必填 `ACCESS_TOKEN` Bearer Token，采用常量时间比较；缺少 token 时拒绝启动。网页登录通过密码输入并仅在当前页面内存持有 token，不写入 localStorage、sessionStorage、提示词或剪贴板。请求体默认上限 1 MiB，可配置；推送接口限制每客户端地址每分钟 120 次。CORS 默认同源；Markdown 原始 HTML 禁用，DOMPurify 清理输出。浏览器通知需要 HTTPS/localhost、用户授权与浏览器/系统允许。SSE 支持页面内重连、25 秒心跳及断线连接清理；浏览器离线期间不保证收到事件。
