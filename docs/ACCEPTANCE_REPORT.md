@@ -1,8 +1,8 @@
 # Bolt Dock V1 验收报告
 
 日期：2026-10-09（Asia/Shanghai）
-基线：远端 `master` 最新提交 `dd52344`；实现分支 `feature/bolt-dock-v1`。
-结果：代码和本地验收通过；GHCR 正式发布及匿名拉取仍待 PR 合并和包可见性设置。
+基线：`master` 合并提交 `c422ac5`；多架构修复分支 `fix/ghcr-multiarch`。
+结果：实现、PR 合并、master CI、GHCR 首次发布及 linux/amd64 匿名拉取通过；arm64 默认拉取发现镜像缺少该架构，已补多架构 workflow 修复，待新镜像验收。
 
 ## 完成内容
 
@@ -42,12 +42,14 @@ Docker 本地镜像实测大小为 **30,505,844 bytes（约 29.1 MiB）**，架�
 
 ## 尚未完成的发布验收
 
-仓库已核验仍为 Private。GitHub Packages 查询 `ghcr.io/nyakooo/grok-bot-dock` 返回 404，包尚未创建；GHCR Actions 只在 master 或版本标签上发布，当前 PR 分支不会创建镜像。因此目前没有可供匿名拉取的标签，不能把镜像标为已公开或把远端发布标为成功。
+PR #1 已于 2026-10-09 合并到 `master`，合并提交为 `c422ac5`。master CI 和 `Publish Docker image` workflow run `37933980989` 均通过；GHCR 发布了 `master` 标签，镜像版本 digest 为 `sha256:0bc85b75e1b4621f0eb37323c6856c053f4e3336b495d63fd87260f1e34e91ab`。用户已确认将 GHCR 包设为 Public，源码仓库仍为 Private。使用空 Docker 配置执行 `docker pull --platform=linux/amd64 ghcr.io/nyakooo/grok-bot-dock:master` 成功。
 
-PR 合并到 master 后，需确认 `Publish Docker image` workflow 成功；若新包默认是 Private，在 GitHub 的 `grok-bot-dock` 容器包页面打开 **Package settings → Change visibility → Public**，然后从未登录 Docker 的环境验证：
+arm64 默认拉取验收发现首次镜像只包含 `linux/amd64`。Workflow 已增加 `linux/amd64,linux/arm64` 构建；多架构镜像还需合并发布，并验证 arm64 匿名拉取及运行健康：
 
 ```sh
-docker pull ghcr.io/nyakooo/grok-bot-dock:master
+docker --config /tmp/empty-docker-config pull ghcr.io/nyakooo/grok-bot-dock:master
 ```
+
+以上命令需使用未配置 registry 凭据的 Docker 配置；本机默认目标为 arm64。
 
 真实域名、生产 HTTPS 代理配置、实际 AI 平台发起外部 POST 的能力，以及正式通知权限都没有配置或声称完成；部署方需在对应环境验证。Grok 等平台是否支持自动 HTTP POST 仍按执行计划保持未验证。

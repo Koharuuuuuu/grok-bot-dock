@@ -33,7 +33,7 @@
 - [x] 自动化验证：构建 → 启动 → curl 推送 Markdown → 列表/搜索 → SSE → 重启后持久化。
 - [x] 在资源受限环境测量容器内存、CPU、镜像大小；记录结果，不虚构。
 - [x] 更新 README、技术设计、TODO 完成情况；生成 docs/ACCEPTANCE_REPORT.md（完成项、测试命令、结果、已知限制）。
-- [ ] 提交所有实现；优先通过 PR 合并 master，按仓库现有保护规则操作。
+- [x] 提交所有实现；通过 PR #1（校验通过）合并 master，合并提交 `c422ac5`。
 
 ## 完成定义
 一个标准 API 能让新 Bot 自动出现卡片；报告 Markdown 正确安全渲染；可翻阅历史并跨 Bot 搜索；在线浏览器获得实时事件及授权通知；Docker 单容器可重启持久运行。Grok 端自动调用能力需要另做实测，不以假设充当验收成功。
@@ -54,10 +54,13 @@
 ## P4 补充：GitHub Actions、公开 GHCR 镜像、Compose
 - [x] 新增 `.github/workflows/docker-publish.yml`：配置 master 和版本标签触发，校验通过后发布 GHCR 镜像，使用 packages: write 与最小权限。
 - [x] 配置镜像命名 `ghcr.io/nyakooo/grok-bot-dock`；master → :master，vX.Y.Z → 对应版本和 :latest；发布使用 GITHUB_TOKEN，不输出凭据。
-- [ ] 保持 GitHub 源码仓库 private；首次发布 GHCR 后将包单独设为 Public，并从未认证环境验证匿名 pull。当前包尚未创建。
+- [x] 保持 GitHub 源码仓库 private；master 首次发布已创建 GHCR 包 `grok-bot-dock`，标签 `master`。
+- [x] 将 GHCR 包单独设为 Public，并从无凭据 Docker 配置验证 `linux/amd64` 匿名 pull。
 - [x] 提供默认拉取 GHCR 的 Compose 与真正可运行的本地构建 Compose 配置，包含持久化 /data、健康检查、重启策略、可配置端口与 token。
 - [x] README 写明一键拉取部署及一键本地构建命令，均附 `docker image prune -f`；警告其清理宿主机所有悬空镜像且不删除数据卷。
-- [ ] 验收 GitHub Actions 发布成功及匿名拉取；本地 Docker 构建、Compose 启动、健康检查、持久化及更新已验证，远端发布需 PR 合并后执行。
+- [x] GitHub Actions master 校验及 GHCR `master` 镜像发布通过；本地 Docker 构建、Compose 启动、健康检查、持久化及更新已验证。
+- [ ] GHCR `master` 标签增加 `linux/arm64`；首次发布只有 `linux/amd64`，不支持当前 arm64 验收主机的默认拉取。
+- [ ] 多架构 `master` 镜像发布后，在无凭据 Docker 配置下验证 arm64 匿名拉取及容器健康。
 
 ## P2 补充：网页一键复制 AI 指令
 - [x] 在 Web UI 添加「复制 AI 推送指令」按钮，保持无侧边栏 UI 基线。
@@ -67,4 +70,4 @@
 
 ## 待发布事项
 
-GHCR 首次发布仅在 master 合并或版本标签推送后运行。当前 `gh api /users/Nyakooo/packages/container/grok-bot-dock` 返回 404，说明包尚不存在；因此不能声称 workflow 已发布成功或匿名 pull 可用。首次发布后若包默认 Private，请在 GitHub `grok-bot-dock` 容器包的 **Package settings → Change visibility → Public** 修改，再从未登录 Docker 的环境运行 `docker pull ghcr.io/nyakooo/grok-bot-dock:master`。源码仓库当前可见性已核验为 Private。
+GHCR 首次发布已完成：PR #1 于 2026-10-09 合并到 master（`c422ac5`），`Publish Docker image` workflow run `37933980989` 成功，发布了 `ghcr.io/nyakooo/grok-bot-dock:master`。用户已确认并将 GHCR 包设为 Public，源码仓库保持 Private。使用空的 Docker 配置验证 `linux/amd64` 匿名拉取成功；该镜像索引只有 `linux/amd64`，当前 arm64 主机默认拉取失败。后续需合并多架构 workflow 修复并重新发布，再验证 arm64 匿名拉取和健康检查。
