@@ -26,3 +26,23 @@ Go 单测覆盖验证、幂等、并发写入、FTS 同步、分页、鉴权；�
 
 ## 8. Bot 头像扩展
 `POST /api/v1/reports` 增加可选 `avatar_url` 字段（HTTPS URL，限制长度并验证格式），`bots` 表增加 nullable `avatar_url` 列；有值时更新该 Bot 的头像地址，缺省时保留原值。卡片优先展示 Bot 提供的头像；未提供或加载失败时显示本地内置默认图标（固定、稳定、无需第三方服务）。前端图片加载失败须回退默认图标。若未来后端抓取或代理头像，必须防范 SSRF；V1 不主动下载远程图片。不得将头像字段设为必填，也不得影响原有客户端兼容性。
+
+## 9. Bolt Dock 通用来源协议及 UI（覆盖旧约定）
+产品显示名称：**Bolt Dock**；仓库名仍为 grok-bot-dock。POST /api/v1/reports 的规范请求：
+```json
+{
+  "source": "grok",
+  "bot_id": "ai-news",
+  "bot_name": "AI 行业动态",
+  "executed_at": "2026-10-09T20:00:00+08:00",
+  "title": "今日 AI 行业动态",
+  "summary": "今日重点摘要",
+  "tags": ["AI", "新闻"],
+  "external_id": "2026-10-09-ai-news",
+  "avatar_url": "https://example.com/avatar.png",
+  "content": "# 今日 AI 行业动态\\n\\n报告正文"
+}
+```
+必填 source、bot_id、bot_name、executed_at、content；其余可选。source 是由发送方给出的稳定、规范化的机器标识（建议小写字母、数字、连字符，限制长度）；不是从标题猜测。服务端在同一事务中自动登记首次出现的 source，Bot 由 (source, bot_id) 唯一确定，报告必须引用该复合身份或内部 Bot 主键；external_id 的幂等作用域同样为 (source, bot_id)。不允许不同来源同名 bot_id 互相覆盖。GET /api/v1/sources 返回数据库中实际出现的来源及计数，来源无需手动创建；bots、reports、search 查询支持 source 可选过滤。所有筛选选项由 GET sources 动态获取，默认「全部来源」；新来源推送后刷新或 SSE 更新下拉。禁止“自定义”来源选项、手工来源配置页面或硬编码来源枚举。若未来修改已有数据结构，使用可回滚/可验证的迁移并保留旧数据；V1 尚未实施时直接采用新 schema。
+
+UI：无左侧导航；顶部品牌 Bolt Dock、默认跨来源全局搜索、动态来源下拉、Bot 数/报告数/全库数据大小。来源切换同时影响卡片、搜索、相关计数；数据库物理大小始终标记「全库」。未选择卡片时网格占满；点击卡片右侧抽屉显示 Markdown；抽屉放大按钮进入宽屏沉浸式阅读，支持退出还原。头像由 avatar_url 提供，无头像/失败使用默认图标。桌面优先、移动端响应式。UI 实现以本节为最新权威约束，覆盖旧版左侧菜单设计。
