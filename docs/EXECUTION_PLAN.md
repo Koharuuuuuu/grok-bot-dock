@@ -33,7 +33,7 @@
 - [x] 自动化验证：构建 → 启动 → curl 推送 Markdown → 列表/搜索 → SSE → 重启后持久化。
 - [x] 在资源受限环境测量容器内存、CPU、镜像大小；记录结果，不虚构。
 - [x] 更新 README、技术设计、TODO 完成情况；生成 docs/ACCEPTANCE_REPORT.md（完成项、测试命令、结果、已知限制）。
-- [x] 提交所有实现；PR #1 合并 Bolt Dock V1，PR #2–#3 完成 GHCR 多架构发布修复；PR #4 合并最终验收报告。实现基线为 `ee9c48e`。
+- [x] 提交所有实现；PR #1 合并 Bolt Dock V1，PR #2–#3 完成 GHCR 多架构发布修复，PR #6 合并报告与 Bot 删除功能；PR #4–#5 合并验收报告更新。实现基线为 `ee9c48e`，删除功能合并提交为 `efa1619`。
 
 ## 完成定义
 一个标准 API 能让新 Bot 自动出现卡片；报告 Markdown 正确安全渲染；可翻阅历史并跨 Bot 搜索；在线浏览器获得实时事件及授权通知；Docker 单容器可重启持久运行。Grok 端自动调用能力需要另做实测，不以假设充当验收成功。
@@ -76,4 +76,4 @@
 
 ## GHCR 发布验收
 
-GHCR 首次发布及后续多架构修复均已验收：PR #1–#3 已合并至 master，实现基线为 `ee9c48e`；PR #4–#5 合并验收报告更新。GHCR 包为 Public，GitHub 源码仓库保持 Private。workflow run `37936261007` 成功发布 digest `sha256:4f9c4bf58ac018c481321e90fdba2a6bd236a62d815208c2e7c3da66a2fec9dc`；镜像索引包含 amd64 和 arm64。空 Docker 配置下默认匿名拉取在本机选择 arm64，容器健康检查通过。
+GHCR 首次发布及后续多架构修复均已验收：PR #1–#3 已合并至 master，实现基线为 `ee9c48e`；PR #4–#5 合并验收报告更新，PR #6 合并报告与 Bot 删除功能（`efa1619`）。GHCR 包为 Public，GitHub 源码仓库保持 Private。删除功能对应的 master 发布 run `37938768277` 成功，匿名拉取 digest `sha256:f385cad5e01edb93a8a5f44b41316ada38b8c671680fdf64792dc4864d119b22`；镜像索引包含 amd64 和 arm64，arm64 容器健康检查通过。
