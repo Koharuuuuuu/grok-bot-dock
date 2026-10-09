@@ -50,3 +50,17 @@
 - [ ] UI 移除左侧菜单，顶部保留全局搜索、动态来源下拉和统计；禁止「自定义」或手动配置来源。
 - [ ] 无选中报告时卡片网格铺满；选中后右侧阅读面板；支持放大沉浸阅读及退出恢复。
 - [ ] 验收：推送 grok 和 codex 两个同名 bot_id 的报告，验证各自独立、来源列表自动出现、筛选/搜索/计数正确；从未推送的来源不得显示。
+
+## P4 补充：GitHub Actions、公开 GHCR 镜像、Compose
+- [ ] 新增 `.github/workflows/docker-publish.yml`：master 和版本标签触发，测试通过后发布 GHCR 镜像，正确设置 packages: write 与最小权限。
+- [ ] 镜像命名 `ghcr.io/nyakooo/grok-bot-dock`；master → :master，vX.Y.Z → 对应版本和 :latest；检查构建日志无凭据。
+- [ ] 保持 GitHub 源码仓库 private；将 GHCR 包单独设为 Public，未经认证执行 docker pull 验证公开可用。若包权限需用户操作，记录准确步骤与阻塞，不得标记完成。
+- [ ] 提供默认拉取 GHCR 的 Compose 与真正可运行的本地构建 Compose 配置，包含持久化 /data、健康检查、重启策略、可配置端口与 token。
+- [ ] README 写明一键拉取部署及一键本地构建命令，均附 `docker image prune -f`；警告该命令清理宿主机所有悬空镜像，禁止误删卷。
+- [ ] 验收 Actions、镜像标签、匿名拉取、Compose 重启数据持久化、更新流程；记录实测结果。
+
+## P2 补充：网页一键复制 AI 指令
+- [ ] 在 Web UI 添加「复制 AI 推送指令」按钮，保持无侧边栏 UI 基线。
+- [ ] 提供可编辑服务地址、source、bot_id、bot_name 的轻量模板预览；复制完整标准 POST JSON 推送提示词，token 只用安全占位符。
+- [ ] 提示词明确仅最终正式报告可推送，草稿、测试、日志、中间结果、失败任务不推送；external_id 幂等及 Markdown 格式必须完整。
+- [ ] 提供复制成功反馈和失败时手动复制降级；测试剪贴板内容与 README 协议一致。
