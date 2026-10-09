@@ -1,0 +1,53 @@
+# Bolt Dock V1 验收报告
+
+日期：2026-10-09（Asia/Shanghai）
+基线：远端 `master` 最新提交 `dd52344`；实现分支 `feature/bolt-dock-v1`。
+结果：代码和本地验收通过；GHCR 正式发布及匿名拉取仍待 PR 合并和包可见性设置。
+
+## 完成内容
+
+- Go + Vue 3/Vite 单容器服务，嵌入静态页面，支持 SPA fallback、`/healthz`、默认 `18765` 端口及配置化数据路径。
+- SQLite 版本记录、WAL、外键、busy timeout、Bot/报告/来源表、FTS5 trigram、索引与事务触发器。来源必填且由首条推送自动注册，Bot 按 `(source, bot_id)` 隔离；`external_id` 在该身份范围幂等。
+- Bearer Token 同时保护报告读写 API；缺少 Token 时拒绝启动。报告大小、时间、元数据、来源和 HTTPS 头像均校验；推送按客户端地址每分钟限制 120 次。
+- 来源、Bot、报告、详情、日期过滤、游标分页、中文全文搜索、SSE、阅读进度及统计 API。数据库容量统计主库、WAL 与 SHM，并始终标为全库数据。
+- Bolt Dock 无侧栏工作台：动态来源下拉、全局搜索及日期筛选、响应式卡片、右侧历史阅读面板、沉浸式阅读、头像回退、Markdown XSS 消毒和用户主动开启的浏览器通知。
+- 复制 AI 推送指令弹窗支持配置地址/source/Bot 信息、完整模板预览、剪贴板成功提示和手动复制回退；模板仅包含 Token 占位符，并限定只推送正式报告。
+- GitHub CI 和 GHCR 发布 workflow、本地构建与 GHCR Compose、`.env.example`、部署/HTTPS 反代/备份/恢复/更新/排错说明。
+
+## 自动化验证
+
+| 命令 | 结果 |
+| --- | --- |
+| `go test ./...` | 通过；覆盖 API 校验/鉴权、幂等、来源隔离、中文搜索、并发写入、分页、头像保留、持久化、SSE 和限流。 |
+| `go test -race ./...` | 通过。 |
+| `go vet ./...` | 通过。 |
+| `cd frontend && npm ci && npm test` | 通过；6 项测试覆盖 Markdown/XSS、检索筛选、高亮片段、卡片/SSE 身份更新及通知降级。 |
+| `cd frontend && npm run build` | 通过；生产资源成功生成并嵌入 Docker 构建。 |
+| `cd frontend && npm audit` | 通过；0 vulnerabilities。 |
+| `git diff --check` | 通过。 |
+
+## 本地容器验收
+
+验收使用专属 Compose 项目 `bolt-dock-acceptance-20261009`、端口 `28765`、临时 Token `acceptance-local-only` 和独立命名数据卷；没有向正式服务发送测试报告。
+
+- `docker compose -p bolt-dock-acceptance-20261009 -f compose.local.yml up -d --build`：多阶段镜像构建并启动成功。
+- `GET /healthz`：返回 `{"status":"ok"}`；容器以 UID `10001` 运行，限制为 2 CPU / 1600 MiB，Compose 只将端口绑定到 `127.0.0.1`。
+- 推送 `grok` 和 `codex` 两份同名 Bot ID 报告：均返回 HTTP 201；来源列表自动出现，两来源计数各自为 1；来源筛选仅显示对应卡片，搜索结果与中文检索正确。
+- 使用相同 `(source, bot_id, external_id)` 重试：返回 HTTP 200、原报告 ID，不重复计数。
+- 容器 SSE 实测：推送后收到 `event: report.created` 和报告 JSON；Go SSE 单测同时覆盖断线清理。
+- 容器重启/Compose 重建后：健康检查恢复，报告及来源记录仍存在。
+- Playwright 浏览器实测：登录、动态来源选择、卡片、阅读面板、中文搜索命中片段高亮、推送指令字段更新和复制成功反馈均正常；浏览器控制台无错误。390px 窄屏页面可用。
+
+Docker 本地镜像实测大小为 **30,505,844 bytes（约 29.1 MiB）**，架构 `arm64`。在限制为 2 CPU / 1600 MiB 的本地容器中，空闲/请求后的单次内存读数约 **4.9 MiB**；瞬时 CPU 读数 **0.00%–1.75%**。这是一组轻量本地采样，不代表持续负载峰值或不同宿主机表现。
+
+## 尚未完成的发布验收
+
+仓库已核验仍为 Private。GitHub Packages 查询 `ghcr.io/nyakooo/grok-bot-dock` 返回 404，包尚未创建；GHCR Actions 只在 master 或版本标签上发布，当前 PR 分支不会创建镜像。因此目前没有可供匿名拉取的标签，不能把镜像标为已公开或把远端发布标为成功。
+
+PR 合并到 master 后，需确认 `Publish Docker image` workflow 成功；若新包默认是 Private，在 GitHub 的 `grok-bot-dock` 容器包页面打开 **Package settings → Change visibility → Public**，然后从未登录 Docker 的环境验证：
+
+```sh
+docker pull ghcr.io/nyakooo/grok-bot-dock:master
+```
+
+真实域名、生产 HTTPS 代理配置、实际 AI 平台发起外部 POST 的能力，以及正式通知权限都没有配置或声称完成；部署方需在对应环境验证。Grok 等平台是否支持自动 HTTP POST 仍按执行计划保持未验证。

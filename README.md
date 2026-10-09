@@ -1,94 +1,138 @@
-# Grok Bot Dock
+# Bolt Dock
 
-轻量、自托管的 AI Bot 报告聚合工作台。多个 Grok 定时任务通过统一 HTTPS API 推送 Markdown 报告，网页集中阅读、检索和接收通知。
+Bolt Dock 是自托管的 AI Bot 报告工作台。任意能发起 HTTPS 请求的任务都可以推送 Markdown 报告；报告按来源和 Bot 自动归档，在同一个网页中搜索、阅读和接收实时提醒。产品界面称为 Bolt Dock，GitHub 仓库仍为 `grok-bot-dock`。
 
-## 核心能力
-- 每个 Bot 自动生成一张响应式卡片；展示名称、最后执行时间、摘要、未读数量。
-- 点击卡片查看 Markdown 报告及历史；支持日期筛选和分页。
-- SQLite 持久化；FTS5 全局检索标题与正文，支持中文关键词。
-- SSE 实时更新；用户授权后使用浏览器 Notification API 提醒。
-- Go + Vue 3 + SQLite，单容器部署，低资源占用。
+## 能力
 
-## 推送协议
-`POST /api/v1/reports`，`Content-Type: application/json`：
+- Bot 首次推送后自动出现响应式卡片；按来源筛选卡片、搜索结果和 Bot/报告计数。
+- 全局搜索支持中文；历史报告提供日期过滤、游标分页及 Markdown 阅读。
+- Markdown 支持表格、代码、引用、链接和图片；原始 HTML 禁用，渲染结果由 DOMPurify 消毒。
+- SSE 实时更新；用户主动允许后可显示浏览器通知。
+- SQLite WAL 持久化、FTS5 trigram 搜索、Go 服务与 Vue 前端嵌入同一容器。
+- 多来源使用 `(source, bot_id)` 隔离身份；来源只能由收到的推送自动产生。
 
-```json
-{
-  "bot_id": "ai-news",
-  "bot_name": "AI 行业动态",
-  "executed_at": "2026-10-09T20:00:00+08:00",
-  "content": "# 今日 AI 动态\n\n- 示例报告"
+## 本地开发
+
+需要 Go 1.25+、Node.js 22.22.2+ 或 24.15.0+ 和 npm。
+
+```sh
+cp .env.example .env
+# 编辑 .env，设置足够长的随机 ACCESS_TOKEN
+make test
+make build
+set -a; . ./.env; set +a; ./bolt-dock
+```
+
+本地服务默认监听 `http://localhost:18765`，数据库写入 `DATA_DIR`。前端开发服务器使用 `cd frontend && npm ci && npm run dev`，并将 `/api` 代理到本地服务。
+
+## 推送 API
+
+`POST /api/v1/reports` 必须带 `source`、`bot_id`、`bot_name`、RFC3339 `executed_at` 和非空 `content`。其他字段可选：`title`、`summary`、`tags`、`external_id`、`avatar_url`。`avatar_url` 只接受 HTTPS；不传时保留同一 Bot 已保存的头像。
+
+```sh
+curl -X POST "https://YOUR_DOMAIN/api/v1/reports" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data-binary '{
+    "source":"grok",
+    "bot_id":"ai-news",
+    "bot_name":"AI 行业动态",
+    "executed_at":"2026-10-09T20:00:00+08:00",
+    "title":"今日 AI 行业动态",
+    "summary":"今日重点摘要",
+    "tags":["AI","新闻"],
+    "external_id":"2026-10-09-ai-news",
+    "content":"# 今日 AI 行业动态\n\n- 完整 Markdown 报告"
+  }'
+```
+
+新建返回 HTTP 201；同一 `(source, bot_id, external_id)` 重试返回 HTTP 200 和已有报告 ID。Token 不应写入 AI 提示词或报告正文。服务拒绝没有 `ACCESS_TOKEN` 的启动；阅读 API 和推送 API 均需 Bearer Token。网页登录只在当前页面内存持有 Token；刷新页面后需要重新输入。生产环境应仅经 HTTPS 反向代理公开，并可在代理层增加访问认证和限流。
+
+只读接口：
+
+| 接口 | 用途 |
+| --- | --- |
+| `GET /healthz` | 容器健康检查，不需要 Token |
+| `GET /api/v1/sources` | 已推送来源及计数 |
+| `GET /api/v1/bots?source=` | Bot 卡片、未读状态和统计 |
+| `GET /api/v1/reports?source=&bot_id=&date=&cursor=` | 报告列表和历史分页 |
+| `GET /api/v1/reports/{id}` | 单份报告 |
+| `GET /api/v1/search?q=&source=&bot_id=&from=&to=&cursor=` | 全文检索及筛选 |
+| `GET /api/v1/events` | 新报告 SSE 事件与心跳 |
+
+默认页面将数据库容量标为“全库”，即使其他统计按来源筛选也不会把物理数据库大小伪装成来源大小。
+
+## 一键复制 AI 推送指令
+
+登录工作台后点「推送指令」，填写部署地址、稳定的来源标识、Bot ID 和名称，再复制完整模板。模板包含最终报告边界、重试幂等、安全占位符及平台不支持 HTTP 时的处理要求。剪贴板不可用时，预览框会自动选中文本，可手动复制。
+
+发送规则：只推送已经完成并通过检查的正式报告。草稿、测试、模拟数据、日志、中间结果、失败和取消任务不得推送。Grok 或其他 AI 平台是否具备定时 HTTPS POST 能力必须在对应平台单独验证；不得把本地联调请求发向正式服务端。
+
+## Docker 部署（拉取 GHCR 镜像）
+
+1. 创建 `.env` 并设置随机密钥：`cp .env.example .env`。
+2. 确认仓库拥有者已将 GHCR 包 `ghcr.io/nyakooo/grok-bot-dock` 设为 Public；公共包无需登录即可拉取。
+3. 启动：
+
+```sh
+docker compose pull
+docker compose up -d
+docker compose ps
+# Optional: remove every dangling image on this host (not only Bolt Dock)
+docker image prune -f
+```
+
+默认端口为 `127.0.0.1:18765`，服务只绑定宿主机回环地址；同机 HTTPS 反向代理可连接本机该端口。可在 `.env` 设置 `BOLT_DOCK_PORT`、`BOLT_DOCK_TAG`；数据保存在 Compose 命名卷 `bolt-dock-data`。容器限制为 2 CPU 和 1600 MiB。更新镜像后执行 `docker compose pull && docker compose up -d`，数据卷会保留。不要运行 `docker compose down -v`，该命令会删除数据库卷。上面 `docker image prune -f` 是可选的宿主机级清理，会移除这台主机所有悬空镜像，不会删除卷；先确认其他容器不依赖悬空镜像。
+
+## Docker 本地构建
+
+使用真实的本地 Dockerfile 构建配置：
+
+```sh
+docker compose -f compose.local.yml build
+docker compose -f compose.local.yml up -d
+docker compose -f compose.local.yml ps
+# Optional: removes every dangling image on this host
+docker image prune -f
+```
+
+数据保存在独立的 `bolt-dock-local-data` 命名卷。更新代码后重复 build 和 up。上述两种安装方式均可选运行 `docker image prune -f` 回收宿主机所有悬空镜像；该命令作用于整台宿主机，不带 `-a` 且不删除数据卷。请先确认其他容器不依赖悬空镜像。
+
+## 备份与恢复
+
+暂停服务后将 SQLite 文件复制到受保护的备份位置，再启动服务。恢复时也先停止服务，替换 `bolt-dock.db` 后启动。停服可保证 WAL 检查点完成；不要在数据库正在写入时仅复制主 `.db` 文件。
+
+```sh
+docker compose stop bolt-dock
+docker compose cp bolt-dock:/data/bolt-dock.db ./bolt-dock-backup.db
+docker compose start bolt-dock
+```
+
+本地构建配置将上面的 Compose 文件名改为 `compose.local.yml`、服务容器名改为 `bolt-dock-local`，数据库路径仍为 `/data/bolt-dock.db`。恢复前把容器停下，用 `docker compose cp ./bolt-dock-backup.db bolt-dock:/data/bolt-dock.db` 复制回去，再启动。
+
+## HTTPS 反向代理与故障排查
+
+最小 Caddy 配置示例（把域名替换为已解析到本机且证书可签发的真实域名）：
+
+```caddyfile
+reports.example.com {
+    reverse_proxy 127.0.0.1:18765
 }
 ```
 
-`bot_id` 稳定不变，`bot_name` 可修改；首次接收自动注册 Bot。建议使用 `Authorization: Bearer <token>` 的单一共享密钥，避免公网匿名写入。支持可选 `external_id` 用于幂等去重。Grok 定时任务能否自动 POST 需实际端到端验证，不属于服务端可保证的能力。
+Bolt Dock 自身仍要求 Bearer Token；可在现有反向代理再加一层访问认证。推送、网页阅读和 SSE 都走同源 HTTPS。排查时先运行 `docker compose ps` 和 `docker compose logs --tail=100 bolt-dock`：健康检查失败时核对 `ACCESS_TOKEN` 与端口；API 401 表示网页或推送方的 Token 不匹配；来源列表为空表示还没有成功推送；不要通过 `docker compose down -v` 排查数据库问题，以免删除持久卷。
 
-## 开发与部署
-见 [技术设计](docs/TECHNICAL_DESIGN.md) 和 [执行计划](docs/EXECUTION_PLAN.md)。Codex 按执行计划逐项实现并更新勾选状态；使用 master 作为默认分支。开发前先阅读两份文档。前端使用 Node.js 构建，运行容器只保留 Go 二进制、前端静态文件和 SQLite 数据卷。
+## GitHub Actions 与 GHCR
 
-## 非目标
-不做多用户平台、Redis、Elasticsearch、消息队列、MCP、AI 二次总结或复杂后台管理。
+`.github/workflows/ci.yml` 在 PR 和 master 更新时运行 Go 测试及前端构建。`docker-publish.yml` 在校验通过后，为 master 发布 `:master`，版本标签 `vX.Y.Z` 发布 `:X.Y.Z` 和 `:latest`。Workflow 仅需要 `contents: read` 和发布 Job 的 `packages: write`，认证使用短期 `GITHUB_TOKEN`。
 
-## Bot 头像
-推送 API 可选 `avatar_url` 字段，Bot 可自行提交 HTTPS 头像地址；不传或头像加载失败时使用内置默认图标。相同 Bot 持续复用上次有效头像地址，直到后续推送更新；不得因缺省字段清空已有头像。
+GHCR 包的公开可见性由仓库拥有者在 GitHub Packages 页面设置：打开 `grok-bot-dock` 容器包的 **Package settings → Change visibility → Public**。保持源码仓库原有私有设置。修改可见性后，从未登录 Docker 的主机运行 `docker pull ghcr.io/nyakooo/grok-bot-dock:master` 验证匿名访问。
 
-## Bolt Dock 通用信息源与 UI 基线（2026-10-09）
-产品显示名称统一为 **Bolt Dock**（GitHub 仓库名不变）。取消左侧导航；顶部左侧品牌、中部默认跨全部来源的全局搜索、右侧来源下拉和统计（Bot 数、报告数、数据库大小）。来源下拉仅列出已通过 API 推送出现的来源，默认「全部来源」；**没有“自定义”或手动创建来源选项**。选择来源后卡片、搜索结果、统计同步筛选（数据库大小是全库物理值，需标明全库，不伪装成按来源统计）。Bot 卡片响应式平铺；未选中时占满内容区，选中后右侧打开 Markdown 阅读面板，面板有放大按钮进入沉浸式阅读，关闭后回到卡片。来源列表及卡片由推送数据驱动，前端不硬编码 Grok/Codex/千问。
+## 测试
 
-通用推送协议新增必填 `source`（稳定的来源标识，如 `grok`、`codex`、`qwen`），唯一 Bot 键为 `(source, bot_id)`；可选 `title`、`summary`、`tags`、`external_id`、`avatar_url`，其余字段保持不变。示例见技术设计。此约定在 V1 开发前落实，不再依赖旧的仅 bot_id 唯一规则。
-
-## 一键复制：交给 AI 的正式报告推送指令
-
-将下面整段复制给 Grok Bolt、Codex 或其他 AI 定时任务。把 `https://YOUR_DOMAIN` 换成实际服务地址；如部署启用共享密钥，由执行环境安全注入 `BOLT_DOCK_TOKEN`，不要把密钥写进报告或公开提示词。
-
-```text
-你是一个定时信息收集 Agent。每次任务执行完成后，按以下规则向 Bolt Dock 推送正式报告。
-
-接口：POST https://YOUR_DOMAIN/api/v1/reports
-请求头：Content-Type: application/json
-请求头：Authorization: Bearer <BOLT_DOCK_TOKEN>（由执行环境提供，不得泄露）
-
-请求 JSON：
-{
-  "source": "grok",
-  "bot_id": "your-stable-bot-id",
-  "bot_name": "你的任务名称",
-  "executed_at": "2026-10-09T20:00:00+08:00",
-  "title": "本次正式报告标题",
-  "summary": "简短摘要",
-  "external_id": "your-stable-bot-id-2026-10-09",
-  "content": "# 正式报告标题\\n\\n完整 Markdown 正文"
-}
-
-要求：
-1. 只在本次任务最终正式报告已经完成、内容检查通过后推送一次；草稿、测试文件、模拟数据、调试日志、中间结果、空内容、失败或取消的任务一律不得推送。
-2. 正文必须是完整 Markdown，保留标题、列表、表格和引用链接；不要推送文件路径、占位符或仅有摘要的内容。
-3. source 与 bot_id 对同一个任务保持稳定；bot_name 可修改；executed_at 使用实际执行时间及明确时区；external_id 对同一次正式执行保持不变，重试时沿用以避免重复。
-4. 发送前校验所有必填字段（source、bot_id、bot_name、executed_at、content）非空；仅发送最终 JSON，不要附加 Markdown 代码围栏。
-5. 只有 HTTP 201（新建）或 HTTP 200（幂等重复）算成功；网络错误或 5xx 可有限重试并使用相同 external_id；4xx 先修复配置/报文，不要盲目重试。
-6. 如果当前 AI 平台不能直接发起外部 HTTP POST，应明确报告不支持，不要虚构推送成功；由用户配置可用的 HTTP 调用能力后再执行。
-7. 禁止把测试报告推到正式 API；接口联调必须在独立测试环境完成。
+```sh
+go test ./...
+cd frontend && npm ci && npm test && npm run build
 ```
 
-注意：上面的指令是发送规范，不保证任意 AI 定时任务平台具备外部 HTTP 请求能力。正式环境需先验证平台能发出 POST 请求。
-
-## GitHub Actions 与公开 Docker 镜像
-代码仓库可以保持私有，但发布到 GitHub Container Registry（GHCR）的容器镜像必须设置为 **Public**，供任何人匿名拉取。镜像地址统一为 `ghcr.io/nyakooo/grok-bot-dock`（以实际发布包路径为准）。GitHub Actions 在 master 更新时运行测试与构建，成功后发布 `master` 标签；版本标签 `vX.Y.Z` 发布对应版本和 `latest`。首次发布后检查 GHCR package visibility 并手动设为 Public（若尚未公开）；匿名 docker pull 验证通过才算完成。不得公开源码或在日志中泄露密钥。
-
-### Docker Compose 一键部署与清理
-提供仓库根目录 `compose.yaml`（或 `docker-compose.yml`），默认从 GHCR 拉取预构建镜像，数据挂载到持久卷，端口默认 `18765`，token 从 .env 注入；同时保留本地构建方式。部署命令：
-
-```bash
-docker compose pull && docker compose up -d --remove-orphans && docker image prune -f
-```
-
-本地构建命令（需 clone 仓库）：
-
-```bash
-docker compose build && docker compose up -d --remove-orphans && docker image prune -f
-```
-
-`docker image prune -f` **只清理宿主机全部悬空镜像**，不是只清理本项目；不得使用 `-a`、`docker system prune` 或删除数据卷。构建与运行两种 Compose 配置方式须明确、实际可执行，不可让本地 build 命令因只有 image 而跳过构建。
-
-## 网页一键复制 AI 推送指令
-在 Bolt Dock Web 界面提供清晰可见的「复制 AI 推送指令」按钮，点击将完整、可直接交给 Grok Bolt/Codex/其他 Agent 的正式报告推送提示词复制到剪贴板，并显示成功/失败反馈。指令使用现行 `source` 必填的 API 规范，包含 URL、JSON 示例、Markdown 正文、执行时间、幂等 `external_id`、HTTP 成功/失败处理，以及**只允许最终正式报告推送一次；测试、草稿、调试、中间结果一律不推送**。允许用户填写服务地址、source、bot_id、bot_name 后生成可复制文本；不得把服务端真实 token 直接嵌入剪贴板或暴露给未授权访客，使用环境变量占位符。按钮可通过顶部工具入口或轻量弹窗呈现，不新增左侧导航或复杂设置系统。
+完整验收及限制见 [docs/ACCEPTANCE_REPORT.md](docs/ACCEPTANCE_REPORT.md)。

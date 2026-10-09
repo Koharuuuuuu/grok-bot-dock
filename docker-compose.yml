@@ -1,0 +1,25 @@
+services:
+  bolt-dock:
+    image: ghcr.io/nyakooo/grok-bot-dock:${BOLT_DOCK_TAG:-master}
+    container_name: bolt-dock
+    restart: unless-stopped
+    environment:
+      PORT: 18765
+      DATA_DIR: /data
+      ACCESS_TOKEN: ${ACCESS_TOKEN:?Set ACCESS_TOKEN in .env before starting Bolt Dock}
+      MAX_REQUEST_BYTES: ${MAX_REQUEST_BYTES:-1048576}
+    ports:
+      - "127.0.0.1:${BOLT_DOCK_PORT:-18765}:18765"
+    cpus: 2.0
+    mem_limit: 1600m
+    volumes:
+      - bolt-dock-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:18765/healthz >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+
+volumes:
+  bolt-dock-data:

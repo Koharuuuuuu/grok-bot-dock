@@ -1,0 +1,231 @@
+package store
+
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+	"sync"
+	"testing"
+	"time"
+)
+
+func testStore(t *testing.T) *Store {
+	t.Helper()
+	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return s
+}
+func report(source, bot, external, content string) ReportInput {
+	return ReportInput{Source: source, BotID: bot, BotName: "共享名称", ExecutedAt: time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC), ExternalID: external, Content: content, Title: "今日 AI 动态", Summary: "人工智能重要消息", Tags: []string{"AI"}}
+}
+
+func TestSourceScopedIdentityAndExternalID(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	grok, dup, err := s.CreateReport(ctx, report("grok", "daily", "same", "# Grok\n\n人工智能日报"))
+	if err != nil || dup {
+		t.Fatalf("create grok: dup=%v err=%v", dup, err)
+	}
+	codex, dup, err := s.CreateReport(ctx, report("codex", "daily", "same", "# Codex\n\n人工智能分析"))
+	if err != nil || dup {
+		t.Fatalf("create codex: dup=%v err=%v", dup, err)
+	}
+	if grok.ID == codex.ID || grok.Source == codex.Source {
+		t.Fatalf("source identities were merged: %#v %#v", grok, codex)
+	}
+	retry, dup, err := s.CreateReport(ctx, report("grok", "daily", "same", "different retry body"))
+	if err != nil || !dup || retry.ID != grok.ID {
+		t.Fatalf("idempotency failed: report=%#v dup=%v err=%v", retry, dup, err)
+	}
+	sources, err := s.Sources(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) != 2 || sources[0].ReportCount != 1 || sources[1].ReportCount != 1 {
+		t.Fatalf("unexpected sources: %#v", sources)
+	}
+}
+
+func TestAvatarRetentionAndPersistence(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "persist.db")
+	s, err := Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := report("grok", "daily", "1", "# First")
+	first.AvatarURL = "https://example.com/bot.png"
+	if _, _, err = s.CreateReport(context.Background(), first); err != nil {
+		t.Fatal(err)
+	}
+	second := report("grok", "daily", "2", "# Second")
+	if _, _, err = s.CreateReport(context.Background(), second); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	bots, err := s.Bots(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bots) != 1 || bots[0].AvatarURL != "https://example.com/bot.png" || bots[0].ReportCount != 2 {
+		t.Fatalf("data did not survive restart: %#v", bots)
+	}
+}
+
+func TestUnreadCountTracksReportsAfterLastRead(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	first, _, err := s.CreateReport(ctx, report("grok", "daily", "one", "# first"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := s.CreateReport(ctx, report("grok", "daily", "two", "# second"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bots, err := s.Bots(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bots[0].UnreadCount != 2 {
+		t.Fatalf("initial unread count=%d want 2", bots[0].UnreadCount)
+	}
+	if err := s.MarkRead(ctx, "grok", "daily", first.ID); err != nil {
+		t.Fatal(err)
+	}
+	bots, err = s.Bots(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bots[0].UnreadCount != 1 {
+		t.Fatalf("unread after first read=%d want 1", bots[0].UnreadCount)
+	}
+	if err := s.MarkRead(ctx, "grok", "daily", second.ID); err != nil {
+		t.Fatal(err)
+	}
+	bots, err = s.Bots(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bots[0].UnreadCount != 0 {
+		t.Fatalf("unread after second read=%d want 0", bots[0].UnreadCount)
+	}
+	if err := s.MarkRead(ctx, "grok", "daily", second.ID+100); err == nil {
+		t.Fatal("marking a report from another bot should fail")
+	}
+}
+
+func TestChineseSearchShortSearchAndSourceFilter(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	for _, in := range []ReportInput{report("grok", "daily", "g1", "# AI\n\n人工智能正在进步"), report("codex", "daily", "c1", "# AI\n\n人工智能开发工具")} {
+		if _, _, err := s.CreateReport(ctx, in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		q, source string
+		want      int
+	}{{"人工智能", "", 2}, {"智能", "", 2}, {"开发", "codex", 1}} {
+		p, err := s.Search(ctx, tc.q, tc.source, "", "", "", "", 20)
+		if err != nil {
+			t.Fatalf("search %q: %v", tc.q, err)
+		}
+		if len(p.Items) != tc.want {
+			t.Errorf("search %q source %q: got %d want %d", tc.q, tc.source, len(p.Items), tc.want)
+		}
+	}
+}
+
+func TestStableCursorPagination(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	at := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 5; i++ {
+		in := report("grok", "daily", fmt.Sprint(i), "# same timestamp")
+		in.ExecutedAt = at
+		if _, _, err := s.CreateReport(ctx, in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, err := s.ListReports(ctx, "", "", "", "", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Items) != 2 || first.NextCursor == "" {
+		t.Fatalf("bad first page: %#v", first)
+	}
+	second, err := s.ListReports(ctx, "", "", "", first.NextCursor, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Items) != 2 || second.Items[0].ID == first.Items[1].ID {
+		t.Fatalf("bad second page: %#v", second)
+	}
+}
+
+func TestTimestampOrderingAcrossFractionalSeconds(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	base := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	for _, entry := range []struct {
+		title string
+		nanos int
+	}{{"later", 900_000_000}, {"earlier", 100_000_000}, {"whole", 0}} {
+		in := report("grok", "daily", entry.title, "# timestamp order")
+		in.ExecutedAt = base.Add(time.Duration(entry.nanos))
+		in.Title = entry.title
+		if _, _, err := s.CreateReport(ctx, in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := s.ListReports(ctx, "", "", "", "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := []string{page.Items[0].Title, page.Items[1].Title, page.Items[2].Title}; got[0] != "later" || got[1] != "earlier" || got[2] != "whole" {
+		t.Fatalf("timestamps sorted incorrectly: %v", got)
+	}
+}
+
+func TestConcurrentWrites(t *testing.T) {
+	s := testStore(t)
+	var wg sync.WaitGroup
+	errs := make(chan error, 20)
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			in := report("codex", fmt.Sprintf("bot-%02d", i), "", fmt.Sprintf("# report %d", i))
+			_, _, err := s.CreateReport(context.Background(), in)
+			if err != nil {
+				errs <- err
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+	bots, err := s.Bots(context.Background(), "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bots) != 20 {
+		t.Fatalf("got %d concurrent bots, want 20", len(bots))
+	}
+}
