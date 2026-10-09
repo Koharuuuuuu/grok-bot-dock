@@ -23,3 +23,6 @@ reports: id, bot_id(FK), external_id(NULLABLE), executed_at(ISO8601 UTC 存储),
 
 ## 7. 质量保障
 Go 单测覆盖验证、幂等、并发写入、FTS 同步、分页、鉴权；前端测试覆盖 Markdown XSS、卡片更新、检索与通知降级；端到端测试使用 curl POST → SQLite → Web/SSE。Docker 重启后数据不丢失。提供 curl 示例、.env.example、docker-compose.yml、Makefile、部署与备份说明；CI 运行 Go 测试和前端构建。默认 master 分支，提交前检查现有内容并避免破坏性覆盖。
+
+## 8. Bot 头像扩展
+`POST /api/v1/reports` 增加可选 `avatar_url` 字段（HTTPS URL，限制长度并验证格式），`bots` 表增加 nullable `avatar_url` 列；有值时更新该 Bot 的头像地址，缺省时保留原值。卡片优先展示 Bot 提供的头像；未提供或加载失败时显示本地内置默认图标（固定、稳定、无需第三方服务）。前端图片加载失败须回退默认图标。若未来后端抓取或代理头像，必须防范 SSRF；V1 不主动下载远程图片。不得将头像字段设为必填，也不得影响原有客户端兼容性。
