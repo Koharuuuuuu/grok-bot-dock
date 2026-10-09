@@ -71,3 +71,24 @@
 ```
 
 注意：上面的指令是发送规范，不保证任意 AI 定时任务平台具备外部 HTTP 请求能力。正式环境需先验证平台能发出 POST 请求。
+
+## GitHub Actions 与公开 Docker 镜像
+代码仓库可以保持私有，但发布到 GitHub Container Registry（GHCR）的容器镜像必须设置为 **Public**，供任何人匿名拉取。镜像地址统一为 `ghcr.io/nyakooo/grok-bot-dock`（以实际发布包路径为准）。GitHub Actions 在 master 更新时运行测试与构建，成功后发布 `master` 标签；版本标签 `vX.Y.Z` 发布对应版本和 `latest`。首次发布后检查 GHCR package visibility 并手动设为 Public（若尚未公开）；匿名 docker pull 验证通过才算完成。不得公开源码或在日志中泄露密钥。
+
+### Docker Compose 一键部署与清理
+提供仓库根目录 `compose.yaml`（或 `docker-compose.yml`），默认从 GHCR 拉取预构建镜像，数据挂载到持久卷，端口默认 `18765`，token 从 .env 注入；同时保留本地构建方式。部署命令：
+
+```bash
+docker compose pull && docker compose up -d --remove-orphans && docker image prune -f
+```
+
+本地构建命令（需 clone 仓库）：
+
+```bash
+docker compose build && docker compose up -d --remove-orphans && docker image prune -f
+```
+
+`docker image prune -f` **只清理宿主机全部悬空镜像**，不是只清理本项目；不得使用 `-a`、`docker system prune` 或删除数据卷。构建与运行两种 Compose 配置方式须明确、实际可执行，不可让本地 build 命令因只有 image 而跳过构建。
+
+## 网页一键复制 AI 推送指令
+在 Bolt Dock Web 界面提供清晰可见的「复制 AI 推送指令」按钮，点击将完整、可直接交给 Grok Bolt/Codex/其他 Agent 的正式报告推送提示词复制到剪贴板，并显示成功/失败反馈。指令使用现行 `source` 必填的 API 规范，包含 URL、JSON 示例、Markdown 正文、执行时间、幂等 `external_id`、HTTP 成功/失败处理，以及**只允许最终正式报告推送一次；测试、草稿、调试、中间结果一律不推送**。允许用户填写服务地址、source、bot_id、bot_name 后生成可复制文本；不得把服务端真实 token 直接嵌入剪贴板或暴露给未授权访客，使用环境变量占位符。按钮可通过顶部工具入口或轻量弹窗呈现，不新增左侧导航或复杂设置系统。
