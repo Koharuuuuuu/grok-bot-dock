@@ -6,7 +6,7 @@
 
 ## 验收结论
 
-代码、API、前端、本地真实浏览器和隔离 Docker 环境已完成对应验证。线上部署地址/主机没有出现在仓库或当前环境中，故无法确认用户正在访问的生产镜像、缓存版本或生产数据行为；这些线上状态仍明确标记为**未验证**。CI、PR、合并和 GHCR 发布信息将在 PR 完成后补录。未执行 semver tag 发布。
+代码、API、前端、本地真实浏览器、隔离 Docker、PR/master CI 和匿名 GHCR 发布镜像均完成对应验证。线上部署地址/主机没有出现在仓库或当前环境中，故无法确认用户正在访问的生产镜像、缓存版本或生产数据行为；这些线上状态仍明确标记为**未验证**。未执行 semver tag 发布。
 
 ## 验收矩阵
 
@@ -21,7 +21,7 @@
 | P0-07 推送指令 | 自动当前 origin；无必填 Bot ID；认证与稳定身份指引正确 | 原交互要求域名/Bot ID，不能满足零配置复制 | origin 默认 `/api/v1/reports`；高级项只覆盖地址/source；服务端 source 空值归 `unknown`，稳定 task id 可确定性派生 bot_id；缺身份返回 400 | `go test -race ./...` 覆盖 `unknown`、跨日稳定身份及缺身份；`npm test` | 320px 真实浏览器预览和复制：不含 `YOUR_DOMAIN`、无必填 Bot ID，说明 localhost 外部不可达并以安全环境变量配置 Token | 生产不可达，未验证 | 本地通过；线上未验证 |
 | P1-08 Bot 改名与删除 | 改展示名不改身份、不被新推送覆盖；报告及 Bot 均可删除 | 原始 bot_name 变化可能覆盖名称；DB 缺用户自定义名称字段 | SQLite `display_name` 无损迁移；浏览器 session 保护 PATCH；卡片、历史、搜索统一展示；保留逐报告/Bot 删除 | `go test -race ./...` 覆盖旧库迁移、持久化、重命名与后续推送；API 权限/输入用例 | 本地 UI 改名后卡片/历史/搜索一致；新 bot_name 推送不覆盖；逐一删除报告和 Bot 的二次确认生效；隔离 Docker 重启后名称仍保留 | 生产不可达，未验证 | 本地通过；线上未验证 |
 | P1-09 Logo/README/favicon | 三模块汇入 Dock 的图标统一且小尺寸清晰，无 404 | 登录/Web/文档资源需要保持一致 | README 92×92；Web、favicon、深浅色 SVG 使用一致 Dock 图形；Go embed 随镜像打包 | `npm run build`；镜像静态资源内嵌 | 本地 `/favicon.svg`、`/brand/bolt-dock.svg`、`/brand/bolt-dock-dark.svg` 均 HTTP 200；真实浏览器截图检查。GitHub README 页面渲染未单独访问验证 | 生产不可达，未验证 | 本地通过；GitHub/线上未验证 |
-| P1-10 Actions/发布 | PR 只验证；真实运行时代码合并后一次多架构发布；docs-only 不发布 | 旧路径过滤与重复发布需实证核查 | 保留单一 `.github/workflows/ci.yml`；按完整 diff 筛选运行时路径；单次 Buildx multi-arch job | `bash scripts/release-paths.sh --test` 通过；docs 输入为 false，Go 输入为 true；真实 PR/master Action 待补录 | PR 验证跳过 publish；PR 合并后核查 master workflow 与公开 GHCR digest，结果待补录 | tag 触发未执行；线上部署状态未知 | 本地规则通过；CI/镜像待验证 |
+| P1-10 Actions/发布 | PR 只验证；真实运行时代码合并后一次多架构发布；docs-only 不发布 | 旧路径过滤与重复发布需实证核查 | 保留单一 `.github/workflows/ci.yml`；按完整 diff 筛选运行时路径；单次 Buildx multi-arch job | `bash scripts/release-paths.sh --test` 通过；docs 输入 false、Go 输入 true；PR #10 validate 通过（run `38029771656`） | PR publish 按配置跳过；master run `38029816646` 的 validate/publish 均成功且只执行一轮 Buildx；匿名拉取并运行 `master` 镜像，index digest `sha256:a3afc5cb8da33089659d831706debd6560225e10557cee95d1a08f2fabbbda8a`，含 amd64/arm64 | semver tag 未实际触发；生产部署未知 | PR/master/GHCR 验证通过；tag 和生产环境未验证 |
 
 ## P2-11 集成验证
 
@@ -31,10 +31,11 @@
 | 前端测试与构建 | `cd frontend && npm test && npm run build` | Vitest 8/8 通过；Vite 构建通过 |
 | Docker 构建 | `docker build -t bolt-dock:p6 .` | 通过；最终镜像 manifest `sha256:3d11fce5ef52be7b4ac666c81b9096a46b831116925a5eb86a97d99bba6b170d` |
 | 隔离 Docker 健康/SQLite | `/healthz`、报告 POST/GET、重启、改名后重启读取；仅使用 `/tmp/bolt-dock-p6-docker` | 通过；容器以 `10001:10001` 运行。确认不触碰生产卷 |
+| 已发布 GHCR 镜像 | 无凭据 Docker 配置匿名 pull amd64/arm64；运行镜像并检查 `/healthz` 与报告 API | index `sha256:a3afc5cb8da33089659d831706debd6560225e10557cee95d1a08f2fabbbda8a`；两个平台均 pull 成功；运行 healthy、UID `10001:10001` |
 | 真实浏览器矩阵 | `output/playwright/p6/` | 1440/1280/768/430/390/375/320px；首页、阅读器、长 Markdown、表格、代码、搜索改名、移动端推送指令与对话框截图已保存 |
 | Logo 资源 | 对本地 favicon/浅色/深色 SVG 发 HEAD 请求 | 三项 HTTP 200、`image/svg+xml` |
 | release path | `bash scripts/release-paths.sh --test` 与 docs/source 输入检查 | 通过；文档 false、Go 源码 true |
-| PR / CI / GHCR | 待提交 PR 后补录 | 待验收 |
+| PR / CI / GHCR | [PR #10](https://github.com/Nyakooo/grok-bot-dock/pull/10)；[PR validate run 38029771656](https://github.com/Nyakooo/grok-bot-dock/actions/runs/38029771656)；[master validate + publish run 38029816646](https://github.com/Nyakooo/grok-bot-dock/actions/runs/38029816646) | 两个 run 成功；PR 的 publish 跳过，master 运行一次 Buildx 发布 |
 | 线上部署、缓存、生产 SQLite | 当前环境无生产 URL/主机权限 | 未验证；不得据此声称线上已更新 |
 
 ## 浏览器证据
@@ -56,13 +57,14 @@
 - 生产静态资源：`internal/webui/dist/`
 - 使用说明与数据契约：`README.md`、`docs/TECHNICAL_DESIGN.md`
 
-## PR、合并、发布（待完成）
+## PR、合并、发布
 
-- PR：待创建
-- PR CI：待运行；需核对 validate 通过、publish 在 PR 事件跳过
-- master 合并提交：待完成
-- master Actions：待运行；需核对仅一次多架构 Buildx 发布
-- 匿名 GHCR master manifest digest：待核验
+- PR：[PR #10](https://github.com/Nyakooo/grok-bot-dock/pull/10)（标题 `fix: complete P6 consolidated acceptance work`）
+- PR validate：[run 38029771656](https://github.com/Nyakooo/grok-bot-dock/actions/runs/38029771656) 成功；`publish` 按 PR 事件跳过
+- 合并提交：`cd89031c617a4ec12b0cf90b773912e336125303`（2026-10-10 merge commit）
+- master Actions：[run 38029816646](https://github.com/Nyakooo/grok-bot-dock/actions/runs/38029816646)：validate 和 publish 均成功，只有一个多架构 Buildx job
+- 匿名 GHCR manifest API 返回 HTTP 200；amd64 与 arm64 均使用无凭据 Docker 配置实际 pull 成功。`ghcr.io/nyakooo/grok-bot-dock:master` OCI index digest：`sha256:a3afc5cb8da33089659d831706debd6560225e10557cee95d1a08f2fabbbda8a`；amd64 `sha256:1f4b0acf0c3ae8f8264dd60bd39f523d49e21bfd5d9f05ef81b5732459c89a6c`；arm64 `sha256:631662a90e0b2bbcc5fb99f4b715a1283149e19234d33970afcfc711018b3502`
+- 匿名拉取的 GHCR master 镜像运行后 `/healthz` 返回 `ok`，Bearer 报告 API POST/GET 通过，容器 `healthy` 且 UID `10001:10001`。只挂载新的隔离 `/tmp` 数据目录。
 - semver tag Actions：本轮未触发，不能标记已验证
 
 ## 未解决/受环境限制
