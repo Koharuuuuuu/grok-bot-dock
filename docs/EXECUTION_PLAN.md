@@ -171,3 +171,8 @@ GHCR 首次发布及后续多架构修复均已验收：PR #1–#3 已合并至 
 > 用户反馈此前 P5 实际仅「最大化弹窗模糊」已修复，其他事项未达到预期。此前 P5 标记 [x] 不构成本轮验收依据。**本轮统一以 [P6 集中修复与验收清单](./P6_CONSOLIDATED_FIX_PLAN.md) 为唯一执行入口**，涵盖登录、抖动、移动端、悬浮详情、阅读模式/字号持久化、AI 指令、Bot 改名、Logo、Actions 和真实环境回归。Codex 必须逐项实测、记录证据并提交 P6 验收报告，不得只修改 TODO。
 
 > 本轮执行和实测记录见 [P6 验收报告](./P6_ACCEPTANCE_REPORT.md)。本地 Go/Vue、真实浏览器、隔离 Docker 与 SQLite 持久性检查已通过；PR/Actions/GHCR 结果在合并后补录。生产部署 URL 未提供，生产版本与数据仍标记未验证。
+
+
+## P7 MCP 原生接入（待 Codex 执行）
+
+> [P7 MCP 技术设计与执行验收计划](./P7_MCP_EXECUTION_PLAN.md) 是本阶段唯一权威清单。保留 REST API 与单 Go 容器；在 /mcp 新增 Streamable HTTP 接入，MVP 实现 publish_report 和 search_reports，复用原有认证、业务逻辑、幂等与 SQLite。先审计 SDK 和安全性，逐项测试并生成 docs/P7_MCP_ACCEPTANCE.md。**P7 尚未实现，所有验收项保持 [ ]。**
