@@ -15,11 +15,11 @@ export function writeImmersivePreference(immersive, storage) {
 export function readReaderFontSize(storage) {
   try {
     const value = JSON.parse((storage || globalThis.localStorage).getItem(READER_FONT_KEY) || 'null')
-    return value?.version === 1 && Number.isInteger(value.px) && value.px >= 12 && value.px <= 24 ? value.px : 16
+    return value?.version === 1 && Number.isInteger(value.px) && value.px >= 13 && value.px <= 24 ? value.px : 16
   } catch { return 16 }
 }
 
 export function writeReaderFontSize(px, storage) {
-  const size = Number.isInteger(px) && px >= 12 && px <= 24 ? px : 16
+  const size = Number.isInteger(px) && px >= 13 && px <= 24 ? px : 16
   try { (storage || globalThis.localStorage).setItem(READER_FONT_KEY, JSON.stringify({ version: 1, px: size })) } catch {}
 }

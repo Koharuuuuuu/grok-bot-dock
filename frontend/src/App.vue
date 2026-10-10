@@ -195,7 +195,7 @@ function toggleImmersive() {
   immersive.value = !immersive.value
   writeImmersivePreference(immersive.value)
 }
-function adjustReaderFont(delta) { readerFontSize.value = Math.min(24, Math.max(12, readerFontSize.value + delta)) }
+function adjustReaderFont(delta) { readerFontSize.value = Math.min(24, Math.max(13, readerFontSize.value + delta)) }
 function effectiveBotName(bot) { return bot.display_name || bot.bot_name || bot.bot_id }
 function startRename(bot) {
   renameTarget.value = bot
@@ -483,7 +483,7 @@ function trapReaderFocus(event) {
 
       <div v-if="selected" class="reader-scrim" aria-hidden="true" @click="closeReader"></div>
       <section v-if="selected" ref="readerDialog" class="reader-panel" :class="{ immersive }" role="dialog" aria-modal="true" aria-labelledby="reader-title" tabindex="-1" @keydown.tab="trapReaderFocus">
-        <div class="reader-toolbar"><button class="back-button" @click="closeReader"><span>←</span> 返回卡片</button><div class="reader-tools"><label class="date-filter"><span>日期</span><input v-model="reportDate" type="date" @change="loadReports()"></label><div class="font-tools" aria-label="Markdown 字号"><button class="icon-button" :disabled="readerFontSize <= 12" aria-label="缩小 Markdown 字号" title="缩小字号" @click="adjustReaderFont(-1)">−</button><span>{{ readerFontSize }}px</span><button class="icon-button" :disabled="readerFontSize >= 24" aria-label="放大 Markdown 字号" title="放大字号" @click="adjustReaderFont(1)">＋</button><button class="font-reset" aria-label="重置 Markdown 字号" title="重置为 16px" @click="readerFontSize = 16">重置</button></div><button class="icon-button" :disabled="narrowReader" :title="narrowReader ? '移动端详情已全屏显示' : (immersive ? '退出沉浸阅读' : '放大阅读')" :aria-label="immersive ? '退出沉浸阅读' : '放大阅读'" @click="toggleImmersive">{{ immersive ? '⊙' : '⛶' }}</button><button ref="readerCloseButton" class="icon-button close-button" title="关闭" aria-label="关闭阅读面板" @click="closeReader">×</button></div></div>
+        <div class="reader-toolbar"><button class="back-button" @click="closeReader"><span>←</span> 返回卡片</button><div class="reader-tools"><label class="date-filter"><span>日期</span><input v-model="reportDate" type="date" @change="loadReports()"></label><div class="font-tools" aria-label="Markdown 字号"><button class="icon-button" :disabled="readerFontSize <= 13" aria-label="缩小 Markdown 字号" title="缩小字号" @click="adjustReaderFont(-1)">−</button><span>{{ readerFontSize }}px</span><button class="icon-button" :disabled="readerFontSize >= 24" aria-label="放大 Markdown 字号" title="放大字号" @click="adjustReaderFont(1)">＋</button><button class="font-reset" aria-label="重置 Markdown 字号" title="重置为 16px" @click="readerFontSize = 16">重置</button></div><button class="icon-button" :disabled="narrowReader" :title="narrowReader ? '移动端详情已全屏显示' : (immersive ? '退出沉浸阅读' : '放大阅读')" :aria-label="immersive ? '退出沉浸阅读' : '放大阅读'" @click="toggleImmersive">{{ immersive ? '⊙' : '⛶' }}</button><button ref="readerCloseButton" class="icon-button close-button" title="关闭" aria-label="关闭阅读面板" @click="closeReader">×</button></div></div>
         <div class="reader-layout">
           <nav class="report-list" aria-label="报告历史">
             <div class="list-heading"><div><span class="eyebrow">{{ selected.source.toUpperCase() }} · HISTORY</span><h2 id="reader-title">{{ effectiveBotName(selected) }}</h2></div><span class="list-count">{{ reports.length }}</span></div>
