@@ -1,9 +1,12 @@
 package api
 
 import (
+	"context"
+	"crypto/rand"
 	"crypto/subtle"
 	"database/sql"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -11,6 +14,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/url"
 	"path"
 	"regexp"
 	"strconv"
@@ -23,14 +27,21 @@ import (
 )
 
 type Server struct {
-	store    *store.Store
-	hub      *events.Hub
-	token    string
-	maxBytes int64
-	static   embed.FS
-	rateMu   sync.Mutex
-	rate     map[string]rateWindow
+	store     *store.Store
+	hub       *events.Hub
+	token     string
+	maxBytes  int64
+	static    embed.FS
+	rateMu    sync.Mutex
+	rate      map[string]rateWindow
+	sessionMu sync.Mutex
+	sessions  map[string]time.Time
 }
+
+const (
+	sessionCookie = "bolt_dock_session"
+	sessionTTL    = 12 * time.Hour
+)
 
 type rateWindow struct {
 	started time.Time
@@ -40,11 +51,13 @@ type rateWindow struct {
 var sourcePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 func New(s *store.Store, h *events.Hub, token string, maxBytes int64, static embed.FS) *Server {
-	return &Server{store: s, hub: h, token: token, maxBytes: maxBytes, static: static, rate: make(map[string]rateWindow)}
+	return &Server{store: s, hub: h, token: token, maxBytes: maxBytes, static: static, rate: make(map[string]rateWindow), sessions: make(map[string]time.Time)}
 }
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
+	mux.HandleFunc("POST /api/v1/auth/login", s.login)
+	mux.HandleFunc("GET /api/v1/auth/session", s.sessionStatus)
 	mux.Handle("/api/", s.auth(http.HandlerFunc(s.api)))
 	mux.HandleFunc("/", s.serveStatic)
 	return logRequests(mux)
@@ -52,15 +65,134 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if s.token == "" || len(got) != len(s.token) || subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) != 1 {
+		bearerOK := s.token != "" && len(got) == len(s.token) && subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) == 1
+		cookie, _ := r.Cookie(sessionCookie)
+		sessionOK := cookie != nil && s.validSession(cookie.Value, time.Now())
+		if !bearerOK && !sessionOK {
 			writeError(w, 401, "unauthorized", "valid bearer token required")
 			return
+		}
+		if sessionOK {
+			if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions && !sameOrigin(r) {
+				writeError(w, http.StatusForbidden, "invalid_origin", "session request origin must match this site")
+				return
+			}
+			ctx := context.WithValue(r.Context(), sessionContextKey{}, cookie.Value)
+			r = r.WithContext(ctx)
 		}
 		next.ServeHTTP(w, r)
 	})
 }
+
+type sessionContextKey struct{}
+
+func (s *Server) login(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if !s.allowLogin(r.RemoteAddr, time.Now()) {
+		writeError(w, http.StatusTooManyRequests, "rate_limited", "too many login attempts; retry later")
+		return
+	}
+	var in struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in); err != nil || in.Token == "" || len(in.Token) != len(s.token) || subtle.ConstantTimeCompare([]byte(in.Token), []byte(s.token)) != 1 {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "access token is invalid")
+		return
+	}
+	data := make([]byte, 32)
+	if _, err := rand.Read(data); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "could not create session")
+		return
+	}
+	id := base64.RawURLEncoding.EncodeToString(data)
+	now := time.Now()
+	s.sessionMu.Lock()
+	for existing, expiry := range s.sessions {
+		if !now.Before(expiry) {
+			delete(s.sessions, existing)
+		}
+	}
+	s.sessions[id] = now.Add(sessionTTL)
+	s.sessionMu.Unlock()
+	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: id, Path: "/", HttpOnly: true, Secure: requestIsHTTPS(r), SameSite: http.SameSiteLaxMode})
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) sessionStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	cookie, err := r.Cookie(sessionCookie)
+	writeJSON(w, http.StatusOK, map[string]bool{"authenticated": err == nil && s.validSession(cookie.Value, time.Now())})
+}
+
+func (s *Server) validSession(id string, now time.Time) bool {
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
+	expires, ok := s.sessions[id]
+	if ok && !now.Before(expires) {
+		delete(s.sessions, id)
+		return false
+	}
+	return ok
+}
+
+func (s *Server) revokeSession(id string) {
+	s.sessionMu.Lock()
+	delete(s.sessions, id)
+	s.sessionMu.Unlock()
+}
+
+func (s *Server) allowLogin(remote string, now time.Time) bool {
+	key := remote
+	if host, _, err := net.SplitHostPort(remote); err == nil {
+		key = host
+	}
+	s.rateMu.Lock()
+	defer s.rateMu.Unlock()
+	window := s.rate["login:"+key]
+	if window.started.IsZero() || now.Sub(window.started) >= time.Minute {
+		window = rateWindow{started: now}
+	}
+	if window.count >= 10 {
+		s.rate["login:"+key] = window
+		return false
+	}
+	window.count++
+	s.rate["login:"+key] = window
+	return true
+}
+
+func requestIsHTTPS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]), "https")
+}
+
+func sameOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	scheme := "http"
+	if requestIsHTTPS(r) {
+		scheme = "https"
+	}
+	return strings.EqualFold(u.Host, r.Host) && strings.EqualFold(u.Scheme, scheme)
+}
 func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	switch {
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/logout":
+		w.Header().Set("Cache-Control", "no-store")
+		if id, _ := r.Context().Value(sessionContextKey{}).(string); id != "" {
+			s.revokeSession(id)
+		}
+		secure := requestIsHTTPS(r)
+		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode, MaxAge: -1})
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	case r.Method == "POST" && r.URL.Path == "/api/v1/reports":
 		s.createReport(w, r)
 	case r.Method == "GET" && r.URL.Path == "/api/v1/reports":
@@ -392,6 +524,9 @@ func (s *Server) sse(w http.ResponseWriter, r *http.Request) {
 			}
 			f.Flush()
 		case <-ticker.C:
+			if id, _ := r.Context().Value(sessionContextKey{}).(string); id != "" && !s.validSession(id, time.Now()) {
+				return
+			}
 			if _, e := io.WriteString(w, ": heartbeat\n\n"); e != nil {
 				return
 			}

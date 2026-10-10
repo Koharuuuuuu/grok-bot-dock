@@ -1,9 +1,10 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { renderSanitizedMarkdown } from './markdown'
 import { highlightParts, makeSearchParams, notificationStatus, refreshesSelectedBot, searchSnippet } from './ui-model'
 
-const token = ref('')
+const authenticated = ref(false)
+const authReady = ref(false)
 const tokenInput = ref('')
 const tokenError = ref('')
 const source = ref('')
@@ -31,6 +32,12 @@ const promptOpen = ref(false)
 const promptCopied = ref(false)
 const promptFallback = ref(false)
 const pushTemplate = ref({ endpoint: 'https://YOUR_DOMAIN', source: '', botId: '', botName: '' })
+const readerDialog = ref(null)
+const readerCloseButton = ref(null)
+let previousFocus
+let lockedScrollY = 0
+let previousBodyOverflow = ''
+let previousBodyPaddingRight = ''
 let streamAbort
 let refreshTimer
 
@@ -38,7 +45,7 @@ const renderedMarkdown = computed(() => selectedReport.value
   ? renderSanitizedMarkdown(selectedReport.value.content || '') : '')
 const visibleBots = computed(() => bots.value)
 const filteredSources = computed(() => sources.value)
-const isLoggedIn = computed(() => Boolean(token.value))
+const isLoggedIn = computed(() => authenticated.value)
 const activeCount = computed(() => searching.value ? searchResults.value.length : visibleBots.value.length)
 const pushPrompt = computed(() => {
   const endpoint = pushTemplate.value.endpoint.trim().replace(/\/$/, '') || 'https://YOUR_DOMAIN'
@@ -66,10 +73,12 @@ function avatarFailed(event) { event.target.hidden = true; event.target.nextElem
 async function api(url, options = {}) {
   const response = await fetch(url, {
     ...options,
-    headers: { Authorization: `Bearer ${token.value}`, ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers },
+    credentials: 'same-origin',
+    headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers },
   })
   if (response.status === 401) {
-    token.value = ''; throw new Error('访问密钥无效，请重新输入。')
+    expireSession()
+    throw new Error('登录会话已失效，请重新登录。')
   }
   if (!response.ok) {
     let message = `请求失败 (${response.status})`
@@ -82,21 +91,37 @@ async function api(url, options = {}) {
 async function login() {
   const value = tokenInput.value.trim()
   if (!value) { tokenError.value = '请输入访问密钥。'; return }
-  token.value = value
+  tokenInput.value = ''
   try {
-    await loadData()
+    const response = await fetch('/api/v1/auth/login', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: value }),
+    })
+    if (!response.ok) throw new Error(response.status === 401 ? '访问密钥无效，请重试。' : `登录失败 (${response.status})`)
+    authenticated.value = true
+    try { await loadData() } catch (e) { if (!authenticated.value) throw e; error.value = e.message }
     tokenError.value = ''
     startStream()
-    tokenInput.value = ''
-  } catch (e) { token.value = ''; tokenError.value = e.message }
+  } catch (e) { if (authenticated.value) await fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {}); authenticated.value = false; tokenError.value = e.message }
 }
-function logout() {
-  token.value = ''
-  streamAbort?.abort(); selected.value = null
+async function logout() {
+  try {
+    const response = await fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'same-origin' })
+    if (!response.ok && response.status !== 401) throw new Error(`退出失败 (${response.status})`)
+  } catch (e) { error.value = e.message || '无法连接服务器，当前会话尚未注销。'; return }
+  authenticated.value = false
+  streamAbort?.abort(); selected.value = null; selectedReport.value = null
+}
+
+function expireSession() {
+  authenticated.value = false
+  streamAbort?.abort()
+  selected.value = null; selectedReport.value = null; reports.value = []
+  bots.value = []; sources.value = []
 }
 
 async function loadData() {
-  if (!token.value) return
+  if (!authenticated.value) return
   error.value = ''
   try {
     const params = new URLSearchParams()
@@ -219,9 +244,10 @@ async function startStream() {
   streamAbort?.abort(); streamAbort = new AbortController()
   const { signal } = streamAbort
   let connectedBefore = false
-  while (!signal.aborted && token.value) {
+  while (!signal.aborted && authenticated.value) {
     try {
-      const response = await fetch('/api/v1/events', { headers: { Authorization: `Bearer ${token.value}`, Accept: 'text/event-stream' }, signal })
+      const response = await fetch('/api/v1/events', { credentials: 'same-origin', headers: { Accept: 'text/event-stream' }, signal })
+      if (response.status === 401) { expireSession(); return }
       if (!response.ok || !response.body) throw new Error('stream unavailable')
       if (connectedBefore) await loadData()
       connectedBefore = true
@@ -260,23 +286,65 @@ async function startStream() {
     await new Promise(resolve => setTimeout(resolve, 3000))
   }
 }
-function onKey(event) { if (event.key === 'Escape' && promptOpen.value) promptOpen.value = false; else if (event.key === 'Escape' && immersive.value) immersive.value = false; else if (event.key === 'Escape' && selected.value) closeReader() }
+function onKey(event) { if (event.key === 'Escape' && promptOpen.value) promptOpen.value = false; else if (event.key === 'Escape' && selected.value) closeReader() }
 
 watch(source, async () => {
-  if (!token.value) return
+  if (!authenticated.value) return
   searching.value = Boolean(query.value.trim())
   if (searching.value) await runSearch(); else await loadData()
 })
+watch([selected, promptOpen], async ([hasReader, hasPrompt], [hadReader, hadPrompt]) => {
+  const shouldLock = Boolean(hasReader || hasPrompt)
+  const wasLocked = Boolean(hadReader || hadPrompt)
+  if (shouldLock && !wasLocked) {
+    previousFocus = document.activeElement
+    lockedScrollY = window.scrollY
+    previousBodyOverflow = document.body.style.overflow
+    previousBodyPaddingRight = document.body.style.paddingRight
+    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth
+    document.body.style.overflow = 'hidden'
+    if (scrollbarWidth > 0) document.body.style.paddingRight = `${scrollbarWidth}px`
+  }
+  if (!shouldLock && wasLocked) {
+    document.body.style.overflow = previousBodyOverflow
+    document.body.style.paddingRight = previousBodyPaddingRight
+    window.scrollTo(0, lockedScrollY)
+    await nextTick()
+    if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true })
+  }
+  if (hasReader && !hadReader) {
+    await nextTick()
+    readerCloseButton.value?.focus({ preventScroll: true })
+  }
+})
 onMounted(async () => {
   window.addEventListener('keydown', onKey)
+  try {
+    const response = await fetch('/api/v1/auth/session', { credentials: 'same-origin' })
+    if (response.ok && (await response.json()).authenticated) {
+      authenticated.value = true
+      await loadData()
+      startStream()
+    }
+  } catch {}
+  authReady.value = true
 })
-onUnmounted(() => { window.removeEventListener('keydown', onKey); streamAbort?.abort(); clearTimeout(refreshTimer) })
+onUnmounted(() => { window.removeEventListener('keydown', onKey); streamAbort?.abort(); clearTimeout(refreshTimer); document.body.style.overflow = previousBodyOverflow; document.body.style.paddingRight = previousBodyPaddingRight })
+
+function trapReaderFocus(event) {
+  const focusable = [...readerDialog.value.querySelectorAll('a[href], button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])')]
+  if (!focusable.length) return
+  const first = focusable[0], last = focusable[focusable.length - 1]
+  if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+}
 </script>
 
 <template>
-  <main v-if="!isLoggedIn" class="gate">
+  <main v-if="!authReady" class="gate" aria-live="polite"><div class="gate-card"><div class="brand-mark"><img src="/brand/bolt-dock.svg" alt=""></div><p class="eyebrow">PERSONAL REPORT SPACE</p><h1>正在连接 <em>Bolt Dock</em></h1><p class="gate-copy">正在恢复安全会话…</p></div></main>
+  <main v-else-if="!isLoggedIn" class="gate">
     <div class="gate-card">
-      <div class="brand-mark">B<span>.</span></div>
+      <div class="brand-mark"><img src="/brand/bolt-dock.svg" alt="Bolt Dock"></div>
       <p class="eyebrow">PERSONAL REPORT SPACE</p>
       <h1>欢迎来到 <em>Bolt Dock</em></h1>
       <p class="gate-copy">输入部署时设置的访问密钥，查看你的 Bot 报告。</p>
@@ -291,9 +359,9 @@ onUnmounted(() => { window.removeEventListener('keydown', onKey); streamAbort?.a
     <div class="gate-orbit orbit-one"></div><div class="gate-orbit orbit-two"></div>
   </main>
 
-  <div v-else class="app-shell" :class="{ 'reader-open': selected, immersive }">
+  <div v-else class="app-shell">
     <header class="topbar">
-      <a class="wordmark" href="#" @click.prevent="closeReader(); clearSearch()"><span class="brand-mark small">B<span>.</span></span><span>Bolt <b>Dock</b></span></a>
+      <a class="wordmark" href="#" @click.prevent="closeReader(); clearSearch()"><span class="brand-mark small"><img src="/brand/bolt-dock.svg" alt=""></span><span>Bolt <b>Dock</b></span></a>
       <form class="search-box" @submit.prevent="runSearch()">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5"/></svg>
         <input v-model="query" aria-label="搜索所有报告" placeholder="搜索所有报告…" @keydown.esc="clearSearch">
@@ -338,7 +406,7 @@ onUnmounted(() => { window.removeEventListener('keydown', onKey); streamAbort?.a
           <button v-if="searchCursor" class="load-more" @click="runSearch(true)">加载更多</button>
         </div>
         <div v-else-if="!bots.length && !busy" class="empty-state welcome-empty"><div class="empty-icon">✳</div><p class="eyebrow">A QUIET DOCK</p><h2>等待第一份报告靠岸</h2><p>当 Bot 首次推送报告后，它会自动出现在这里。</p><span>仅显示已通过 API 推送的来源</span></div>
-        <div v-else class="bot-grid" :class="{ 'with-reader': selected }">
+        <div v-else class="bot-grid">
           <div v-for="bot in bots" :key="`${bot.source}:${bot.bot_id}`" class="bot-card-shell">
             <button class="bot-card" :class="{ selected: selected?.source === bot.source && selected?.bot_id === bot.bot_id }" @click="openBot(bot)">
               <div class="card-topline"><span class="source-pill">{{ bot.source }}</span><span v-if="bot.unread_count" class="unread-pill"><i></i> 新报告</span><span v-else class="report-number">{{ bot.report_count }} 份报告</span></div>
@@ -352,11 +420,12 @@ onUnmounted(() => { window.removeEventListener('keydown', onKey); streamAbort?.a
         <div v-if="busy" class="loading-line"><span></span>正在更新…</div>
       </section>
 
-      <aside v-if="selected" class="reader-panel" :class="{ immersive }">
-        <div class="reader-toolbar"><button class="back-button" @click="closeReader"><span>←</span> 返回卡片</button><div class="reader-tools"><label class="date-filter"><span>日期</span><input v-model="reportDate" type="date" @change="loadReports()"></label><button class="icon-button" :title="immersive ? '退出沉浸阅读' : '放大阅读'" :aria-label="immersive ? '退出沉浸阅读' : '放大阅读'" @click="toggleImmersive">{{ immersive ? '⊙' : '⛶' }}</button><button class="icon-button close-button" title="关闭" aria-label="关闭阅读面板" @click="closeReader">×</button></div></div>
+      <div v-if="selected" class="reader-scrim" aria-hidden="true" @click="closeReader"></div>
+      <section v-if="selected" ref="readerDialog" class="reader-panel" :class="{ immersive }" role="dialog" aria-modal="true" aria-labelledby="reader-title" tabindex="-1" @keydown.tab="trapReaderFocus">
+        <div class="reader-toolbar"><button class="back-button" @click="closeReader"><span>←</span> 返回卡片</button><div class="reader-tools"><label class="date-filter"><span>日期</span><input v-model="reportDate" type="date" @change="loadReports()"></label><button class="icon-button" :title="immersive ? '退出沉浸阅读' : '放大阅读'" :aria-label="immersive ? '退出沉浸阅读' : '放大阅读'" @click="toggleImmersive">{{ immersive ? '⊙' : '⛶' }}</button><button ref="readerCloseButton" class="icon-button close-button" title="关闭" aria-label="关闭阅读面板" @click="closeReader">×</button></div></div>
         <div class="reader-layout">
           <nav class="report-list" aria-label="报告历史">
-            <div class="list-heading"><div><span class="eyebrow">{{ selected.source.toUpperCase() }} · HISTORY</span><h2>{{ selected.bot_name }}</h2></div><span class="list-count">{{ reports.length }}</span></div>
+            <div class="list-heading"><div><span class="eyebrow">{{ selected.source.toUpperCase() }} · HISTORY</span><h2 id="reader-title">{{ selected.bot_name }}</h2></div><span class="list-count">{{ reports.length }}</span></div>
             <div v-for="item in reports" :key="item.id" class="history-row">
               <button class="history-item" :class="{ active: selectedReport?.id === item.id }" @click="selectReport(item)"><span class="history-date">{{ formatDate(item.executed_at) }}</span><strong>{{ item.title || item.bot_name }}</strong><span>{{ item.summary || '打开查看完整报告' }}</span></button>
               <button class="delete-action history-delete" :disabled="Boolean(deleting)" :aria-label="`删除报告：${item.title || item.bot_name}`" @click="deleteReport(item)">删除</button>
@@ -374,7 +443,7 @@ onUnmounted(() => { window.removeEventListener('keydown', onKey); streamAbort?.a
           </article>
           <div v-else class="document-empty"><span>✳</span><p>选择一份报告开始阅读</p></div>
         </div>
-      </aside>
+      </section>
     </div>
     <footer class="app-footer"><span>BOLT DOCK <i>·</i> PERSONAL REPORT SPACE</span><span>数据只保存在你的服务端 <b>↗</b></span></footer>
     <div v-if="promptOpen" class="modal-scrim" @click.self="promptOpen = false">

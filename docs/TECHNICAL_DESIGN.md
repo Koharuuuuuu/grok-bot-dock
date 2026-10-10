@@ -14,15 +14,15 @@ reports: id, bot_pk(FK), external_id(NULLABLE), executed_at(固定精度 UTC ISO
 ## 4. HTTP API
 `POST /api/v1/reports`：JSON，必填 bot_id、bot_name、executed_at、content；可选 external_id。校验 RFC3339 时间、长度、报文上限（建议 1 MiB，可配置），拒绝空白内容及非法字段；首次写入自动 upsert Bot；事务内插入报告；成功返回 201 + report_id、bot_id；重复 external_id 返回 200 + 已有 report_id；400 校验失败、401 鉴权失败、413 超限、429 限流、500 服务错误。避免在日志中打印 token 和报告正文。
 
-接口：`GET /api/v1/sources`（已出现来源及计数），`GET /api/v1/bots?source=`（卡片与统计），`GET /api/v1/bots/{bot_id}/reports?source=&cursor=&date=`，`GET /api/v1/reports?source=&bot_id=&date=&cursor=`，`GET /api/v1/reports/{id}`，`DELETE /api/v1/reports/{id}`（删除单份报告），`DELETE /api/v1/bots?source=&bot_id=`（删除 Bot 及其报告），`POST /api/v1/bots/read`（记录阅读进度），`GET /api/v1/search?q=&source=&bot_id=&from=&to=&cursor=`，`GET /api/v1/events`（SSE），`GET /healthz`。除健康检查外，读写接口都要求 Bearer Token。历史按时间倒序稳定游标分页，默认 20 条；from/to 是含首尾日期，搜索结果有摘要、来源、时间、高亮与跳转目标。数据库统计把主库和 WAL/SHM 文件容量相加，始终作为全库指标显示。
+接口：`POST /api/v1/auth/login`（用 ACCESS_TOKEN 建立浏览器会话），`GET /api/v1/auth/session`（只返回当前 Cookie 是否有效），`POST /api/v1/auth/logout`（撤销当前会话），`GET /api/v1/sources`（已出现来源及计数），`GET /api/v1/bots?source=`（卡片与统计），`GET /api/v1/bots/{bot_id}/reports?source=&cursor=&date=`，`GET /api/v1/reports?source=&bot_id=&date=&cursor=`，`GET /api/v1/reports/{id}`，`DELETE /api/v1/reports/{id}`（删除单份报告），`DELETE /api/v1/bots?source=&bot_id=`（删除 Bot 及其报告），`POST /api/v1/bots/read`（记录阅读进度），`GET /api/v1/search?q=&source=&bot_id=&from=&to=&cursor=`，`GET /api/v1/events`（SSE），`GET /healthz`。工作台 API 接受服务端会话 Cookie，外部推送 API 保留 Bearer Token；健康检查与只返回会话状态布尔值的 session probe 不要求认证。历史按时间倒序稳定游标分页，默认 20 条；from/to 是含首尾日期，搜索结果有摘要、来源、时间、高亮与跳转目标。数据库统计把主库和 WAL/SHM 文件容量相加，始终作为全库指标显示。
 
 删除逻辑：删除报告使用事务删除报告记录，由 SQLite 删除触发器同步移除 FTS 行；Bot 保留，`last_report_at` 回退到剩余报告中的最新时间；报告不存在返回 404。删除 Bot 按 `(source, bot_id)` 定位，事务内级联删除全部报告及其 FTS 行；同一来源仍有 Bot 时保留来源，否则同时删除空来源；Bot 不存在返回 404。成功删除分别广播 `report.deleted`（报告 ID、来源、Bot ID）和 `bot.deleted`（来源、Bot ID、删除报告数）SSE 事件。前端删除控件执行前确认永久删除，成功后刷新卡片、报告历史、统计和搜索；Bot 删除确认明确报告级联范围。
 
 ## 5. 安全与通知
-所有 `/api/` 读写接口共享必填 `ACCESS_TOKEN` Bearer Token，采用常量时间比较；缺少 token 时拒绝启动。网页登录通过密码输入并仅在当前页面内存持有 token，不写入 localStorage、sessionStorage、提示词或剪贴板。请求体默认上限 1 MiB，可配置；推送接口限制每客户端地址每分钟 120 次。CORS 默认同源；Markdown 原始 HTML 禁用，DOMPurify 清理输出。浏览器通知需要 HTTPS/localhost、用户授权与浏览器/系统允许。SSE 支持页面内重连、25 秒心跳及断线连接清理；浏览器离线期间不保证收到事件。
+缺少 `ACCESS_TOKEN` 时服务拒绝启动；外部推送保留 Bearer Token 常量时间比较。网页登录把密钥只提交到登录接口，服务端生成 256-bit 随机会话 ID，在进程内保存 12 小时到期时间，仅经 `HttpOnly; Path=/; SameSite=Lax` Cookie 交给浏览器；不设置持久期限，HTTPS（包括反向代理传来的 `X-Forwarded-Proto: https`）时另设 `Secure`。反向代理须覆盖而非透传用户提供的 X-Forwarded-Proto。注销会撤销会话并用同属性清除 Cookie；带 Cookie 的非安全方法还需同源 Origin。进程重启会使活动会话失效。浏览器可能通过会话恢复保留无持久期限的 Cookie，网页无法可靠判断整个浏览器进程已经关闭，因此“关闭浏览器即登出”不作保证。请求体默认上限 1 MiB，可配置；推送接口限制每客户端地址每分钟 120 次，登录另限每客户端地址每分钟 10 次。CORS 默认同源；Markdown 原始 HTML 禁用，DOMPurify 清理输出。浏览器通知需要 HTTPS/localhost、用户授权与浏览器/系统允许。SSE 支持页面内重连、25 秒心跳及断线连接清理；撤销后的已有 SSE 会在下一次心跳检查时终止，最长约 25 秒；浏览器离线期间不保证收到事件。
 
 ## 6. 前端交互
-桌面优先、移动端自适应；首页卡片网格按最后更新时间排序。每张卡展示 Bot 名称、最新报告摘要、执行时间、未读状态。点击卡片在抽屉/详情视图阅读完整 Markdown（标题、列表、表格、代码、链接、图片）；历史日期筛选、分页；顶部全局搜索，搜索结果高亮关键词并可直达原文。通知权限由明确的用户操作触发，不在页面初次加载时强制弹窗。卡片列表不加载历史全文，避免性能浪费。
+桌面与移动端自适应；首页卡片网格按最后更新时间排序。每张卡展示 Bot 名称、最新报告摘要、执行时间、未读状态。点击卡片打开不参与主页面布局的悬浮 dialog，底层尺寸不变；对话框内滚动 Markdown，历史日期筛选、分页；支持 Esc、焦点管理和关闭后恢复焦点/滚动位置。移动端使用近全屏阅读层，历史列表与正文纵向排列，表格和代码块局部横向滚动。顶部全局搜索，搜索结果高亮关键词并可直达原文。通知权限由明确的用户操作触发，不在页面初次加载时强制弹窗。卡片列表不加载历史全文，避免性能浪费。
 
 ## 7. 质量保障
 Go 单测覆盖验证、幂等、并发写入、FTS 同步、分页、鉴权；前端测试覆盖 Markdown XSS、卡片更新、检索与通知降级；端到端测试使用 curl POST → SQLite → Web/SSE。Docker 重启后数据不丢失。提供 curl 示例、.env.example、docker-compose.yml、Makefile、部署与备份说明；CI 运行 Go 测试和前端构建。默认 master 分支，提交前检查现有内容并避免破坏性覆盖。
@@ -51,10 +51,10 @@ Go 单测覆盖验证、幂等、并发写入、FTS 同步、分页、鉴权；�
 UI：无左侧导航；顶部品牌 Bolt Dock、默认跨来源全局搜索、动态来源下拉、Bot 数/报告数/全库数据大小。来源切换同时影响卡片、搜索、相关计数；数据库物理大小始终标记「全库」。未选择卡片时网格占满；点击卡片右侧抽屉显示 Markdown；抽屉放大按钮进入宽屏沉浸式阅读，支持退出还原。头像由 avatar_url 提供，无头像/失败使用默认图标。桌面优先、移动端响应式。UI 实现以本节为最新权威约束，覆盖旧版左侧菜单设计。
 
 ## 10. GHCR 发布、Compose 与复制指令（新增强制约束）
-- GitHub Actions：push master 和 push v* tag 触发；先执行 Go 测试、前端构建及镜像构建检查，成功后使用 GitHub Actions `GITHUB_TOKEN`、`packages: write` 登录 GHCR，通过 docker/build-push-action 推送多阶段构建镜像。master 发布 `master` 标签；版本 tag 发布对应版本及 `latest`，不得在未经验证的 master 提交上自动覆盖稳定 latest。启用构建缓存，避免重复构建；权限最小化。镜像支持 linux/amd64，linux/arm64 如成本允许则支持并测试。
+- GitHub Actions：单一 `.github/workflows/ci.yml` 在 master push、v* tag、master PR 和手动 dispatch 触发；每次只执行一套 Go 与前端验证。master push 通过完整 `before..sha` diff 和 `scripts/release-paths.sh` 判定运行镜像输入；文档类改动不发布，rename/deletion 通过 `--no-renames` 检查旧、新路径。PR 验证不受路径过滤影响；tag 和手动 dispatch 不依赖路径变化，发布失败可重跑失败 Job 或 dispatch 失败 ref。发布 Job 依赖验证，仅授予 `packages: write`，用一个 Buildx 调用推送 linux/amd64、linux/arm64 manifest。master 发布 `master`；版本 tag 发布对应版本及 `latest`。所有工作流修改路径都能触发发布流程修复的验证与部署；启用缓存和并发取消，但不取消版本 tag 发布。
 - GHCR 包必须 Public，源码仓库保持现有私有属性；首次发布后由有权限者在 Package settings 将包可见性设为 Public（若未自动公开）。从未认证环境验证 `docker pull ghcr.io/nyakooo/grok-bot-dock:master`；Actions 通过不等于镜像已公开。
 - Compose：默认使用公开 GHCR 镜像；映射 `18765:18765`（建议绑定 127.0.0.1 并通过 HTTPS 反代），挂载命名卷到 /data，设置 restart、healthcheck、必要环境变量。额外提供本地 build 的 compose override/profile 或明确 `docker compose -f ...` 命令，确保确实触发 build。README 写出拉取部署、本地构建、更新及 `docker image prune -f`，注明 prune 影响整台主机的悬空镜像，不删数据卷。
 - UI：提供「复制 AI 推送指令」入口和轻量配置/预览；用 Clipboard API 复制与 README 一致的模板，包含 source、bot_id、bot_name、executed_at、content、external_id；强调仅推正式报告、不得推测试/草稿/日志；拒绝授权或 Clipboard API 不可用时显示可手动选择的文本。不要将真实 token 写入浏览器页面、localStorage 或剪贴板，模板使用安全占位符。UI 需与无侧栏卡片布局兼容。
 - 验收：检查 workflow 成功、GHCR 匿名 pull、Compose 启动/健康检查/持久化、复制文本字段完整且包含正式报告过滤规则；在未配置实际域名时不虚构真实部署地址。
 
-当前 Compose 将 HTTP 端口仅绑定到宿主机 `127.0.0.1`，容器限制为 2 CPU、1600 MiB；应通过同机 HTTPS 反向代理提供公网入口。网页登录 token 只保存在当前页面内存，页面刷新后需重新输入。
+当前 Compose 将 HTTP 端口仅绑定到宿主机 `127.0.0.1`，容器限制为 2 CPU、1600 MiB；应通过同机 HTTPS 反向代理提供公网入口。网页登录用服务端内存会话和 HttpOnly Cookie 恢复刷新状态；进程重启会撤销所有浏览器会话。
