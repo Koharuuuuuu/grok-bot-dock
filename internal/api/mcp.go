@@ -270,12 +270,7 @@ func (s *Server) mcpAuth(next http.Handler) http.Handler {
 			writeError(w, http.StatusForbidden, "invalid_origin", "cross-origin MCP requests are not allowed")
 			return
 		}
-		const prefix = "Bearer "
-		header := r.Header.Get("Authorization")
-		got := ""
-		if strings.HasPrefix(header, prefix) {
-			got = strings.TrimPrefix(header, prefix)
-		}
+		got, _ := bearerToken(r.Header.Get("Authorization"))
 		legacyValid := s.token != "" && len(got) == len(s.token) && subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) == 1
 		var principal oauthPrincipal
 		oauthValid := false

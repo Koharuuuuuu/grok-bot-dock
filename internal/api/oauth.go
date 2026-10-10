@@ -157,7 +157,16 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, r, "invalid_request", "state exceeds the maximum length")
 		return
 	}
-	if q.Get("response_type") != "code" || q.Get("code_challenge_method") != "S256" || !validChallenge(q.Get("code_challenge")) {
+	responseType := q.Get("response_type")
+	if responseType == "" {
+		s.oauthRedirectError(w, redirect, q.Get("state"), "invalid_request")
+		return
+	}
+	if responseType != "code" {
+		s.oauthRedirectError(w, redirect, q.Get("state"), "unsupported_response_type")
+		return
+	}
+	if q.Get("code_challenge_method") != "S256" || !validChallenge(q.Get("code_challenge")) {
 		s.oauthRedirectError(w, redirect, q.Get("state"), "invalid_request")
 		return
 	}
@@ -327,10 +336,7 @@ func (s *Server) oauthToken(w http.ResponseWriter, r *http.Request) {
 	}
 	_, status, ok := s.authenticateOAuthClient(r, clientID, secret)
 	if !ok {
-		if oauthBasicAuthAttempt(r) {
-			w.Header().Set("WWW-Authenticate", `Basic realm="oauth"`)
-			status = http.StatusUnauthorized
-		}
+		status = writeOAuthClientAuthChallenge(w, r, status)
 		oauthJSONError(w, status, "invalid_client")
 		return
 	}
@@ -339,16 +345,29 @@ func (s *Server) oauthToken(w http.ResponseWriter, r *http.Request) {
 		oauthJSONError(w, 429, "temporarily_unavailable")
 		return
 	}
-	if r.Form.Get("grant_type") != "authorization_code" {
+	grantType := r.Form.Get("grant_type")
+	if grantType == "" {
+		oauthJSONError(w, 400, "invalid_request")
+		return
+	}
+	if grantType != "authorization_code" {
 		oauthJSONError(w, 400, "unsupported_grant_type")
 		return
 	}
 	redirectURI, code, resource := r.Form.Get("redirect_uri"), r.Form.Get("code"), r.Form.Get("resource")
-	if code == "" || resource != s.oauthResource() {
-		oauthJSONError(w, 400, "invalid_grant")
+	if code == "" {
+		oauthJSONError(w, 400, "invalid_request")
+		return
+	}
+	if resource == "" || resource != s.oauthResource() {
+		oauthJSONError(w, 400, "invalid_target")
 		return
 	}
 	verifier := r.Form.Get("code_verifier")
+	if verifier == "" {
+		oauthJSONError(w, 400, "invalid_request")
+		return
+	}
 	if len(verifier) < 43 || len(verifier) > 128 || !unreservedVerifier(verifier) {
 		oauthJSONError(w, 400, "invalid_grant")
 		return
@@ -397,10 +416,7 @@ func (s *Server) oauthRevoke(w http.ResponseWriter, r *http.Request) {
 	}
 	_, status, ok := s.authenticateOAuthClient(r, clientID, secret)
 	if !ok {
-		if oauthBasicAuthAttempt(r) {
-			w.Header().Set("WWW-Authenticate", `Basic realm="oauth"`)
-			status = http.StatusUnauthorized
-		}
+		status = writeOAuthClientAuthChallenge(w, r, status)
 		oauthJSONError(w, status, "invalid_client")
 		return
 	}
@@ -503,9 +519,29 @@ func hasRepeatedOAuthParams(values url.Values, parameters ...string) bool {
 	return false
 }
 
-func oauthBasicAuthAttempt(r *http.Request) bool {
+func writeOAuthClientAuthChallenge(w http.ResponseWriter, r *http.Request, status int) int {
 	fields := strings.Fields(r.Header.Get("Authorization"))
-	return len(fields) > 0 && strings.EqualFold(fields[0], "Basic")
+	if len(fields) == 0 || !validOAuthAuthScheme(fields[0]) {
+		if status == http.StatusUnauthorized {
+			return http.StatusBadRequest
+		}
+		return status
+	}
+	w.Header().Set("WWW-Authenticate", fields[0]+` realm="oauth"`)
+	return http.StatusUnauthorized
+}
+
+func validOAuthAuthScheme(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, c := range []byte(value) {
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("!#$%&'*+-.^_`|~", rune(c)) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func hasOAuthClientAuthConflict(r *http.Request) bool {
@@ -584,12 +620,11 @@ func (s *Server) oauthBearer(r *http.Request) (oauthPrincipal, bool) {
 	if !s.oauth.Enabled {
 		return oauthPrincipal{}, false
 	}
-	header := r.Header.Get("Authorization")
-	if !strings.HasPrefix(header, "Bearer ") {
+	token, ok := bearerToken(r.Header.Get("Authorization"))
+	if !ok {
 		return oauthPrincipal{}, false
 	}
-	token := strings.TrimPrefix(header, "Bearer ")
-	if token == "" || token == s.token {
+	if token == s.token {
 		return oauthPrincipal{}, false
 	}
 	scopes, err := s.store.OAuthToken(r.Context(), oauthHash(token), s.oauthResource())
@@ -601,6 +636,14 @@ func (s *Server) oauthBearer(r *http.Request) (oauthPrincipal, bool) {
 		principal.scopes[scope] = true
 	}
 	return principal, true
+}
+
+func bearerToken(header string) (string, bool) {
+	fields := strings.Fields(header)
+	if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") {
+		return "", false
+	}
+	return fields[1], true
 }
 
 func (s *Server) registerOAuthClient(w http.ResponseWriter, r *http.Request) {

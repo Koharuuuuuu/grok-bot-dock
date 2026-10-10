@@ -72,7 +72,7 @@
 
 - [x] 明确浏览器授权安全模型：OAuth 客户端负责 state/回调关联校验；Bolt Dock 负责自身登录会话、授权同意操作的 CSRF 防护、精确 redirect URI 及 PKCE 校验；不得把客户端 state 校验错误地当作服务端可替代的 CSRF 防护。
 - [x] 授权码交换在 SQLite 事务中原子消费；并发双重兑换只能成功一次，错误 PKCE 不得导致可用授权码被不当消耗（按规范与安全策略确定），拒绝授权不得生成 token。
-- [x] OAuth 2.1 draft-16 边界审计：唯一回调下授权及 Token 请求省略 `redirect_uri` 可用；若 Token 请求提供则仍精确比对授权码绑定值；重复参数和同时使用多种客户端认证方法拒绝；超长 state 不反射。
+- [x] OAuth 2.1 draft-16 边界审计：唯一回调下授权及 Token 请求省略/空值 `redirect_uri` 按省略处理；若 Token 请求提供则仍精确比对授权码绑定值；定义参数重复拒绝、未知扩展参数忽略、Basic 凭据表单解码与匹配认证挑战；授权响应及 Token endpoint 错误码区分缺参/不支持值，Resource Indicator 使用 `invalid_target`；超长 state 不反射。
 - [x] Access token 生命周期、15 分钟 TTL、撤销传播、重启后持久性和授权时清理已记录并测试；本期不提供 refresh token。
 - [x] 客户端禁用会立即使相关授权及 access token 无效；覆盖索引与事务测试。
 - [x] 迁移只新增 OAuth 结构，验证旧数据 count、FTS、Bot 身份、幂等索引不变；记录升级前备份及兼容式回滚方案，禁止自动恢复生产数据库。

@@ -63,19 +63,24 @@ func (rt bearerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 func TestMCPRequiresBearerAndRejectsForeignOrigin(t *testing.T) {
 	h, _, _ := testHandler(t, 1<<20)
 	for _, tc := range []struct {
-		name     string
-		cookie   bool
-		badToken bool
-		origin   string
-		want     int
+		name          string
+		cookie        bool
+		badToken      bool
+		authorization string
+		origin        string
+		want          int
 	}{
 		{name: "missing token", want: http.StatusUnauthorized},
 		{name: "incorrect token", badToken: true, want: http.StatusUnauthorized},
+		{name: "case-insensitive bearer scheme", authorization: "bEaReR test-secret", want: http.StatusMethodNotAllowed},
 		{name: "web cookie is not MCP auth", cookie: true, want: http.StatusUnauthorized},
 		{name: "foreign origin", origin: "https://evil.example", want: http.StatusForbidden},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+			if tc.authorization != "" {
+				req.Header.Set("Authorization", tc.authorization)
+			}
 			if tc.badToken {
 				req.Header.Set("Authorization", "Bearer wrong-secret")
 			}
