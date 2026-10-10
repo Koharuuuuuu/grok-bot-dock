@@ -35,11 +35,12 @@
 - 基线：master push 由 `ci.yml` 与 `docker-publish.yml` 各运行一套 Go/前端验证；PR 也重复验证；master push 只执行一次双架构 build-push。
 - 修复：移除重复发布工作流，将验证和依赖验证的发布 Job 合并至 `ci.yml`。master push 比较完整 `before..sha` 文件差异；`scripts/release-paths.sh` 将 Go、前端、Dockerfile、构建脚本和嵌入资源标记为镜像输入。用 `--no-renames` 保留删除和重命名前路径。PR 不做路径过滤，tag 与 workflow_dispatch 不依赖路径。一次 Buildx 调用构建单个 amd64/arm64 manifest；只有发布 Job 有 `packages: write`。同分支旧运行可取消，版本 tag 运行不可取消。
 - 本地验证：`bash scripts/release-paths.sh --test` 通过，覆盖 Go/前端/Dockerfile/Workflow 发布路径及 README/docs/验收截图不发布的规则；完整差异检测使用 `git diff --name-only --no-renames`。首次全零 before 发布；发布失败可重跑失败 Job，后续 docs-only push 可手动 dispatch 失败 ref 补发。
-- GitHub 验证：待 PR 创建后记录 Actions run、合并后的 docs-only/no-publish 与匿名镜像检查结果。
+- GitHub 验证：PR [#8](https://github.com/Nyakooo/grok-bot-dock/pull/8) 的 CI run `38014989716` 中 `validate` 通过、`publish` 按 PR 事件跳过；合并提交 `02cfdb671b8b4cd06abda9364a99fae27bd48bc5` 的 master run [38015039335](https://github.com/Nyakooo/grok-bot-dock/actions/runs/38015039335) 中验证与发布均成功。无登录配置匿名读取 GHCR `master` manifest 与拉取镜像成功，索引 digest 为 `sha256:5a1228990ee43aa32824ec5b24fb9cbbf56c2bcf5178ef4731518cb39bdab160`，平台 manifest 为 amd64 `sha256:53f766141f57f9fd5dbe7e2adfb167191a957a6db7e27c870eedf402fe2dcc0c`、arm64 `sha256:842f4535232a9b8f6860419b39d3c6efcb573cad9e81200dce97dfb0a146f11a`。匿名拉取证明 GHCR 包公开；源码仓库仍为 Private。拉取的 GHCR 镜像运行后 `/healthz` 返回 ok，容器达到 healthy，运行 UID 为 `10001:10001`。
+- 限制：未创建真实 semver tag，因此 tag 事件触发发布的 GitHub 运行未实测；workflow 配置和本地路径测试已覆盖该入口。
 
 ## P5.7 集成验证
 
 - `make test`：Go 全包通过，前端 6 项通过；`make build`：前端 Vite 生产构建与 Go 二进制构建通过。`npm ci` audit 报告 0 vulnerabilities。
 - 本地 `docker build -t bolt-dock:p5-final .`：通过；BuildKit 使用 Dockerfile 的单次前端构建和 Go arm64 交叉编译。
 - 最终镜像容器验证：`/healthz` 返回 ok，Bearer 报告推送成功，容器健康状态为 healthy、UID 为 `10001:10001`；容器重启后 SQLite 报告仍可读。仅使用 `/tmp/bolt-dock-p5-final`，未操作部署 Compose 命名卷。
-- SQLite 数据卷未改动 Compose 定义；API Bearer 推送协议和现有删除、搜索、通知实现保持兼容。GHCR 与 master 合并验收待 PR 后补充。
+- SQLite 数据卷未改动 Compose 定义；API Bearer 推送协议和现有删除、搜索、通知实现保持兼容。PR #8 已合并 master，提交 `02cfdb6`；GitHub Actions 验证/发布通过，匿名 GHCR 双架构读取、拉取和运行健康检查通过，详见 P5.6。

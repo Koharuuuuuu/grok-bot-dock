@@ -79,7 +79,7 @@
 GHCR 首次发布及后续多架构修复均已验收：PR #1–#3 已合并至 master，实现基线为 `ee9c48e`；PR #4–#5 合并验收报告更新，PR #6 合并报告与 Bot 删除功能（`efa1619`）。GHCR 包为 Public，GitHub 源码仓库保持 Private。删除功能对应的 master 发布 run `37938768277` 成功，匿名拉取 digest `sha256:f385cad5e01edb93a8a5f44b41316ada38b8c671680fdf64792dc4864d119b22`；镜像索引包含 amd64 和 arm64，arm64 容器健康检查通过。
 
 
-## P5 专项优化：会话、详情、移动端、品牌与 CI/CD（2026-10-10，实施中）
+## P5 专项优化：会话、详情、移动端、品牌与 CI/CD（2026-10-10，已完成）
 
 > 本阶段先复现再修复；已验证的本地实现与浏览器项目打勾，仍须 GitHub Actions/PR 验收的项目继续保留未完成。保持单 Go 容器 + SQLite 持久卷、master 分支、现有 API 协议与轻量架构，不引入 Redis 或额外常驻服务。不要虚构实测结果。
 
@@ -87,7 +87,7 @@ GHCR 首次发布及后续多架构修复均已验收：PR #1–#3 已合并至 
 - [x] 复现登录后刷新页面退出问题；根因为 Token 仅存 Vue 内存且没有会话恢复。检查了 Cookie、SPA 初始化、401 和反向代理属性。
 - [x] 服务端 12 小时会话 Cookie：HttpOnly、Path=/、SameSite=Lax，HTTPS 时 Secure；登录限流、同源 Origin 校验、会话探测与登出撤销；现有推送 Bearer 协议不变。
 - [x] 文档说明会话存在服务进程内，服务重启会使会话失效；会话 Cookie 可能被浏览器恢复功能保留，网页不能可靠侦测浏览器进程关闭。
-- [x] Go 测试和真实浏览器验证：登录→刷新→新标签成功；退出后其他标签刷新回登录；测试无效/过期会话、Cookie 属性、安全存储和 Bearer 兼容。
+- [x] Go 测试和真实浏览器验证：登录→刷新→新标签成功；退出后其他标签刷新回登录；测试无效/过期会话、Cookie 属性、安全存储、SSE 登出即时撤销和 Bearer 兼容。
 
 ### P5.2 详情打开时页面抖动（P0）
 - [x] 复现 flex 阅读面板挤压主列及滚动条布局变化；确认 body 滚动锁和焦点行为。
@@ -115,9 +115,10 @@ GHCR 首次发布及后续多架构修复均已验收：PR #1–#3 已合并至 
 - [x] 单一 CI 工作流做一次验证并依赖成功后发布；完整 push diff + 可复现路径脚本覆盖多提交/删除/重命名、Go/前端/Docker 与 docs。
 - [x] 一次 Buildx 多架构推送、缓存、master/semver/latest 标签、tag/手动入口与最小权限均保留。
 - [x] PR 验证不受路径过滤影响；首发/Tag/手动重试路径已配置；同分支可取消过期运行且版本 tag 使用独立并发组不被取消。
-- [ ] 实际 PR Actions、合并后的发布、GHCR 双架构 manifest 与匿名 pull 待远端验收；tag 版本发布未触发真实版本标签。
+- [x] PR #8 的 Actions 验证通过、发布按 PR 事件跳过；合并提交 `02cfdb6` 的 master 验证与发布通过；匿名读取和 pull 的 GHCR `master` 索引包含 amd64/arm64（digest `sha256:5a1228990ee43aa32824ec5b24fb9cbbf56c2bcf5178ef4731518cb39bdab160`）。仓库状态为 Private，匿名拉取证实 GHCR 包公开。
+- [ ] 未创建真实 semver tag，tag 事件发布仅完成配置和路径脚本验证。
 
 ### P5.7 交付与验收（必须）
 - [x] 更新 README 与技术设计；新增验收报告记录根因、文件、命令、浏览器截图、workflow 差异和限制。
 - [x] Go/前端测试与构建、Docker 构建和临时容器健康/持久化验证、浏览器回归通过；未触碰 Compose 部署卷。
-- [ ] 通过 PR 合并 master 并记录 GitHub Actions/GHCR 远端验收结果。
+- [x] PR #8 已合并 master（merge commit `02cfdb671b8b4cd06abda9364a99fae27bd48bc5`）；记录 GitHub Actions 和 GHCR 远端验收结果于 `docs/OPTIMIZATION_ACCEPTANCE.md`。
