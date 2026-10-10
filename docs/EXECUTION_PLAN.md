@@ -181,3 +181,8 @@ GHCR 首次发布及后续多架构修复均已验收：PR #1–#3 已合并至 
 ### P7 产品定位纠偏（优先执行）
 
 > [P7 MCP 独立服务与通用接入纠偏](./P7_MCP_PRODUCT_POSITIONING_CORRECTION.md)：MCP Server 与 Codex 无依赖，默认 UI 不得以 Codex 为中心；支持任意兼容远程 MCP 的客户端。须先纠正“Codex MCP 配置已复制”等误导性文案，并验证非 Codex 客户端；共享管理员 Token 仅适用于受信任私有接入。**待实现/验收。**
+
+
+### P7 MCP 接入界面 UI/UX 优化（待执行）
+
+> [P7 MCP 通用接入界面优化与验收清单](./P7_MCP_UI_UX_OPTIMIZATION.md)。与 P7 独立服务定位纠偏同时执行：默认显示 MCP 服务 URL、Streamable HTTP、Bearer 认证、实际工具、复制地址与通用接入说明；REST 保留，Codex 等只作可选示例。不得在 UI 假造独立 Token 发行能力或已验证的第三方兼容性。**所有验收项待实测。**
