@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { renderSanitizedMarkdown } from './markdown'
 import { highlightParts, makeSearchParams, notificationStatus, refreshesSelectedBot, searchSnippet } from './ui-model'
 import { readImmersivePreference, readReaderFontSize, writeImmersivePreference, writeReaderFontSize } from './reader-preferences'
+import { readThemePreference, writeThemePreference } from './theme-preferences'
 
 const authenticated = ref(false)
 const authReady = ref(false)
@@ -29,6 +30,10 @@ const actionNotice = ref('')
 const deleting = ref('')
 const immersive = ref(readImmersivePreference())
 const readerFontSize = ref(readReaderFontSize())
+const themeMode = ref(readThemePreference())
+const themeMenuOpen = ref(false)
+const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)')
+const systemPrefersDark = ref(systemThemeQuery.matches)
 const narrowReader = ref(typeof window !== 'undefined' && window.matchMedia('(max-width: 800px)').matches)
 const notificationState = ref('')
 const promptOpen = ref(false)
@@ -43,6 +48,11 @@ const renameError = ref('')
 const renameBusy = ref(false)
 const readerDialog = ref(null)
 const readerCloseButton = ref(null)
+const themeOptions = [
+  { value: 'light', label: '浅色', icon: '☼' },
+  { value: 'dark', label: '深色', icon: '☾' },
+  { value: 'system', label: '跟随系统', icon: '◐' },
+]
 let previousFocus
 let lockedScrollY = 0
 let previousBodyOverflow = ''
@@ -57,6 +67,13 @@ const renderedMarkdown = computed(() => selectedReport.value
 const visibleBots = computed(() => bots.value)
 const filteredSources = computed(() => sources.value)
 const isLoggedIn = computed(() => authenticated.value)
+const effectiveTheme = computed(() => themeMode.value === 'system'
+  ? (systemPrefersDark.value ? 'dark' : 'light')
+  : themeMode.value)
+const themeIcon = computed(() => themeOptions.find(option => option.value === themeMode.value)?.icon || '◐')
+const themeDescription = computed(() => themeMode.value === 'system'
+  ? `跟随设备外观（当前${effectiveTheme.value === 'dark' ? '深色' : '浅色'}）`
+  : `始终使用${themeMode.value === 'dark' ? '深色' : '浅色'}外观`)
 const activeCount = computed(() => searching.value ? searchResults.value.length : visibleBots.value.length)
 const pushPrompt = computed(() => {
   const endpoint = pushTemplate.value.endpoint.trim().replace(/\/$/, '') || window.location.origin
@@ -337,7 +354,8 @@ async function startStream() {
 }
 function onKey(event) {
   if (event.key !== 'Escape') return
-  if (renameTarget.value) renameTarget.value = null
+  if (themeMenuOpen.value) themeMenuOpen.value = false
+  else if (renameTarget.value) renameTarget.value = null
   else if (promptOpen.value) promptOpen.value = false
   else if (selected.value) closeReader()
 }
@@ -348,6 +366,12 @@ watch(source, async () => {
   if (searching.value) await runSearch(); else await loadData()
 })
 watch(readerFontSize, px => writeReaderFontSize(px))
+watch(themeMode, mode => writeThemePreference(mode))
+watch(effectiveTheme, theme => {
+  document.documentElement.dataset.theme = theme
+  document.documentElement.style.colorScheme = theme
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#151a17' : '#f2f2ed')
+}, { immediate: true })
 watch([selected, promptOpen, renameTarget], async ([hasReader, hasPrompt, hasRename], [hadReader, hadPrompt, hadRename]) => {
   const shouldLock = Boolean(hasReader || hasPrompt || hasRename)
   const wasLocked = Boolean(hadReader || hadPrompt || hadRename)
@@ -372,9 +396,11 @@ watch([selected, promptOpen, renameTarget], async ([hasReader, hasPrompt, hasRen
   }
 })
 function updateNarrowReader() { narrowReader.value = window.matchMedia('(max-width: 800px)').matches }
+function updateSystemTheme(event) { systemPrefersDark.value = event.matches }
 onMounted(async () => {
   window.addEventListener('keydown', onKey)
   window.addEventListener('resize', updateNarrowReader)
+  systemThemeQuery.addEventListener('change', updateSystemTheme)
   if ('BroadcastChannel' in window) {
     authChannel = new BroadcastChannel('bolt-dock-auth')
     authChannel.onmessage = event => { if (event.data?.type === 'logout') expireSession(false) }
@@ -389,7 +415,7 @@ onMounted(async () => {
   } catch {}
   authReady.value = true
 })
-onUnmounted(() => { window.removeEventListener('keydown', onKey); window.removeEventListener('resize', updateNarrowReader); authChannel?.close(); streamAbort?.abort(); clearTimeout(refreshTimer); document.body.style.overflow = previousBodyOverflow; document.body.style.paddingRight = previousBodyPaddingRight })
+onUnmounted(() => { window.removeEventListener('keydown', onKey); window.removeEventListener('resize', updateNarrowReader); systemThemeQuery.removeEventListener('change', updateSystemTheme); authChannel?.close(); streamAbort?.abort(); clearTimeout(refreshTimer); document.body.style.overflow = previousBodyOverflow; document.body.style.paddingRight = previousBodyPaddingRight })
 
 function trapReaderFocus(event) {
   const focusable = [...readerDialog.value.querySelectorAll('a[href], button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])')]
@@ -419,7 +445,7 @@ function trapReaderFocus(event) {
     <div class="gate-orbit orbit-one"></div><div class="gate-orbit orbit-two"></div>
   </main>
 
-  <div v-else class="app-shell">
+  <div v-else class="app-shell" @click="themeMenuOpen = false">
     <header class="topbar">
       <a class="wordmark" href="#" @click.prevent="closeReader(); clearSearch()"><span class="brand-mark small"><img src="/brand/bolt-dock.svg" alt=""></span><span>Bolt <b>Dock</b></span></a>
       <form class="search-box" @submit.prevent="runSearch()">
@@ -432,6 +458,15 @@ function trapReaderFocus(event) {
         <label class="source-select-wrap"><span class="sr-only">选择来源</span>
           <select v-model="source" aria-label="筛选报告来源"><option value="">全部来源</option><option v-for="item in filteredSources" :key="item.source" :value="item.source">{{ item.source }} <small>· {{ item.report_count }}</small></option></select><span class="select-caret">⌄</span>
         </label>
+        <div class="theme-control" @click.stop>
+          <button id="theme-trigger" class="icon-button theme-trigger" type="button" :aria-label="`外观：${themeMode === 'system' ? '跟随系统' : themeMode === 'dark' ? '深色' : '浅色'}`" :aria-expanded="themeMenuOpen" aria-controls="theme-menu" title="外观设置" @click="themeMenuOpen = !themeMenuOpen">{{ themeIcon }}</button>
+          <div v-if="themeMenuOpen" id="theme-menu" class="theme-menu" role="group" aria-label="外观模式">
+            <button v-for="option in themeOptions" :key="option.value" class="theme-option" :class="{ active: themeMode === option.value }" type="button" :aria-pressed="themeMode === option.value" @click="themeMode = option.value; themeMenuOpen = false">
+              <span class="theme-option-icon" aria-hidden="true">{{ option.icon }}</span><span>{{ option.label }}</span><span v-if="themeMode === option.value" class="theme-check" aria-hidden="true">✓</span>
+            </button>
+            <p class="theme-description">{{ themeDescription }}</p>
+          </div>
+        </div>
         <button class="copy-prompt-button" @click="openPrompt"><span>＋</span> 推送指令</button>
         <div class="top-divider"></div>
         <div class="stat"><span class="stat-value">{{ stats.bot_count }}</span><span class="stat-label">Bots</span></div>
