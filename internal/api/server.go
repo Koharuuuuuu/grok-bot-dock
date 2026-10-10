@@ -62,6 +62,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/login", s.login)
 	mux.HandleFunc("GET /api/v1/auth/session", s.sessionStatus)
 	mux.Handle("/api/", s.auth(http.HandlerFunc(s.api)))
+	mux.Handle("/mcp", s.newMCPHandler())
+	mux.HandleFunc("/mcp/", func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, http.StatusNotFound, "not_found", "MCP endpoint is /mcp")
+	})
 	mux.HandleFunc("/", s.serveStatic)
 	return logRequests(mux)
 }
@@ -267,20 +271,7 @@ func (s *Server) createReport(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, s.maxBytes)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
-	var raw struct {
-		Source       string   `json:"source"`
-		BotID        string   `json:"bot_id"`
-		BotName      string   `json:"bot_name"`
-		StableTaskID string   `json:"stable_task_id"`
-		TaskName     string   `json:"task_name"`
-		ExecutedAt   string   `json:"executed_at"`
-		Title        string   `json:"title"`
-		Summary      string   `json:"summary"`
-		Tags         []string `json:"tags"`
-		ExternalID   string   `json:"external_id"`
-		AvatarURL    string   `json:"avatar_url"`
-		Content      string   `json:"content"`
-	}
+	var raw reportRequest
 	if err := dec.Decode(&raw); err != nil {
 		if isTooLarge(err) {
 			writeError(w, 413, "payload_too_large", "request body exceeds configured limit")
@@ -291,31 +282,86 @@ func (s *Server) createReport(w http.ResponseWriter, r *http.Request) {
 	}
 	var extra any
 	if err := dec.Decode(&extra); err != io.EOF {
-		writeError(w, 400, "invalid_json", "request must contain one JSON object")
+		writeError(w, http.StatusBadRequest, "invalid_json", "request must contain one JSON object")
 		return
 	}
+	in, err := normalizeReportRequest(raw)
+	if err != nil {
+		writeValidationError(w, err)
+		return
+	}
+	report, duplicate, err := s.publishReport(r.Context(), in)
+	if err != nil {
+		if e, ok := err.(*apiError); ok {
+			if e.status == http.StatusTooManyRequests {
+				w.Header().Set("Retry-After", strconv.Itoa(max(1, e.retryAfter)))
+			}
+			writeError(w, e.status, e.code, e.message)
+			return
+		}
+		log.Printf("create report failed: %v", err)
+		writeError(w, 500, "internal_error", "could not save report")
+		return
+	}
+	status := 201
+	if duplicate {
+		status = 200
+	}
+	writeJSON(w, status, map[string]any{"report_id": report.ID, "source": report.Source, "bot_id": report.BotID, "duplicate": duplicate})
+}
+
+type reportRequest struct {
+	Source       string   `json:"source"`
+	BotID        string   `json:"bot_id"`
+	BotName      string   `json:"bot_name"`
+	StableTaskID string   `json:"stable_task_id"`
+	TaskName     string   `json:"task_name"`
+	ExecutedAt   string   `json:"executed_at"`
+	Title        string   `json:"title"`
+	Summary      string   `json:"summary"`
+	Tags         []string `json:"tags"`
+	ExternalID   string   `json:"external_id"`
+	AvatarURL    string   `json:"avatar_url"`
+	Content      string   `json:"content"`
+}
+
+type apiError struct {
+	status     int
+	code       string
+	message    string
+	retryAfter int
+}
+
+func (e *apiError) Error() string { return e.message }
+
+func writeValidationError(w http.ResponseWriter, err error) {
+	if e, ok := err.(*apiError); ok {
+		writeError(w, e.status, e.code, e.message)
+		return
+	}
+	writeError(w, http.StatusBadRequest, "invalid_request", "request is invalid")
+}
+
+func normalizeReportRequest(raw reportRequest) (store.ReportInput, error) {
 	raw.Source = strings.TrimSpace(raw.Source)
 	if raw.Source == "" {
 		raw.Source = "unknown"
 	}
 	if !sourcePattern.MatchString(raw.Source) {
-		writeError(w, 400, "invalid_source", "source must be lowercase letters, digits, or hyphens")
-		return
+		return store.ReportInput{}, &apiError{status: 400, code: "invalid_source", message: "source must be lowercase letters, digits, or hyphens"}
 	}
 	raw.BotID = strings.TrimSpace(raw.BotID)
 	raw.StableTaskID = strings.TrimSpace(raw.StableTaskID)
 	raw.TaskName = strings.TrimSpace(raw.TaskName)
 	if raw.BotID == "" {
 		if raw.StableTaskID == "" || len(raw.StableTaskID) > 512 {
-			writeError(w, 400, "invalid_bot", "bot_id or a stable_task_id is required; a stable task identity is needed to keep reports under one Bot")
-			return
+			return store.ReportInput{}, &apiError{status: 400, code: "invalid_bot", message: "bot_id or a stable_task_id is required; a stable task identity is needed to keep reports under one Bot"}
 		}
 		digest := sha256.Sum256([]byte(raw.Source + "\x00" + raw.StableTaskID))
 		raw.BotID = "task-" + hex.EncodeToString(digest[:12])
 	}
 	if len(raw.BotID) > 128 {
-		writeError(w, 400, "invalid_bot", "bot_id must be at most 128 characters")
-		return
+		return store.ReportInput{}, &apiError{status: 400, code: "invalid_bot", message: "bot_id must be at most 128 characters"}
 	}
 	if strings.TrimSpace(raw.BotName) == "" {
 		raw.BotName = raw.TaskName
@@ -324,33 +370,27 @@ func (s *Server) createReport(w http.ResponseWriter, r *http.Request) {
 		raw.BotName = raw.BotID
 	}
 	if len(raw.BotName) > 256 {
-		writeError(w, 400, "invalid_bot", "bot_name must be at most 256 characters")
-		return
+		return store.ReportInput{}, &apiError{status: 400, code: "invalid_bot", message: "bot_name must be at most 256 characters"}
 	}
 	at, err := time.Parse(time.RFC3339, raw.ExecutedAt)
 	if err != nil {
-		writeError(w, 400, "invalid_executed_at", "executed_at must be RFC3339")
-		return
+		return store.ReportInput{}, &apiError{status: 400, code: "invalid_executed_at", message: "executed_at must be RFC3339"}
 	}
 	if strings.TrimSpace(raw.Content) == "" {
-		writeError(w, 400, "empty_content", "content must not be empty")
-		return
+		return store.ReportInput{}, &apiError{status: 400, code: "empty_content", message: "content must not be empty"}
 	}
 	if len(raw.Title) > 512 || len(raw.Summary) > 4096 || len(raw.ExternalID) > 256 || len(raw.Tags) > 32 {
-		writeError(w, 400, "invalid_metadata", "title, summary, external_id, or tags exceed limits")
-		return
+		return store.ReportInput{}, &apiError{status: 400, code: "invalid_metadata", message: "title, summary, external_id, or tags exceed limits"}
 	}
 	for _, tag := range raw.Tags {
 		if len(tag) > 128 {
-			writeError(w, 400, "invalid_tags", "tag exceeds 128 bytes")
-			return
+			return store.ReportInput{}, &apiError{status: 400, code: "invalid_tags", message: "tag exceeds 128 bytes"}
 		}
 	}
 	if raw.AvatarURL != "" {
 		u, e := http.NewRequest("GET", raw.AvatarURL, nil)
 		if e != nil || u.URL.Scheme != "https" || u.URL.Host == "" || len(raw.AvatarURL) > 2048 {
-			writeError(w, 400, "invalid_avatar_url", "avatar_url must be a valid HTTPS URL")
-			return
+			return store.ReportInput{}, &apiError{status: 400, code: "invalid_avatar_url", message: "avatar_url must be a valid HTTPS URL"}
 		}
 	}
 	if raw.Title == "" {
@@ -360,19 +400,18 @@ func (s *Server) createReport(w http.ResponseWriter, r *http.Request) {
 		raw.Summary = firstText(raw.Content, 280)
 	}
 	in := store.ReportInput{Source: raw.Source, BotID: raw.BotID, BotName: raw.BotName, ExecutedAt: at, Title: raw.Title, Summary: raw.Summary, Tags: raw.Tags, ExternalID: raw.ExternalID, AvatarURL: raw.AvatarURL, Content: raw.Content}
-	report, duplicate, err := s.store.CreateReport(r.Context(), in)
+	return in, nil
+}
+
+func (s *Server) publishReport(ctx context.Context, in store.ReportInput) (store.Report, bool, error) {
+	report, duplicate, err := s.store.CreateReport(ctx, in)
 	if err != nil {
-		log.Printf("create report failed: %v", err)
-		writeError(w, 500, "internal_error", "could not save report")
-		return
+		return store.Report{}, false, err
 	}
-	status := 201
-	if duplicate {
-		status = 200
-	} else {
+	if !duplicate {
 		s.hub.Publish("report.created", report)
 	}
-	writeJSON(w, status, map[string]any{"report_id": report.ID, "source": report.Source, "bot_id": report.BotID, "duplicate": duplicate})
+	return report, duplicate, nil
 }
 
 func (s *Server) allowWrite(remote string, now time.Time) (bool, time.Duration) {
@@ -380,6 +419,10 @@ func (s *Server) allowWrite(remote string, now time.Time) (bool, time.Duration) 
 	if host, _, err := net.SplitHostPort(remote); err == nil {
 		key = host
 	}
+	return s.allowRate(key, 120, now)
+}
+
+func (s *Server) allowRate(key string, limit int, now time.Time) (bool, time.Duration) {
 	s.rateMu.Lock()
 	defer s.rateMu.Unlock()
 	for ip, window := range s.rate {
@@ -391,7 +434,7 @@ func (s *Server) allowWrite(remote string, now time.Time) (bool, time.Duration) 
 	if window.started.IsZero() || now.Sub(window.started) >= time.Minute {
 		window = rateWindow{started: now}
 	}
-	if window.count >= 120 {
+	if window.count >= limit {
 		s.rate[key] = window
 		return false, time.Minute - now.Sub(window.started)
 	}

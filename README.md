@@ -78,6 +78,48 @@ curl -X POST "https://YOUR_DOMAIN/api/v1/reports" \
 
 发送规则：只推送已经完成并通过检查的正式报告。草稿、测试、模拟数据、日志、中间结果、失败和取消任务不得推送。Grok 或其他 AI 平台是否具备定时 HTTPS POST 能力必须在对应平台单独验证；不得把本地联调请求发向正式服务端。
 
+## 远程 MCP 接入
+
+Bolt Dock 在现有 Go 服务的 `/mcp` 路径提供远程**无状态 MCP Streamable HTTP**，不会启动额外容器或进程。MCP 与 REST 共用报告校验、SQLite、幂等及 SSE；REST API 保持不变。当前仅暴露 `publish_report`（写入已完成的正式报告）和 `search_reports`（只读历史检索），不提供删除、改名或管理凭据工具。
+
+Codex 连接地址为 `https://YOUR_DOMAIN/mcp`。服务应经 HTTPS 反向代理访问；代理需保留 MCP 的 HTTP 方法、请求/响应头、SSE 流式响应和取消信号。不要将 ACCESS_TOKEN 放进 URL、TOML、页面、报告、日志或剪贴板。
+
+在 Codex 的运行环境中，将环境变量 `BOLT_DOCK_TOKEN` 安全设置为与 Bolt Dock 服务端 `ACCESS_TOKEN` 相同的值，然后把下面内容加入 `~/.codex/config.toml`（或 Codex 配置文件）：
+
+```toml
+[mcp_servers.bolt_dock]
+url = "https://YOUR_DOMAIN/mcp"
+bearer_token_env_var = "BOLT_DOCK_TOKEN"
+```
+
+也可使用 Codex CLI 添加配置：
+
+```sh
+codex mcp add bolt-dock --url https://YOUR_DOMAIN/mcp --bearer-token-env-var BOLT_DOCK_TOKEN
+codex mcp list
+```
+
+保存后重新载入 Codex 客户端会话。工作台顶栏的「MCP 配置」按钮可复制按当前站点地址生成的 Codex TOML 配置；复制内容只有 URL 和环境变量名，不会读取或复制实际 Token。Codex 运行环境必须能通过 HTTPS 访问该地址；`localhost`、局域网或未暴露的私有服务不能被远程托管环境访问。可参考 [Codex MCP 文档](https://developers.openai.com/codex/mcp) 与 [Streamable HTTP MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk)。
+
+`publish_report` 示例参数（只在最终报告完成后调用；每次执行的 `external_id` 必须唯一，重试时原样复用）：
+
+```json
+{
+  "source": "codex",
+  "stable_task_id": "stable-task-slug",
+  "bot_name": "任务名称",
+  "executed_at": "2026-10-10T16:00:00+08:00",
+  "external_id": "execution-unique-id",
+  "title": "最终报告标题",
+  "summary": "报告摘要",
+  "content": "# 最终报告\n\n完整 Markdown 内容"
+}
+```
+
+`search_reports` 中文检索示例：`{"query":"本周部署验收","source":"codex","from":"2026-10-01","to":"2026-10-10","limit":10}`。检索最多返回 20 条元数据和摘要，完整 Markdown 不会放进工具结果；可用返回的游标读取下一页。
+
+MCP 使用当前单用户共享 Bearer `ACCESS_TOKEN`，不是 OAuth，也不提供多用户隔离；任何持有该 Token 的客户端可发布及读取历史。反向代理如将服务暴露到公网，应限制访问、配置 HTTPS 和代理侧限流。MCP 能让客户端发现工具，不保证 Agent 只在最终报告时调用，也不提供定时触发保证；定时推送继续使用 REST API。Codex/其他客户端的具体版本兼容性以真实客户端连接测试为准；P7 验收状态和未验证项见 [docs/P7_MCP_ACCEPTANCE.md](docs/P7_MCP_ACCEPTANCE.md)。
+
 ## Docker 部署（拉取 GHCR 镜像）
 
 1. 创建 `.env` 并设置随机密钥：`cp .env.example .env`。
@@ -131,6 +173,19 @@ reports.example.com {
 ```
 
 Bolt Dock 自身仍要求 Bearer Token；可在现有反向代理再加一层访问认证。推送、网页阅读和 SSE 都走同源 HTTPS。排查时先运行 `docker compose ps` 和 `docker compose logs --tail=100 bolt-dock`：健康检查失败时核对 `ACCESS_TOKEN` 与端口；API 401 表示网页或推送方的 Token 不匹配；来源列表为空表示还没有成功推送；不要通过 `docker compose down -v` 排查数据库问题，以免删除持久卷。
+
+MCP 反向代理须保留 `/mcp` 下的 POST、GET、DELETE 和 MCP 请求头；不要缓冲或改写 `text/event-stream` 响应。Caddy 的 `reverse_proxy` 默认支持流式响应。若使用 Nginx，需为 `/mcp` 关闭代理缓冲并延长读取超时，例如：
+
+```nginx
+location = /mcp {
+    proxy_pass http://127.0.0.1:18765/mcp;
+    proxy_http_version 1.1;
+    proxy_buffering off;
+    proxy_read_timeout 1h;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
 
 ## GitHub Actions 与 GHCR
 

@@ -527,4 +527,13 @@ func TestWriteRateLimitResetsAfterOneMinute(t *testing.T) {
 	if ok, _ := server.allowWrite("192.0.2.10:1234", start.Add(time.Minute)); !ok {
 		t.Fatal("rate limit did not reset")
 	}
+	server.rate["192.0.2.10"] = rateWindow{started: time.Now(), count: 120}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/reports", strings.NewReader("not-json"))
+	request.RemoteAddr = "192.0.2.10:4321"
+	request.Header.Set("Authorization", "Bearer secret")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") == "" {
+		t.Fatalf("rate limited invalid request status=%d Retry-After=%q body=%s", response.Code, response.Header().Get("Retry-After"), response.Body.String())
+	}
 }

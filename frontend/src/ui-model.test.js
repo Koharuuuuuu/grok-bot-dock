@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import createDOMPurify from 'dompurify'
 import { JSDOM } from 'jsdom'
 import { renderSanitizedMarkdown } from './markdown'
-import { highlightParts, makeSearchParams, notificationStatus, refreshesSelectedBot, searchSnippet } from './ui-model'
+import { highlightParts, makeMCPConfig, makeSearchParams, notificationStatus, refreshesSelectedBot, searchSnippet } from './ui-model'
 import { readImmersivePreference, readReaderFontSize, writeImmersivePreference, writeReaderFontSize } from './reader-preferences'
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>')
@@ -27,6 +27,15 @@ describe('Bolt Dock interface helpers', () => {
     expect(scoped.get('cursor')).toBe('abc')
     expect(scoped.get('from')).toBe('2026-10-01')
     expect(scoped.get('to')).toBe('2026-10-09')
+  })
+
+  it('creates a Codex MCP configuration from the current site without copying a token', () => {
+    const config = makeMCPConfig('https://reports.example.com/')
+    expect(config).toContain('url = "https://reports.example.com/mcp"')
+    expect(config).toContain('bearer_token_env_var = "BOLT_DOCK_TOKEN"')
+    expect(config).not.toContain('ACCESS_TOKEN=')
+    expect(config).not.toContain('Bearer ')
+    expect(makeMCPConfig('http://localhost:18765')).toContain('url = "http://localhost:18765/mcp"')
   })
 
   it('marks matching search snippets without injecting HTML', () => {

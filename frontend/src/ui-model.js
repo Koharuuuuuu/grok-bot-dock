@@ -7,6 +7,12 @@ export function makeSearchParams({ query, source = '', cursor = '', from = '', t
   return params
 }
 
+export function makeMCPConfig(origin) {
+  const base = String(origin || '').trim().replace(/\/+$/, '')
+  const endpoint = `${base}/mcp`
+  return `# Store the same secret value used by Bolt Dock's ACCESS_TOKEN in BOLT_DOCK_TOKEN.\n# Set BOLT_DOCK_TOKEN in the environment that launches Codex.\n[mcp_servers.bolt_dock]\nurl = "${endpoint}"\nbearer_token_env_var = "BOLT_DOCK_TOKEN"\n`
+}
+
 export function highlightParts(text, query) {
   if (!query) return [{ text, match: false }]
   const lowerText = text.toLocaleLowerCase()

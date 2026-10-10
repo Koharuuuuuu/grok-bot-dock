@@ -12,7 +12,7 @@
 :root[data-theme="dark"] .app-shell,:root[data-theme="dark"] .gate{color:#edf1e9}
 :root[data-theme="dark"] .topbar,:root[data-theme="dark"] .reader-toolbar{background:#1b211d;border-color:#343e36}
 :root[data-theme="dark"] .search-box,:root[data-theme="dark"] .source-select-wrap select,:root[data-theme="dark"] .bot-card,:root[data-theme="dark"] .result-card,:root[data-theme="dark"] .reader-panel,:root[data-theme="dark"] .report-document,:root[data-theme="dark"] .prompt-modal,:root[data-theme="dark"] .rename-modal,:root[data-theme="dark"] .gate-card,:root[data-theme="dark"] .gate-card input,:root[data-theme="dark"] .template-fields input,:root[data-theme="dark"] .prompt-preview,:root[data-theme="dark"] .date-filter input,:root[data-theme="dark"] .search-filters input,:root[data-theme="dark"] .font-reset,:root[data-theme="dark"] .load-more,:root[data-theme="dark"] .theme-menu{background:#202722;border-color:#39433b}
-:root[data-theme="dark"] .card-preview,:root[data-theme="dark"] .history-item:hover,:root[data-theme="dark"] .tag-row span,:root[data-theme="dark"] .theme-option:hover,:root[data-theme="dark"] .theme-option.active,:root[data-theme="dark"] .copy-prompt-button{background:#272f29}
+:root[data-theme="dark"] .card-preview,:root[data-theme="dark"] .history-item:hover,:root[data-theme="dark"] .tag-row span,:root[data-theme="dark"] .theme-option:hover,:root[data-theme="dark"] .theme-option.active,:root[data-theme="dark"] .copy-prompt-button,:root[data-theme="dark"] .copy-mcp-button{background:#272f29}
 :root[data-theme="dark"] .history-item.active,:root[data-theme="dark"] .result-card mark,:root[data-theme="dark"] .action-notice{background:#303a2b;border-color:#46563b}
 :root[data-theme="dark"] .source-pill,:root[data-theme="dark"] .avatar-fallback,:root[data-theme="dark"] .empty-icon{background:#303a30}
 :root[data-theme="dark"] .key-hint{background:#272f29;border-color:#39433b;color:#aab4a8}
@@ -20,6 +20,7 @@
 :root[data-theme="dark"] .tag-row span{color:#aab4a8}
 :root[data-theme="dark"] .result-card mark{color:#c8e99b}
 :root[data-theme="dark"] .copy-prompt-button{border-color:#39433b}
+:root[data-theme="dark"] .copy-mcp-button{border-color:#39433b;color:#c8e99b}
 :root[data-theme="dark"] .font-reset{border-color:#39433b}
 :root[data-theme="dark"] .empty-state{border-color:#39433b}
 :root[data-theme="dark"] .error-banner,:root[data-theme="dark"] .delete-action{background:#392a26;border-color:#60413a}

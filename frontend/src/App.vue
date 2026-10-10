@@ -1,7 +1,7 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { renderSanitizedMarkdown } from './markdown'
-import { highlightParts, makeSearchParams, notificationStatus, refreshesSelectedBot, searchSnippet } from './ui-model'
+import { highlightParts, makeMCPConfig, makeSearchParams, notificationStatus, refreshesSelectedBot, searchSnippet } from './ui-model'
 import { readImmersivePreference, readReaderFontSize, writeImmersivePreference, writeReaderFontSize } from './reader-preferences'
 import { readThemePreference, writeThemePreference } from './theme-preferences'
 
@@ -39,9 +39,13 @@ const notificationState = ref('')
 const promptOpen = ref(false)
 const promptCopied = ref(false)
 const promptFallback = ref(false)
+const mcpConfigCopied = ref(false)
+const mcpConfigFallback = ref(false)
+const mcpConfigOpen = ref(false)
 const pushTemplate = ref({ endpoint: '', source: '' })
 const promptAdvanced = ref(false)
 const defaultEndpoint = window.location.origin
+const mcpConfig = computed(() => makeMCPConfig(window.location.origin))
 const renameTarget = ref(null)
 const renameValue = ref('')
 const renameError = ref('')
@@ -292,6 +296,20 @@ async function copyPrompt() {
   try { await navigator.clipboard.writeText(pushPrompt.value); promptCopied.value = true; promptFallback.value = false }
   catch { promptCopied.value = false; promptFallback.value = true; requestAnimationFrame(() => { const field = document.querySelector('.prompt-preview'); field?.focus(); field?.select() }) }
 }
+async function copyMCPConfig() {
+  mcpConfigCopied.value = false
+  mcpConfigFallback.value = false
+  try {
+    await navigator.clipboard.writeText(mcpConfig.value)
+    mcpConfigCopied.value = true
+    actionNotice.value = 'Codex MCP 配置已复制。请先在启动 Codex 的环境中设置 BOLT_DOCK_TOKEN。'
+    setTimeout(() => { mcpConfigCopied.value = false }, 3000)
+  } catch {
+    mcpConfigOpen.value = true
+    mcpConfigFallback.value = true
+    requestAnimationFrame(() => { const field = document.querySelector('.mcp-config-preview'); field?.focus(); field?.select() })
+  }
+}
 
 async function enableNotifications() {
   if (!('Notification' in window)) { notificationState.value = '当前浏览器不支持通知'; return }
@@ -356,6 +374,7 @@ function onKey(event) {
   if (event.key !== 'Escape') return
   if (themeMenuOpen.value) themeMenuOpen.value = false
   else if (renameTarget.value) renameTarget.value = null
+  else if (mcpConfigOpen.value) mcpConfigOpen.value = false
   else if (promptOpen.value) promptOpen.value = false
   else if (selected.value) closeReader()
 }
@@ -372,9 +391,9 @@ watch(effectiveTheme, theme => {
   document.documentElement.style.colorScheme = theme
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#151a17' : '#f2f2ed')
 }, { immediate: true })
-watch([selected, promptOpen, renameTarget], async ([hasReader, hasPrompt, hasRename], [hadReader, hadPrompt, hadRename]) => {
-  const shouldLock = Boolean(hasReader || hasPrompt || hasRename)
-  const wasLocked = Boolean(hadReader || hadPrompt || hadRename)
+watch([selected, promptOpen, mcpConfigOpen, renameTarget], async ([hasReader, hasPrompt, hasMCPConfig, hasRename], [hadReader, hadPrompt, hadMCPConfig, hadRename]) => {
+  const shouldLock = Boolean(hasReader || hasPrompt || hasMCPConfig || hasRename)
+  const wasLocked = Boolean(hadReader || hadPrompt || hadMCPConfig || hadRename)
   if (shouldLock && !wasLocked) {
     previousFocus = document.activeElement
     lockedScrollY = window.scrollY
@@ -468,6 +487,7 @@ function trapReaderFocus(event) {
           </div>
         </div>
         <button class="copy-prompt-button" @click="openPrompt"><span>＋</span> 推送指令</button>
+        <button class="copy-mcp-button" :aria-label="mcpConfigCopied ? 'MCP 配置已复制' : '复制 MCP 配置'" :title="mcpConfigCopied ? 'MCP 配置已复制' : '复制 Codex MCP 配置'" @click="copyMCPConfig"><span>⧉</span><span class="copy-mcp-label">{{ mcpConfigCopied ? '已复制 MCP' : 'MCP 配置' }}</span></button>
         <div class="top-divider"></div>
         <div class="stat"><span class="stat-value">{{ stats.bot_count }}</span><span class="stat-label">Bots</span></div>
         <div class="stat"><span class="stat-value">{{ stats.report_count }}</span><span class="stat-label">报告</span></div>
@@ -555,6 +575,16 @@ function trapReaderFocus(event) {
         <textarea class="prompt-preview" :value="pushPrompt" readonly aria-label="完整推送指令预览"></textarea>
         <p v-if="promptFallback" class="copy-fallback">浏览器未开放剪贴板权限。预览内容已选中，请使用 ⌘C / Ctrl+C 复制。</p>
         <footer class="modal-actions"><span v-if="promptCopied" class="copy-success">✓ 已复制完整推送指令</span><span v-else class="copy-note">仅推送最终正式报告，测试请使用独立环境。</span><button class="primary-button copy-action" @click="copyPrompt">{{ promptCopied ? '再次复制' : '复制完整指令' }} <span>↗</span></button></footer>
+      </section>
+    </div>
+    <div v-if="mcpConfigOpen" class="modal-scrim" @click.self="mcpConfigOpen = false">
+      <section class="prompt-modal mcp-config-modal" role="dialog" aria-modal="true" aria-labelledby="mcp-config-title">
+        <header class="modal-heading"><div><p class="eyebrow">REMOTE MCP · STREAMABLE HTTP</p><h2 id="mcp-config-title">Codex MCP 配置</h2></div><button class="icon-button" aria-label="关闭" @click="mcpConfigOpen = false">×</button></header>
+        <p class="modal-intro">配置只包含当前服务地址和环境变量名，不包含 ACCESS_TOKEN。先在运行 Codex 的环境中设置 <code>BOLT_DOCK_TOKEN</code>，其值与 Bolt Dock 的 <code>ACCESS_TOKEN</code> 相同。</p>
+        <div class="preview-heading"><span>config.toml 内容</span><span>Streamable HTTP</span></div>
+        <textarea class="prompt-preview mcp-config-preview" :value="mcpConfig" readonly aria-label="Codex MCP 配置内容"></textarea>
+        <p v-if="mcpConfigFallback" class="copy-fallback">浏览器未开放剪贴板权限。配置已选中，请使用 ⌘C / Ctrl+C 复制。</p>
+        <footer class="modal-actions"><span class="copy-note">服务需要从 Codex 环境通过 HTTPS 访问。</span><button class="primary-button copy-action" @click="copyMCPConfig">再次复制配置 <span>↗</span></button></footer>
       </section>
     </div>
     <div v-if="renameTarget" class="modal-scrim" @click.self="renameTarget = null">

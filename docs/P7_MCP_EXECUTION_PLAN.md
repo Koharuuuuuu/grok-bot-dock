@@ -1,6 +1,6 @@
 # P7 · MCP 原生接入：技术设计与 Codex 执行清单
 
-> 状态：**待执行，所有验收项初始为 [ ]**。仓库：`Nyakooo/grok-bot-dock`，默认分支 `master`。P7 在 P6 已修复功能基础上增量实现，不能回退 P6。产品当前界面名称为 Bolt Dock（后续品牌更名不属于本任务）。日期：2026-10-10。
+> 状态：**代码实现与本地验收已进行；远程 Codex 客户端、GitHub Actions/GHCR 和生产环境仍未验收**。逐项结果见 [P7 验收报告](./P7_MCP_ACCEPTANCE.md)。仓库：`Nyakooo/grok-bot-dock`，默认分支 `master`。P7 在 P6 已修复功能基础上增量实现，不能回退 P6。产品当前界面名称为 Bolt Dock（后续品牌更名不属于本任务）。日期：2026-10-10。
 
 ## 1. 目标、边界与产品价值
 
@@ -12,69 +12,69 @@
 
 ## 2. 先审计再实施（禁止假定接口）
 
-- [ ] 核查 master 当前 Go 路由、认证中间件、报告写入与检索服务、FTS5 查询、SSE、大小限制、日志、Dockerfile、Compose、反向代理说明、现有测试。
-- [ ] 记录现有 REST 字段与状态码，特别是 `source` 缺失归类 `unknown`、`stable_task_id` 的确定性 Bot ID 派生、`external_id` 幂等、`bot_name` 回退、`executed_at` RFC3339。
-- [ ] 先确认所选 MCP Go SDK 的**官方维护状态、协议版本、许可证和 Go 1.25 兼容性**；优先成熟官方 SDK，避免自行实现协议解析。锁定依赖版本，不凭空宣称支持特定客户端。
-- [ ] 在技术设计中写明 MCP 工具参数到既有 REST 服务入参的映射和错误语义；避免双份业务逻辑。
+- [x] 核查 master 当前 Go 路由、认证中间件、报告写入与检索服务、FTS5 查询、SSE、大小限制、日志、Dockerfile、Compose、反向代理说明、现有测试。
+- [x] 记录现有 REST 字段与状态码，特别是 `source` 缺失归类 `unknown`、`stable_task_id` 的确定性 Bot ID 派生、`external_id` 幂等、`bot_name` 回退、`executed_at` RFC3339。
+- [x] 确认所选官方 MCP Go SDK 的维护状态、协议版本、许可证和 Go 1.25 兼容性；锁定依赖 `v1.8.0`，未宣称未经实测的客户端兼容性。
+- [x] 在技术设计中记录 MCP 工具参数到既有 REST 服务入参的映射和错误语义，复用写入与搜索逻辑。
 
 ## 3. 协议与传输
 
-- [ ] 在原 Go HTTP mux 注册 `/mcp` Streamable HTTP handler，正确处理 MCP 初始化、协议协商、工具列表和工具调用；遵循所选 SDK/协议版本的 HTTP 方法、`Accept`、`Content-Type`、会话与错误约定。
-- [ ] MVP 优先选择 SDK 支持的**无状态 HTTP 模式**，仅在真实客户端兼容性要求下增加服务端会话；不要强行自行模拟 SSE、会话 ID 或 JSON-RPC。
-- [ ] 兼容代理后的 HTTPS、请求取消、超时、请求体上限、并发；拒绝未认证访问；响应中不得泄露 Token、数据库路径或内部堆栈。
-- [ ] `/healthz` 和原有 REST/SSE 路由行为保持不变；前端静态资源/SPA fallback 不得吞掉 `/mcp`。
-- [ ] 协议级测试覆盖初始化、tools/list、tools/call、无效 JSON-RPC、错误 HTTP 方法/Accept、超限请求、连接中断、并发调用；以 SDK 规范为准，避免自创状态码。
+- [x] 在原 Go HTTP mux 注册 `/mcp` Streamable HTTP handler；SDK 处理初始化、协议协商、工具列表/调用、HTTP 方法、Accept/Content-Type 与传输错误。
+- [x] 使用 SDK 无状态 HTTP 模式，不自行模拟 SSE、会话 ID 或 JSON-RPC。
+- [x] 启用请求取消传播、`MAX_REQUEST_BYTES` 上限和并发；强制 Bearer 鉴权；响应不含 Token、数据库路径或内部堆栈。
+- [x] 验证 `/healthz`、REST、SSE 路由和浏览器 SPA 未被 `/mcp` 路由影响。
+- [x] 协议测试覆盖初始化、tools/list、tools/call、无效 JSON-RPC、错误 HTTP 方法/Accept、超限请求、连接取消和并发调用。
 
 ## 4. 安全与授权
 
-- [ ] `/mcp` 必须强制认证。MVP 可以复用现有 **Bearer ACCESS_TOKEN**（明确标记为单用户共享密钥模式），绝不能因为 Web 登录 Cookie 有效就自动开放跨站 MCP；不要把 Token 放在 URL、报告内容、示例仓库、日志或前端代码。
-- [ ] 为未来多用户/第三方公开接入预留权限边界：本期仅私有自托管，**不宣称符合 OAuth 受保护资源标准**。如果选定客户端或部署要求 OAuth，作为独立后续阶段实现完整 OAuth 资源服务器发现与授权，不要假造半套流程。
-- [ ] 校验 HTTP Origin：对浏览器跨源请求采用明确允许策略，拒绝恶意/未知 Origin；无 Origin 的合法服务端客户端可按 Bearer 认证策略处理。不得配置 `Access-Control-Allow-Origin: *` 加凭据。
-- [ ] 推荐公网仅 HTTPS、反向代理限流与可选 IP 限制；保护写操作和搜索查询的请求大小、速率及响应条数，避免被刷写和 FTS 大查询耗尽 2 vCPU / 1.6GiB 服务器。
-- [ ] 日志仅记录必要元信息和匿名化错误，不打印 Authorization、报告正文或完整搜索内容；测试覆盖未授权访问和跨源拒绝。
-- [ ] MCP 工具注释应准确描述读写/副作用；AI 调用策略由客户端决定，**不能保证 Agent 只在最终报告时调用**，服务端依赖鉴权、幂等、校验和限流兜底。
+- [x] `/mcp` 仅接受 Bearer `ACCESS_TOKEN`，拒绝 Web Cookie；文档说明单用户共享密钥模式并明确 Token 不进入 URL、剪贴板、仓库或日志。
+- [x] 本期不实现 OAuth，也不宣称符合 OAuth 受保护资源标准；后续 OAuth 属独立工作。
+- [x] 无 Origin 服务端客户端按 Bearer 认证；同源 Origin 允许、跨源 Origin 拒绝，无宽泛 CORS。
+- [x] 写入每 IP 120 次/分钟、搜索每 IP 60 次/分钟；请求体及搜索条目受限；HTTPS 与反向代理限流已写入 README。
+- [x] 日志仅记录方法、路径和耗时；测试覆盖缺失/错误 Token、Cookie 拒绝和跨源拒绝。
+- [x] 工具注释描述读写、副作用和最终报告约束；文档说明客户端策略不是安全边界。
 
 ## 5. 工具一：publish_report（P0）
 
-- [ ] 注册 `publish_report`，提供明确名称、描述、JSON Schema、必填字段与长度限制。描述中强调“**仅发布已完成、确认的正式报告**；不要提交草稿、调试日志、中间结果或失败任务”，但不要将自然语言提示视作安全边界。
-- [ ] 字段与现有 REST 契约对齐：`executed_at`（RFC3339，必填）、`content`（完整 Markdown，必填）、`source`（可选，默认 unknown）、`bot_id` 或 `stable_task_id`（至少一种可靠稳定身份）、`bot_name`、`task_name`、`title`、`summary`、`tags`、`external_id`、`avatar_url`（按既有 HTTPS 规则）。
-- [ ] 同一个 `stable_task_id` 在相同 source 下始终映射同一 Bot；不允许按时间随机生成身份。没有稳定身份返回清晰参数错误，**不能默默生成新 Bot**。
-- [ ] `external_id` 同一次正式执行及重试必须一致；沿用 REST 幂等约束，重复提交不新增报告或 SSE 通知。不要为缺失 external_id 的请求擅自制造可能跨执行冲突的 ID。
-- [ ] 复用 REST 的服务层校验与数据库事务；成功工具响应结构化返回 `report_id`、`created` / `duplicate`、`source`、`bot_id`、`executed_at` 等安全字段，**不返回整个报告正文**；可同时提供简洁文本供不同客户端读取。
-- [ ] 参数错误与业务失败返回 MCP 兼容的工具错误（必要时 isError=true），认证/传输错误按 HTTP/SDK 规范处理；不得把 400/401/500 当成发布成功。
+- [x] 注册 `publish_report`，提供明确描述、Typed JSON Schema、必填字段和长度限制，并说明只发布已完成正式报告。
+- [x] 字段对齐现有 REST 契约；`executed_at`、`content` 必填；source 缺省为 `unknown`；Bot 稳定身份至少提供 bot_id/stable_task_id 之一。
+- [x] 同 source 的相同 stable_task_id 稳定派生同一 Bot；缺少身份时返回清晰工具参数错误。
+- [x] 复用 REST external_id 幂等；相同执行重试不新增报告/SSE；缺失 external_id 时不自造执行 ID。
+- [x] 复用 REST 校验、Store 事务和 SSE；结构化成功响应只返回安全元数据，不含完整正文。
+- [x] 参数错误与业务失败返回 MCP 工具错误，HTTP 鉴权/传输错误按 SDK 约定处理。
 
 ## 6. 工具二：search_reports（P1）
 
-- [ ] 注册只读 `search_reports`，参数建议 `query`（必填非空）、`source`、`bot_id`、`from`、`to`、`limit`、`cursor`；复用现有 FTS5 检索、筛选、分页与安全查询，不另写 SQL 检索引擎。
-- [ ] 设合理默认 limit（建议 10）和硬上限（建议 20），返回匹配项的 `report_id`、`source`、`bot_id`、展示名称、标题、摘要、执行时间及分页游标。默认不返回完整 Markdown，以控制 Token/响应体积。
-- [ ] 日期、游标、空结果、特殊字符、中文、跨来源同名 Bot、权限与限流有测试；查询不能修改已读状态或其他数据。
-- [ ] 检索无结果时返回空数组，不虚构报告；展示名称沿用 SQLite display_name 优先规则。
+- [x] 注册只读 `search_reports`，参数覆盖 query/source/Bot/date/limit/cursor，复用现有 FTS5、筛选和游标分页。
+- [x] 默认 limit 10、硬上限 20；只返回安全元数据、摘要和展示名，不返回完整 Markdown。
+- [x] 覆盖日期、游标、空结果、中文、跨来源同名 Bot、鉴权及并发；查询不写入数据。
+- [x] 无匹配返回空数组；展示名遵循 SQLite `display_name` 优先规则。
 
 ## 7. 后续工具（本阶段不作为上线阻塞）
 
-- [ ] **设计但暂不默认开放** `get_report(report_id)`：返回指定报告的完整 Markdown，增加长度限制/截断说明，防止超大内容占满模型上下文。
-- [ ] **设计但暂不默认开放** `list_reports`：按 source/Bot/日期分页列出历史报告，限制每页条数。
-- [ ] 不实现 delete、rename、管理凭据、任意 SQL、任意 URL 抓取或远程命令执行工具。
+- [x] 明确 `get_report(report_id)` 与 `list_reports` 属于后续设计，不在本 MVP 开放。
+- [x] MCP 不实现 delete、rename、管理凭据、任意 SQL、URL 抓取或远程命令执行工具。
 
 ## 8. 部署与使用文档
 
-- [ ] README 新增“远程 MCP 接入”章节：`https://YOUR_DOMAIN/mcp`、Streamable HTTP、Bearer Token 在客户端安全配置、HTTPS/反向代理前提、与 REST 的差异。
-- [ ] 提供至少一个**真实测试过**的 Codex MCP 客户端配置/接入步骤（按当前版本 CLI/桌面能力核实，不编造配置键名）；另选一个支持远程 MCP 的客户端验证；无法验证则标注限制。
-- [ ] 给出 MCP 工具示例：一份最终报告发布和一次中文历史检索；仅使用占位符，不包含真实 ACCESS_TOKEN；说明 MCP 客户端能发现工具不等于自动按时调用，定时推送仍推荐 REST。
-- [ ] 更新 `docs/TECHNICAL_DESIGN.md`、`docs/EXECUTION_PLAN.md` 和必要的运维/反向代理说明；保持 Compose 单容器部署、GHCR 镜像路径和 `/data` 不变。
-- [ ] 明确默认公网暴露的安全影响；如引入 `MCP_ENABLED` 开关，记录默认值、兼容性和健康检查行为，避免旧部署意外开放额外入口。
+- [x] README 写明 MCP 地址、Streamable HTTP、Bearer 环境变量、HTTPS/反向代理和 REST 差异。
+- [x] 用真实 Codex CLI `0.162.0-alpha.2` 在隔离本地服务上验证工具发现、发布和检索；接入配置步骤与安全变量名已写入 README。
+- [ ] 第二个 MCP 客户端尚未实测；验收报告明确注明，不宣称多客户端兼容。
+- [x] README 提供正式报告发布 JSON 和中文搜索示例，不含实际 Token；说明 MCP 不保证定时调用、定时推送沿用 REST。
+- [x] 已更新技术设计、执行路线图、README 反向代理说明；Compose 单容器、镜像路径和 `/data` 不变。
+- [x] 已说明共享密钥公网暴露影响；本期未增加 `MCP_ENABLED` 开关，MCP 路由受现有 `ACCESS_TOKEN` 保护。
 
 ## 9. 验收矩阵（不得跳过）
 
-- [ ] A. 无凭据/错误 Token 请求 MCP 均拒绝；有效 Token 可初始化、列出工具；跨源恶意 Origin 拒绝。
-- [ ] B. MCP 发布新报告 → 原有 Web UI 出现 Bot 与报告 → SSE 正常更新 → REST 可读取。
-- [ ] C. 使用相同 `external_id` 重试 → 不重复写入、不重复通知；使用相同 stable_task_id 连续两次不同执行 → 同一 Bot 下两份报告。
-- [ ] D. REST 发布 → MCP 搜索能查到；MCP 发布 → REST 搜索能查到；中文、日期、来源和跨 Bot 查询正确。
-- [ ] E. 工具参数错误、空查询、超大正文、超限 limit、并发、断线、非法请求都安全失败，日志无敏感数据。
-- [ ] F. Go 单元/集成测试、`make test`、`make build`、Docker 构建、容器 `/healthz`、SQLite 数据持久化均通过；记录资源占用的真实测量。
-- [ ] G. 真实 Codex MCP 客户端完成 tools/list 与 publish_report、search_reports；第二个客户端如未验证必须说明，不得声称兼容。
-- [ ] H. P6 核心回归：网页登录刷新、详情无抖动/清晰、字号与最大化偏好、Bot 重命名、REST 推送和 GHCR 发布流程不退化。
-- [ ] I. 在 `docs/P7_MCP_ACCEPTANCE.md` 记录每项结果、测试命令、代码文件、真实客户端版本、截图/日志路径、CI run、镜像 digest、已知限制。未测即 [ ]。
+- [x] A. 无凭据/错误 Token 被拒绝；有效 Token 完成初始化和 tools/list；跨源 Origin 被拒绝。
+- [x] B. SDK 集成测试验证 MCP 发布→Store/SSE/REST；浏览器本地登录、页面阅读验证静态资源与 API 正常。
+- [x] C. 重复 external_id 不重复写入或发事件；相同 stable_task_id 的不同执行落在同一 Bot。
+- [x] D. REST 与 MCP 双向检索通过，含中文、日期、来源、同名 Bot 隔离及游标分页。
+- [x] E. 工具校验、空结果/空查询、请求体限制、limit、并发、客户端取消、非法 JSON-RPC 和日志字段边界有测试。
+- [x] F. `make test`、`make build`、Docker 构建、容器 `/healthz`、SQLite 重启持久化通过；资源实测数据与是否套用 Compose 限额见验收报告。
+- [x] G. 真实 Codex CLI 完成工具发现、publish_report、search_reports；第二客户端仍未验证并在报告中注明。
+- [ ] H. P6 全量核心回归及远程 GHCR 发布流程尚未本轮全部复验；已做的真实浏览器/API子项见验收报告。
+- [x] I. `docs/P7_MCP_ACCEPTANCE.md` 已创建，按证据记录实现、命令、客户端与部署限制；CI、GHCR digest 和生产项保持未验收，直到拿到真实结果。
 
 ## 10. 推荐执行顺序与提交策略
 

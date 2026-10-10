@@ -46,7 +46,7 @@ Go 单测覆盖验证、幂等、并发写入、FTS 同步、分页、鉴权；�
   "content": "# 今日 AI 行业动态\\n\\n报告正文"
 }
 ```
-必填 source、bot_id、bot_name、executed_at、content；其余可选。source 是由发送方给出的稳定、规范化的机器标识（建议小写字母、数字、连字符，限制长度）；不是从标题猜测。服务端在同一事务中自动登记首次出现的 source，Bot 由 (source, bot_id) 唯一确定，报告必须引用该复合身份或内部 Bot 主键；external_id 的幂等作用域同样为 (source, bot_id)。不允许不同来源同名 bot_id 互相覆盖。GET /api/v1/sources 返回数据库中实际出现的来源及计数，来源无需手动创建；bots、reports、search 查询支持 source 可选过滤。所有筛选选项由 GET sources 动态获取，默认「全部来源」；新来源推送后刷新或 SSE 更新下拉。禁止“自定义”来源选项、手工来源配置页面或硬编码来源枚举。若未来修改已有数据结构，使用可回滚/可验证的迁移并保留旧数据；V1 尚未实施时直接采用新 schema。
+`executed_at`、`content` 必填；`source` 缺失或空白归一化为 `unknown`；`bot_id` 可直接提供，或由稳定 `stable_task_id` 确定性推导；缺少两者均返回 400。`bot_name` 缺失时回退到 `task_name`，再回退到稳定 Bot ID。source 是发送方提供的稳定、规范化机器标识（小写字母、数字、连字符，限制长度）；不是从标题猜测。服务端在同一事务中自动登记首次出现的 source，Bot 由 (source, bot_id) 唯一确定，报告必须引用该复合身份或内部 Bot 主键；external_id 的幂等作用域同样为 (source, bot_id)。不允许不同来源同名 bot_id 互相覆盖。GET /api/v1/sources 返回数据库中实际出现的来源及计数，来源无需手动创建；bots、reports、search 查询支持 source 可选过滤。所有筛选选项由 GET sources 动态获取，默认「全部来源」；新来源推送后刷新或 SSE 更新下拉。禁止“自定义”来源选项、手工来源配置页面或硬编码来源枚举。若未来修改已有数据结构，使用可回滚/可验证的迁移并保留旧数据；V1 尚未实施时直接采用新 schema。
 
 UI：无左侧导航；顶部品牌 Bolt Dock、默认跨来源全局搜索、动态来源下拉、Bot 数/报告数/全库数据大小。来源切换同时影响卡片、搜索、相关计数；数据库物理大小始终标记「全库」。未选择卡片时网格占满；点击卡片右侧抽屉显示 Markdown；抽屉放大按钮进入宽屏沉浸式阅读，支持退出还原。头像由 avatar_url 提供，无头像/失败使用默认图标。桌面优先、移动端响应式。UI 实现以本节为最新权威约束，覆盖旧版左侧菜单设计。
 
@@ -58,3 +58,15 @@ UI：无左侧导航；顶部品牌 Bolt Dock、默认跨来源全局搜索、�
 - 验收：检查 workflow 成功、GHCR 匿名 pull、Compose 启动/健康检查/持久化、复制文本字段完整且包含正式报告过滤规则；在未配置实际域名时不虚构真实部署地址。
 
 当前 Compose 将 HTTP 端口仅绑定到宿主机 `127.0.0.1`，容器限制为 2 CPU、1600 MiB；应通过同机 HTTPS 反向代理提供公网入口。网页登录用服务端内存会话和 HttpOnly Cookie 恢复刷新状态；进程重启会撤销所有浏览器会话。
+
+## 11. P7 远程 MCP
+
+MCP 通过现有 Go mux 的精确路径 `/mcp` 提供 Streamable HTTP，继续使用单 Go 服务、Vue 静态资源和 SQLite。协议层采用官方 [`github.com/modelcontextprotocol/go-sdk`](https://github.com/modelcontextprotocol/go-sdk) 固定版本 `v1.8.0`；其模块要求 Go `1.25.0`，与本仓库 `go.mod` 一致。SDK 支持 MCP `2026-07-28` 和多个旧版协议。锁定版本按贡献代码归属采用 Apache-2.0 或 MIT 许可，详见依赖 LICENSE。P7 使用 SDK 的无状态传输，不自行实现 JSON-RPC、SSE 或会话协议；SDK 限制 MCP 请求体不超过服务 `MAX_REQUEST_BYTES` 配置，默认 1 MiB。
+
+MCP 仅接受常量时间校验的 `Authorization: Bearer <ACCESS_TOKEN>`，拒绝网页登录 Cookie；Origin 为空时允许已认证的服务端客户端，同源 Origin 可通过，跨源 Origin 拒绝。MCP 不实现 OAuth 或多用户授权。发布继续使用原每客户端地址 120 次/分钟限流；MCP 搜索另限 60 次/分钟。日志仅记录 HTTP 方法、路径和耗时，不记录 Authorization、工具参数或报告正文。部署到公网时仍须使用 HTTPS，并建议反向代理限制来源和请求速率。
+
+`publish_report` 的参数投影与 REST `POST /api/v1/reports` 共用 `normalizeReportRequest` 与 `publishReport`：`executed_at` 为 RFC3339、`content` 必须非空；`source` 缺失时为 `unknown`；`bot_id` 与 `stable_task_id` 至少提供一个；稳定任务 ID 按既有 source+ID 规则确定性派生 Bot；Bot 名、标题、摘要、标签、外链头像、`external_id` 遵循 REST 长度和 URL 校验。数据库事务仍由 `Store.CreateReport` 处理；新报告广播原 `report.created` SSE，重复 `external_id` 返回旧 `report_id` 并不再次广播。结构化响应只返回 `report_id`、`created`、`duplicate`、source、Bot ID 和执行时间，不包含正文。缺少 external_id 时沿用 REST 行为，不保证跨请求重试幂等。
+
+`search_reports.query` 映射 REST 的 `q`，其余 `source`、`bot_id`、`from`、`to`、`limit`、`cursor` 直接复用 `Store.Search` 的 FTS5、筛选与稳定游标；日期为含首尾 `YYYY-MM-DD`，默认 limit 为 10、最大 20。MCP 搜索结果只投影报告 ID、来源、Bot ID/展示名、标题、摘要、执行时间和标签，不返回完整 Markdown；空结果为 `items: []`。过滤、FTS 查询和分页继续由现有存储层负责，不创建第二套 SQL 检索逻辑。
+
+Codex 可将当前站点地址配置为 `https://YOUR_DOMAIN/mcp`，并用 `bearer_token_env_var = "BOLT_DOCK_TOKEN"` 从启动 Codex 的环境安全读取 Token。页面「MCP 配置」按钮只复制自动生成的 URL 与变量名，不读取 ACCESS_TOKEN。样例配置和工具调用见 README 的“远程 MCP 接入”。客户端版本、托管执行环境的网络可达性以及生产反向代理尚需针对实际部署逐项验证；SDK 集成测试通过不代表所有客户端兼容。
