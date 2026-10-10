@@ -3,10 +3,12 @@ package api
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -16,19 +18,42 @@ import (
 
 type mcpRemoteAddrKey struct{}
 
+type mcpToolCapability struct {
+	Name                string   `json:"name"`
+	Title               string   `json:"title"`
+	Description         string   `json:"description"`
+	ProtocolDescription string   `json:"-"`
+	Access              string   `json:"access"`
+	Fields              []string `json:"fields"`
+	Example             string   `json:"example"`
+}
+
+var mcpToolCapabilities = []mcpToolCapability{
+	{
+		Name: "publish_report", Title: "Publish final report", Access: "写入",
+		Description:         "提交已完成并确认的 Markdown 报告。写入报告，必要时创建 Bot；不会删除或重命名数据。",
+		ProtocolDescription: "Publish a completed, confirmed final Markdown report to Bolt Dock. Do not submit drafts, debug logs, intermediate results, or failed tasks. This writes a report and may create a Bot; it never deletes or renames data. Supply a stable bot_id or stable_task_id, and reuse external_id for retries. The server returns metadata only, not the report body.",
+	},
+	{
+		Name: "search_reports", Title: "Search report history", Access: "只读",
+		Description:         "按全文关键词查询历史报告，可按来源、Bot、日期筛选并使用游标分页。仅返回元数据和摘要。",
+		ProtocolDescription: "Search stored report history by full-text query, including Chinese, with optional source, Bot, date, and cursor filters. Read-only; returns report metadata and summaries, never full Markdown.",
+	},
+}
+
 type publishReportInput struct {
-	ExecutedAt   string   `json:"executed_at" jsonschema:"RFC3339 execution time of the completed report"`
-	Content      string   `json:"content" jsonschema:"Complete Markdown report; publish only a confirmed final report, never drafts, logs, intermediate results, or failed tasks"`
-	Source       *string  `json:"source,omitempty" jsonschema:"Stable lowercase source identifier; omitted or blank is stored as unknown"`
-	BotID        *string  `json:"bot_id,omitempty" jsonschema:"Stable Bot identifier; provide this or stable_task_id"`
-	StableTaskID *string  `json:"stable_task_id,omitempty" jsonschema:"Stable task identity; deterministically maps to the same Bot when bot_id is not supplied"`
-	BotName      *string  `json:"bot_name,omitempty" jsonschema:"Bot display name reported by the source"`
-	TaskName     *string  `json:"task_name,omitempty" jsonschema:"Stable task name used as a Bot name fallback"`
-	Title        *string  `json:"title,omitempty" jsonschema:"Report title"`
-	Summary      *string  `json:"summary,omitempty" jsonschema:"Short report summary"`
-	Tags         []string `json:"tags,omitempty" jsonschema:"Report tags"`
-	ExternalID   *string  `json:"external_id,omitempty" jsonschema:"Stable identifier for this execution; reuse it when retrying to make publication idempotent"`
-	AvatarURL    *string  `json:"avatar_url,omitempty" jsonschema:"Optional HTTPS avatar URL"`
+	ExecutedAt   string   `json:"executed_at" jsonschema:"实际 RFC3339 完成时间"`
+	Content      string   `json:"content" jsonschema:"完整 Markdown 正文；仅发布已确认的最终报告"`
+	Source       *string  `json:"source,omitempty" jsonschema:"来源标识；省略或留空时记为 unknown"`
+	BotID        *string  `json:"bot_id,omitempty" jsonschema:"稳定 Bot 标识；与 stable_task_id 至少提供一个"`
+	StableTaskID *string  `json:"stable_task_id,omitempty" jsonschema:"稳定任务标识；未提供 bot_id 时据此映射到同一 Bot"`
+	BotName      *string  `json:"bot_name,omitempty" jsonschema:"来源提供的 Bot 显示名称"`
+	TaskName     *string  `json:"task_name,omitempty" jsonschema:"Bot 名称的任务名回退值"`
+	Title        *string  `json:"title,omitempty" jsonschema:"报告标题"`
+	Summary      *string  `json:"summary,omitempty" jsonschema:"报告摘要"`
+	Tags         []string `json:"tags,omitempty" jsonschema:"报告标签"`
+	ExternalID   *string  `json:"external_id,omitempty" jsonschema:"本次执行的稳定标识；重试时复用以实现幂等"`
+	AvatarURL    *string  `json:"avatar_url,omitempty" jsonschema:"可选 HTTPS 头像地址"`
 }
 
 type publishReportOutput struct {
@@ -41,13 +66,143 @@ type publishReportOutput struct {
 }
 
 type searchReportsInput struct {
-	Query  string `json:"query" jsonschema:"Non-empty full-text search query, including Chinese text"`
-	Source string `json:"source,omitempty" jsonschema:"Optional source filter"`
-	BotID  string `json:"bot_id,omitempty" jsonschema:"Optional stable Bot ID filter"`
-	From   string `json:"from,omitempty" jsonschema:"Inclusive start date in YYYY-MM-DD format"`
-	To     string `json:"to,omitempty" jsonschema:"Inclusive end date in YYYY-MM-DD format"`
-	Limit  *int   `json:"limit,omitempty" jsonschema:"Maximum results per page; defaults to 10 and cannot exceed 20"`
-	Cursor string `json:"cursor,omitempty" jsonschema:"Opaque next_cursor returned by a previous search_reports call"`
+	Query  string `json:"query" jsonschema:"1–256 字符全文关键词，支持中文"`
+	Source string `json:"source,omitempty" jsonschema:"可选来源筛选"`
+	BotID  string `json:"bot_id,omitempty" jsonschema:"可选稳定 Bot 标识筛选"`
+	From   string `json:"from,omitempty" jsonschema:"可选起始日期，含当日，格式 YYYY-MM-DD"`
+	To     string `json:"to,omitempty" jsonschema:"可选截止日期，含当日，格式 YYYY-MM-DD"`
+	Limit  *int   `json:"limit,omitempty" jsonschema:"每页结果数，默认 10，最大 20"`
+	Cursor string `json:"cursor,omitempty" jsonschema:"上一页返回的可选 next_cursor；仅翻页时使用"`
+}
+
+func capabilityMetadata(maxBytes int64) []mcpToolCapability {
+	capabilities := append([]mcpToolCapability(nil), mcpToolCapabilities...)
+	publishSchema, searchSchema := buildMCPInputSchemas(maxBytes)
+	for index, schema := range []*jsonschema.Schema{publishSchema, searchSchema} {
+		capabilities[index].Fields = schemaFieldDescriptions(schema)
+		capabilities[index].Example = schemaExample(schema)
+	}
+	return capabilities
+}
+
+func buildMCPInputSchemas(maxBytes int64) (*jsonschema.Schema, *jsonschema.Schema) {
+	publishSchema, err := jsonschema.For[publishReportInput](nil)
+	if err != nil {
+		panic(fmt.Sprintf("build publish_report schema: %v", err))
+	}
+	setSchemaMaxLength(publishSchema, "source", 63)
+	setSchemaMaxLength(publishSchema, "bot_id", 128)
+	setSchemaMaxLength(publishSchema, "stable_task_id", 512)
+	setSchemaMaxLength(publishSchema, "bot_name", 256)
+	setSchemaMaxLength(publishSchema, "task_name", 256)
+	setSchemaMaxLength(publishSchema, "executed_at", 64)
+	setSchemaMaxLength(publishSchema, "title", 512)
+	setSchemaMaxLength(publishSchema, "summary", 4096)
+	setSchemaMaxLength(publishSchema, "external_id", 256)
+	setSchemaMaxLength(publishSchema, "avatar_url", 2048)
+	setSchemaMaxLength(publishSchema, "content", int(maxBytes))
+	publishSchema.Properties["executed_at"].Format = "date-time"
+	publishSchema.Properties["content"].MinLength = jsonschema.Ptr(1)
+	publishSchema.AnyOf = []*jsonschema.Schema{{Required: []string{"bot_id"}}, {Required: []string{"stable_task_id"}}}
+	if tags := publishSchema.Properties["tags"]; tags != nil && tags.Items != nil {
+		tags.MaxItems = jsonschema.Ptr(32)
+		tags.Items.MaxLength = jsonschema.Ptr(128)
+	}
+	searchSchema, err := jsonschema.For[searchReportsInput](nil)
+	if err != nil {
+		panic(fmt.Sprintf("build search_reports schema: %v", err))
+	}
+	setSchemaMaxLength(searchSchema, "query", 256)
+	setSchemaMaxLength(searchSchema, "source", 63)
+	setSchemaMaxLength(searchSchema, "bot_id", 128)
+	setSchemaMaxLength(searchSchema, "from", 10)
+	setSchemaMaxLength(searchSchema, "to", 10)
+	setSchemaMaxLength(searchSchema, "cursor", int(maxBytes))
+	searchSchema.Properties["query"].MinLength = jsonschema.Ptr(1)
+	searchSchema.Properties["from"].Pattern = `^\d{4}-\d{2}-\d{2}$`
+	searchSchema.Properties["to"].Pattern = `^\d{4}-\d{2}-\d{2}$`
+	if limit := searchSchema.Properties["limit"]; limit != nil {
+		limit.Minimum = jsonschema.Ptr(float64(1))
+		limit.Maximum = jsonschema.Ptr(float64(20))
+	}
+	return publishSchema, searchSchema
+}
+
+func schemaFieldDescriptions(schema *jsonschema.Schema) []string {
+	names := append([]string(nil), schema.PropertyOrder...)
+	if len(names) == 0 {
+		for name := range schema.Properties {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+	}
+	required := map[string]bool{}
+	for _, name := range schema.Required {
+		required[name] = true
+	}
+	fields := make([]string, 0, len(names))
+	for _, name := range names {
+		property := schema.Properties[name]
+		if property == nil {
+			continue
+		}
+		label := name
+		if property.Description != "" {
+			label += "：" + property.Description
+		}
+		if required[name] {
+			label += "（必填）"
+		}
+		fields = append(fields, label)
+	}
+	return fields
+}
+
+func schemaExample(schema *jsonschema.Schema) string {
+	values := make(map[string]any, len(schema.Properties))
+	for name, property := range schema.Properties {
+		if name == "cursor" {
+			continue
+		}
+		if property.Type == "array" {
+			values[name] = []string{}
+			continue
+		}
+		switch name {
+		case "executed_at":
+			values[name] = "2026-10-10T17:30:00+08:00"
+		case "content":
+			values[name] = "# 完整报告正文"
+		case "query":
+			values[name] = "关键词"
+		case "limit":
+			values[name] = 10
+		case "from", "to":
+			values[name] = "2026-10-01"
+		case "bot_id":
+			values[name] = "bot-identifier"
+		case "stable_task_id":
+			values[name] = "task-identifier"
+		case "external_id":
+			values[name] = "execution-id"
+		case "source":
+			values[name] = "example"
+		case "avatar_url":
+			values[name] = "https://example.com/avatar.png"
+		case "bot_name":
+			values[name] = "示例 Bot"
+		case "task_name":
+			values[name] = "示例任务"
+		case "title":
+			values[name] = "最终报告标题"
+		case "summary":
+			values[name] = "报告摘要"
+		default:
+			values[name] = "示例"
+		}
+	}
+	encoded, _ := json.Marshal(values)
+	return string(encoded)
 }
 
 type reportSearchItem struct {
@@ -72,59 +227,18 @@ func (s *Server) newMCPHandler() http.Handler {
 	})
 	nonDestructive := false
 	closedWorld := false
-	publishSchema, err := jsonschema.For[publishReportInput](nil)
-	if err != nil {
-		panic(fmt.Sprintf("build publish_report schema: %v", err))
-	}
-	setSchemaMaxLength(publishSchema, "source", 63)
-	setSchemaMaxLength(publishSchema, "bot_id", 128)
-	setSchemaMaxLength(publishSchema, "stable_task_id", 512)
-	setSchemaMaxLength(publishSchema, "bot_name", 256)
-	setSchemaMaxLength(publishSchema, "task_name", 256)
-	setSchemaMaxLength(publishSchema, "executed_at", 64)
-	setSchemaMaxLength(publishSchema, "title", 512)
-	setSchemaMaxLength(publishSchema, "summary", 4096)
-	setSchemaMaxLength(publishSchema, "external_id", 256)
-	setSchemaMaxLength(publishSchema, "avatar_url", 2048)
-	setSchemaMaxLength(publishSchema, "content", int(s.maxBytes))
-	publishSchema.Properties["executed_at"].Format = "date-time"
-	publishSchema.Properties["content"].MinLength = jsonschema.Ptr(1)
-	publishSchema.AnyOf = []*jsonschema.Schema{
-		{Required: []string{"bot_id"}},
-		{Required: []string{"stable_task_id"}},
-	}
-	if tags := publishSchema.Properties["tags"]; tags != nil && tags.Items != nil {
-		tags.MaxItems = jsonschema.Ptr(32)
-		tags.Items.MaxLength = jsonschema.Ptr(128)
-	}
+	publishSchema, searchSchema := buildMCPInputSchemas(s.maxBytes)
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "publish_report",
-		Title:       "Publish final report",
-		Description: "Publish a completed, confirmed final Markdown report to Bolt Dock. Do not submit drafts, debug logs, intermediate results, or failed tasks. This writes a report and may create a Bot; it never deletes or renames data. Supply a stable bot_id or stable_task_id, and reuse external_id for retries. The server returns metadata only, not the report body.",
+		Name:        mcpToolCapabilities[0].Name,
+		Title:       mcpToolCapabilities[0].Title,
+		Description: mcpToolCapabilities[0].ProtocolDescription,
 		InputSchema: publishSchema,
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &nonDestructive, IdempotentHint: false, OpenWorldHint: &closedWorld},
 	}, s.handleMCPPublishReport)
-	searchSchema, err := jsonschema.For[searchReportsInput](nil)
-	if err != nil {
-		panic(fmt.Sprintf("build search_reports schema: %v", err))
-	}
-	setSchemaMaxLength(searchSchema, "query", 256)
-	setSchemaMaxLength(searchSchema, "source", 63)
-	setSchemaMaxLength(searchSchema, "bot_id", 128)
-	setSchemaMaxLength(searchSchema, "from", 10)
-	setSchemaMaxLength(searchSchema, "to", 10)
-	setSchemaMaxLength(searchSchema, "cursor", int(s.maxBytes))
-	searchSchema.Properties["query"].MinLength = jsonschema.Ptr(1)
-	searchSchema.Properties["from"].Pattern = `^\d{4}-\d{2}-\d{2}$`
-	searchSchema.Properties["to"].Pattern = `^\d{4}-\d{2}-\d{2}$`
-	if limit := searchSchema.Properties["limit"]; limit != nil {
-		limit.Minimum = jsonschema.Ptr(float64(1))
-		limit.Maximum = jsonschema.Ptr(float64(20))
-	}
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "search_reports",
-		Title:       "Search report history",
-		Description: "Search stored report history by full-text query, including Chinese, with optional source, Bot, date, and cursor filters. Read-only; returns report metadata and summaries, never full Markdown.",
+		Name:        mcpToolCapabilities[1].Name,
+		Title:       mcpToolCapabilities[1].Title,
+		Description: mcpToolCapabilities[1].ProtocolDescription,
 		InputSchema: searchSchema,
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: &nonDestructive, IdempotentHint: true, OpenWorldHint: &closedWorld},
 	}, s.handleMCPSearchReports)

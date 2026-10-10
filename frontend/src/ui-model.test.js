@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import createDOMPurify from 'dompurify'
 import { JSDOM } from 'jsdom'
 import { renderSanitizedMarkdown } from './markdown'
-import { highlightParts, makeMCPConfig, makeSearchParams, notificationStatus, refreshesSelectedBot, searchSnippet } from './ui-model'
+import { buildMCPServiceURL, classifyMCPAddress, highlightParts, makeCodexMCPConfig, makeMCPGenericGuide, makeSearchParams, notificationStatus, readMCPAddressOverride, refreshesSelectedBot, searchSnippet, writeMCPAddressOverride } from './ui-model'
 import { readImmersivePreference, readReaderFontSize, writeImmersivePreference, writeReaderFontSize } from './reader-preferences'
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>')
@@ -29,13 +29,56 @@ describe('Bolt Dock interface helpers', () => {
     expect(scoped.get('to')).toBe('2026-10-09')
   })
 
-  it('creates a Codex MCP configuration from the current site without copying a token', () => {
-    const config = makeMCPConfig('https://reports.example.com/')
-    expect(config).toContain('url = "https://reports.example.com/mcp"')
-    expect(config).toContain('bearer_token_env_var = "BOLT_DOCK_TOKEN"')
-    expect(config).not.toContain('ACCESS_TOKEN=')
-    expect(config).not.toContain('Bearer ')
-    expect(makeMCPConfig('http://localhost:18765')).toContain('url = "http://localhost:18765/mcp"')
+  it('builds a neutral MCP endpoint from the page origin or a reverse proxy override', () => {
+    expect(buildMCPServiceURL('https://reports.example.com')).toBe('https://reports.example.com/mcp')
+    expect(buildMCPServiceURL('https://internal.example/app/', 'https://public.example/dock')).toBe('https://public.example/dock/mcp')
+    expect(buildMCPServiceURL('https://reports.example.com', 'https://public.example/mcp')).toBe('https://public.example/mcp')
+    expect(buildMCPServiceURL('http://localhost:18765')).toBe('http://localhost:18765/mcp')
+    expect(() => buildMCPServiceURL('https://reports.example.com', 'http://public.example')).toThrow('HTTPS')
+    expect(() => buildMCPServiceURL('https://reports.example.com', 'https://user:pass@example.com')).toThrow('凭据')
+  })
+
+  it('warns when an MCP URL points to localhost or a private network', () => {
+    expect(classifyMCPAddress('http://localhost:18765/mcp')).toBe('local')
+    expect(classifyMCPAddress('https://192.168.1.5/mcp')).toBe('local')
+    expect(classifyMCPAddress('https://[::ffff:192.168.1.5]/mcp')).toBe('local')
+    expect(classifyMCPAddress('https://mcp.example.com/mcp')).toBe('public')
+  })
+
+  it('creates generic MCP instructions from server capabilities without exposing secrets', () => {
+    const guide = makeMCPGenericGuide('https://reports.example.com/mcp', [
+      { name: 'publish_report', access: '写入', description: '发布正式报告', example: '{"stable_task_id":"task-identifier"}' },
+      { name: 'search_reports', access: '只读', description: '查询历史', example: '{"query":"关键词","limit":10}' },
+    ])
+    expect(guide).toContain('Streamable HTTP')
+    expect(guide).toContain('Authorization: Bearer <由服务管理员安全提供>')
+    expect(guide).toContain('接入步骤：')
+    expect(guide).toContain('示例参数：{"query":"关键词","limit":10}')
+    expect(guide).toContain('publish_report')
+    expect(guide).toContain('search_reports')
+    expect(guide).not.toContain('BOLT_DOCK_TOKEN')
+    expect(guide).not.toContain('ACCESS_TOKEN=')
+  })
+
+  it('keeps the Codex-specific environment variable inside its optional example only', () => {
+    const example = makeCodexMCPConfig('https://reports.example.com/mcp')
+    expect(example).toContain('url = "https://reports.example.com/mcp"')
+    expect(example).toContain('bearer_token_env_var = "BOLT_DOCK_TOKEN"')
+    expect(example).not.toContain('ACCESS_TOKEN=')
+    expect(example).toContain('Codex CLI')
+  })
+
+  it('persists only the optional MCP address override and tolerates blocked storage', () => {
+    const values = new Map()
+    const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) }
+    expect(readMCPAddressOverride(storage)).toBe('')
+    writeMCPAddressOverride('https://public.example', storage)
+    expect(readMCPAddressOverride(storage)).toBe('https://public.example')
+    writeMCPAddressOverride('', storage)
+    expect(readMCPAddressOverride(storage)).toBe('')
+    const unavailable = { getItem() { throw new Error('blocked') }, setItem() { throw new Error('blocked') }, removeItem() { throw new Error('blocked') } }
+    expect(readMCPAddressOverride(unavailable)).toBe('')
+    expect(() => writeMCPAddressOverride('https://public.example', unavailable)).not.toThrow()
   })
 
   it('marks matching search snippets without injecting HTML', () => {

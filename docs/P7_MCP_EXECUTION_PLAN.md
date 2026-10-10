@@ -1,6 +1,6 @@
-# P7 · MCP 原生接入：技术设计与 Codex 执行清单
+# P7 · MCP 原生接入：技术设计与执行清单
 
-> 状态：**P7 实现及页面 Codex 一键复制、PR 文档维护、布局回归修复、PR/master Actions、GHCR 多架构匿名拉取、本机 Codex 与 MCP Inspector 验收已完成；P6 全量设备矩阵和生产部署未验证**。逐项结果见 [P7 验收报告](./P7_MCP_ACCEPTANCE.md)。仓库：`Nyakooo/grok-bot-dock`，默认分支 `master`。P7 在 P6 已修复功能基础上增量实现，不能回退 P6。产品当前界面名称为 Bolt Dock（后续品牌更名不属于本任务）。日期：2026-10-10。
+> 状态：**MCP 服务端实现、Codex CLI 与 MCP Inspector 原始验收已完成；默认 Codex 专属 UI 已由 [P7 MCP 独立服务定位纠偏](./P7_MCP_PRODUCT_POSITIONING_CORRECTION.md) 和 [通用接入 UI/UX 清单](./P7_MCP_UI_UX_OPTIMIZATION.md) 取代。** 当前 UI 已完成通用接入、隔离 Docker/真实浏览器和 MCP Inspector CLI `2.10.1` 验收。具体 Claude/Grok 产品版本、P6 全量设备矩阵及生产部署仍未验证。逐项证据见 [P7 验收报告](./P7_MCP_ACCEPTANCE.md)。仓库：`Nyakooo/grok-bot-dock`，默认分支 `master`。P7 在 P6 已修复功能基础上增量实现，不能回退 P6。日期：2026-10-10。
 
 ## 1. 目标、边界与产品价值
 
@@ -61,7 +61,7 @@
 - [x] 用真实 Codex CLI `0.162.0-alpha.2` 在隔离本地服务及匿名拉取的 GHCR master arm64 镜像上验证工具发现、发布和检索；接入配置步骤与安全变量名已写入 README。
 - [x] 用独立 MCP Inspector CLI 在匿名拉取的 GHCR master 镜像上验证工具发现和 `search_reports`；Schema portability 检查 0 errors、13 warnings，报告注明不据此宣称兼容所有客户端。
 - [x] README 提供正式报告发布 JSON 和中文搜索示例，不含实际 Token；说明 MCP 不保证定时调用、定时推送沿用 REST。
-- [x] 工作台顶栏提供「MCP 配置」一键复制入口，使用当前站点 origin 拼接 `/mcp`，复制 Codex TOML 与 `BOLT_DOCK_TOKEN` 环境变量名，不接触实际 Token；剪贴板失败时提供手动选择复制降级。复制说明、配置步骤、安全边界及链接已写入 README。
+- [x] 历史实现提供过 Codex TOML 复制；默认体验已按补充纠偏替换为中立「MCP 接入」，后端能力接口驱动工具说明，URL/通用说明分别复制。Codex TOML 仅保留折叠可选示例；真实剪贴板、toast 和 URL 覆盖证据见 UI/UX 验收记录。
 - [x] 已更新技术设计、执行路线图、README 反向代理说明；Compose 单容器、镜像路径和 `/data` 不变。
 - [x] 执行及验收文档随实现 PR、首轮交付文档 PR、布局修复 PR 与最终 GHCR 发布持续维护；回归发现的问题和未验证边界均按实测状态记录。
 - [x] 已说明共享密钥公网暴露影响；本期未增加 `MCP_ENABLED` 开关，MCP 路由受现有 `ACCESS_TOKEN` 保护。
@@ -75,7 +75,7 @@
 - [x] E. 工具校验、空结果/空查询、请求体限制、limit、并发、客户端取消、非法 JSON-RPC 和日志字段边界有测试。
 - [x] F. `make test`、`make build`、Docker 构建、容器 `/healthz`、SQLite 重启持久化通过；资源实测数据与是否套用 Compose 限额见验收报告。
 - [x] G. 真实 Codex CLI 对本机服务及发布后的 GHCR master 镜像完成工具发现、publish_report、search_reports；MCP Inspector CLI 完成第二客户端工具发现与搜索。
-- [ ] H. P7 页面复制与响应式回归已在 320/375/390/430/768/1280/1440px 检查；P6 全量核心回归和完整设备矩阵仍未全部复验，生产部署也未提供。详情及截图见验收报告。
+- [x] H. P7 通用接入界面在 320/375/390/430/1280/1440px 检查无水平溢出；浅色/深色截图、地址/说明真实剪贴板、焦点/Esc、登录/刷新/退出和 REST 弹窗均有浏览器实测。P6 全量设备矩阵与生产部署仍未验证。详情及截图见验收报告补充章节。
 - [x] I. `docs/P7_MCP_ACCEPTANCE.md` 已创建并在合并/发布后更新，按证据记录实现、命令、PR、Actions、匿名 GHCR digest、客户端与部署限制；生产项保持未验收。
 
 ## 10. 推荐执行顺序与提交策略

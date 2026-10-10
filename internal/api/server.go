@@ -234,6 +234,14 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		secure := requestIsHTTPS(r)
 		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode, MaxAge: -1})
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/mcp/capabilities":
+		writeJSON(w, http.StatusOK, map[string]any{
+			"endpoint":       "/mcp",
+			"transport":      "Streamable HTTP",
+			"authentication": "Authorization: Bearer <ACCESS_TOKEN>",
+			"access_model":   "仅供服务所有者本人或受信任的单用户客户端；共享密钥不支持按客户端授权、撤销或多租户隔离",
+			"tools":          capabilityMetadata(s.maxBytes),
+		})
 	case r.Method == "POST" && r.URL.Path == "/api/v1/reports":
 		s.createReport(w, r)
 	case r.Method == "GET" && r.URL.Path == "/api/v1/reports":

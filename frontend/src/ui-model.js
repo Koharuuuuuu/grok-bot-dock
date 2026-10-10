@@ -7,10 +7,76 @@ export function makeSearchParams({ query, source = '', cursor = '', from = '', t
   return params
 }
 
-export function makeMCPConfig(origin) {
-  const base = String(origin || '').trim().replace(/\/+$/, '')
-  const endpoint = `${base}/mcp`
-  return `# Store the same secret value used by Bolt Dock's ACCESS_TOKEN in BOLT_DOCK_TOKEN.\n# Set BOLT_DOCK_TOKEN in the environment that launches Codex.\n[mcp_servers.bolt_dock]\nurl = "${endpoint}"\nbearer_token_env_var = "BOLT_DOCK_TOKEN"\n`
+const MCP_ADDRESS_OVERRIDE_KEY = 'bolt-dock:mcp-address-override:v1'
+
+function hostnameIsPrivate(hostname) {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  const mappedIPv4 = host.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/)
+  if (mappedIPv4) {
+    const upper = Number.parseInt(mappedIPv4[1], 16)
+    const lower = Number.parseInt(mappedIPv4[2], 16)
+    return hostnameIsPrivate(`${upper >> 8}.${upper & 255}.${lower >> 8}.${lower & 255}`)
+  }
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal') || host.endsWith('.test')) return true
+  if (!host.includes('.') && !host.includes(':')) return true
+  if (host === '::' || host === '::1' || /^(fc|fd|fe[89ab])/i.test(host)) return true
+  const octets = host.split('.').map(Number)
+  if (octets.length !== 4 || octets.some(value => !Number.isInteger(value) || value < 0 || value > 255)) return false
+  const [a, b] = octets
+  return a === 0 || a === 10 || a === 127 || a >= 224 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 198 && (b === 18 || b === 19))
+}
+
+export function normalizeMCPAddressBase(value) {
+  let parsed
+  try { parsed = new URL(String(value || '').trim()) }
+  catch { throw new Error('请输入有效的 MCP 服务地址。') }
+  if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('MCP 服务地址必须使用 HTTP 或 HTTPS。')
+  if (parsed.username || parsed.password) throw new Error('服务地址不能包含凭据。')
+  if (parsed.search || parsed.hash) throw new Error('服务地址不能包含查询参数或片段。')
+  const privateHost = hostnameIsPrivate(parsed.hostname)
+  if (parsed.protocol !== 'https:' && !privateHost) throw new Error('远程 MCP 服务地址必须使用 HTTPS。')
+  parsed.pathname = parsed.pathname.replace(/\/+$/, '').replace(/\/mcp$/i, '')
+  return parsed.toString().replace(/\/$/, '')
+}
+
+export function buildMCPServiceURL(pageOrigin, override = '') {
+  const base = normalizeMCPAddressBase(override || pageOrigin)
+  const parsed = new URL(base)
+  parsed.pathname = `${parsed.pathname.replace(/\/+$/, '')}/mcp`.replace(/^\/\//, '/')
+  return parsed.toString()
+}
+
+export function classifyMCPAddress(value) {
+  try {
+    const url = new URL(value)
+    return hostnameIsPrivate(url.hostname) || url.protocol !== 'https:' ? 'local' : 'public'
+  } catch { return 'invalid' }
+}
+
+export function readMCPAddressOverride(storage) {
+  try { return (storage ?? globalThis.localStorage)?.getItem(MCP_ADDRESS_OVERRIDE_KEY) || '' } catch { return '' }
+}
+
+export function writeMCPAddressOverride(value, storage) {
+  try {
+    const target = storage ?? globalThis.localStorage
+    if (value) target?.setItem(MCP_ADDRESS_OVERRIDE_KEY, value)
+    else target?.removeItem(MCP_ADDRESS_OVERRIDE_KEY)
+  } catch {}
+}
+
+export function makeMCPGenericGuide(endpoint, tools = []) {
+  const toolList = tools.map(tool => `- ${tool.name}（${tool.access}）：${tool.description}\n  示例参数：${tool.example}`).join('\n')
+  return `Bot Dock MCP 接入说明\n\n服务地址：${endpoint}\n传输协议：Streamable HTTP\n认证方式：HTTP Authorization 请求头，Bearer Token\n请求头示例：Authorization: Bearer <由服务管理员安全提供>\n\n接入步骤：\n1. 复制上方 MCP 服务 URL。\n2. 在支持自定义远程 MCP 的客户端中填写 URL，并在客户端安全凭据设置中配置由管理员安全提供的 Bearer Token。\n3. 允许客户端调用 publish_report；完成发布后，在 Bot Dock 工作台查看报告。\n\n当前服务复用管理员 ACCESS_TOKEN 作为共享密钥，仅适用于服务所有者本人或受信任的单用户客户端；不要公开分享密钥。MCP 不定义通用客户端配置文件格式，请按客户端的远程 MCP 配置方式填写。\n\n可用工具与示例参数：\n${toolList}\n\nAgent 能发现并调用工具不代表它会自动推送报告；行为取决于客户端能力、授权和任务设置。`
+}
+
+export function makeCodexMCPConfig(endpoint) {
+  return `# Optional example for the tested Codex CLI 0.162.0-alpha.2 client.\n# BOLT_DOCK_TOKEN is a local variable name chosen for this example; set its value securely.\n[mcp_servers.bolt_dock]\nurl = "${endpoint}"\nbearer_token_env_var = "BOLT_DOCK_TOKEN"\n`
 }
 
 export function highlightParts(text, query) {

@@ -1,7 +1,7 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { renderSanitizedMarkdown } from './markdown'
-import { highlightParts, makeMCPConfig, makeSearchParams, notificationStatus, refreshesSelectedBot, searchSnippet } from './ui-model'
+import { buildMCPServiceURL, classifyMCPAddress, highlightParts, makeCodexMCPConfig, makeMCPGenericGuide, makeSearchParams, normalizeMCPAddressBase, notificationStatus, readMCPAddressOverride, refreshesSelectedBot, searchSnippet, writeMCPAddressOverride } from './ui-model'
 import { readImmersivePreference, readReaderFontSize, writeImmersivePreference, writeReaderFontSize } from './reader-preferences'
 import { readThemePreference, writeThemePreference } from './theme-preferences'
 
@@ -39,13 +39,28 @@ const notificationState = ref('')
 const promptOpen = ref(false)
 const promptCopied = ref(false)
 const promptFallback = ref(false)
-const mcpConfigCopied = ref(false)
-const mcpConfigFallback = ref(false)
 const mcpConfigOpen = ref(false)
+const mcpCapabilities = ref(null)
+const mcpCapabilitiesLoading = ref(false)
+const mcpCapabilitiesError = ref('')
+const mcpAddressOverride = ref(readMCPAddressOverride())
+const mcpAddressDraft = ref(mcpAddressOverride.value || window.location.origin)
+const mcpAddressError = ref('')
+const mcpCopyStatus = ref('')
+const mcpCopyFallback = ref(false)
+const mcpFallbackText = ref('')
+const mcpDialog = ref(null)
+const mcpCloseButton = ref(null)
 const pushTemplate = ref({ endpoint: '', source: '' })
 const promptAdvanced = ref(false)
 const defaultEndpoint = window.location.origin
-const mcpConfig = computed(() => makeMCPConfig(window.location.origin))
+const mcpServiceURL = computed(() => {
+  try { return buildMCPServiceURL(window.location.origin, mcpAddressOverride.value) }
+  catch { return '' }
+})
+const mcpAddressScope = computed(() => classifyMCPAddress(mcpServiceURL.value))
+const mcpCodexExample = computed(() => makeCodexMCPConfig(mcpServiceURL.value || buildMCPServiceURL(window.location.origin)))
+const mcpGenericGuide = computed(() => makeMCPGenericGuide(mcpServiceURL.value, mcpCapabilities.value?.tools || []))
 const renameTarget = ref(null)
 const renameValue = ref('')
 const renameError = ref('')
@@ -296,19 +311,64 @@ async function copyPrompt() {
   try { await navigator.clipboard.writeText(pushPrompt.value); promptCopied.value = true; promptFallback.value = false }
   catch { promptCopied.value = false; promptFallback.value = true; requestAnimationFrame(() => { const field = document.querySelector('.prompt-preview'); field?.focus(); field?.select() }) }
 }
-async function copyMCPConfig() {
-  mcpConfigCopied.value = false
-  mcpConfigFallback.value = false
+async function openMCPAccess() {
+  mcpConfigOpen.value = true
+  mcpAddressDraft.value = mcpAddressOverride.value || window.location.origin
+  mcpAddressError.value = ''
+  mcpCopyStatus.value = ''
+  mcpCapabilities.value = null
+  mcpCapabilitiesError.value = ''
+  mcpCapabilitiesLoading.value = true
   try {
-    await navigator.clipboard.writeText(mcpConfig.value)
-    mcpConfigCopied.value = true
-    actionNotice.value = 'Codex MCP 配置已复制。请先在启动 Codex 的环境中设置 BOLT_DOCK_TOKEN。'
-    setTimeout(() => { mcpConfigCopied.value = false }, 3000)
+    mcpCapabilities.value = await api('/api/v1/mcp/capabilities')
+  } catch (e) { mcpCapabilitiesError.value = e.message || '无法读取当前服务的 MCP 能力清单。' }
+  finally { mcpCapabilitiesLoading.value = false }
+}
+function saveMCPAddress() {
+  try {
+    const base = normalizeMCPAddressBase(mcpAddressDraft.value)
+    const pageBase = normalizeMCPAddressBase(window.location.origin)
+    mcpAddressOverride.value = base === pageBase ? '' : base
+    writeMCPAddressOverride(mcpAddressOverride.value)
+    mcpAddressDraft.value = base
+    mcpAddressError.value = ''
+    mcpCopyStatus.value = 'MCP 服务地址已保存到此浏览器。'
+  } catch (e) { mcpAddressError.value = e.message }
+}
+function resetMCPAddress() {
+  mcpAddressDraft.value = window.location.origin
+  saveMCPAddress()
+}
+async function copyMCPText(value, successMessage) {
+  if (!value) return
+  mcpCopyStatus.value = ''
+  mcpCopyFallback.value = false
+  mcpFallbackText.value = value
+  try {
+    await navigator.clipboard.writeText(value)
+    mcpCopyStatus.value = successMessage
   } catch {
-    mcpConfigOpen.value = true
-    mcpConfigFallback.value = true
-    requestAnimationFrame(() => { const field = document.querySelector('.mcp-config-preview'); field?.focus(); field?.select() })
+    mcpCopyFallback.value = true
+    requestAnimationFrame(() => {
+      const field = document.querySelector('.mcp-copy-fallback-field')
+      field?.focus()
+      field?.select()
+    })
   }
+}
+function copyMCPServiceURL() { return copyMCPText(mcpServiceURL.value, '已复制 MCP 服务地址。') }
+function copyMCPGenericGuide() { return copyMCPText(mcpGenericGuide.value, '已复制通用 MCP 接入说明。') }
+function copyCodexExample() { return copyMCPText(mcpCodexExample.value, '已复制 Codex CLI 示例；请在客户端安全设置中配置密钥。') }
+function openRESTPushInstructions() { mcpConfigOpen.value = false; openPrompt() }
+function trapMCPFocus(event) {
+  if (event.key !== 'Tab' || !mcpDialog.value) return
+  const focusable = [...mcpDialog.value.querySelectorAll('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), summary')]
+    .filter(element => element.getClientRects().length > 0)
+  if (!focusable.length) { event.preventDefault(); mcpDialog.value.focus(); return }
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+  if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
 }
 
 async function enableNotifications() {
@@ -413,6 +473,10 @@ watch([selected, promptOpen, mcpConfigOpen, renameTarget], async ([hasReader, ha
     await nextTick()
     readerCloseButton.value?.focus({ preventScroll: true })
   }
+  if (hasMCPConfig && !hadMCPConfig) {
+    await nextTick()
+    mcpCloseButton.value?.focus({ preventScroll: true })
+  }
 })
 function updateNarrowReader() { narrowReader.value = window.matchMedia('(max-width: 800px)').matches }
 function updateSystemTheme(event) { systemPrefersDark.value = event.matches }
@@ -486,8 +550,8 @@ function trapReaderFocus(event) {
             <p class="theme-description">{{ themeDescription }}</p>
           </div>
         </div>
-        <button class="copy-prompt-button" @click="openPrompt"><span>＋</span> 推送指令</button>
-        <button class="copy-mcp-button" :aria-label="mcpConfigCopied ? 'MCP 配置已复制' : '复制 MCP 配置'" :title="mcpConfigCopied ? 'MCP 配置已复制' : '复制 Codex MCP 配置'" @click="copyMCPConfig"><span>⧉</span><span class="copy-mcp-label">{{ mcpConfigCopied ? '已复制 MCP' : 'MCP 配置' }}</span></button>
+        <button class="copy-prompt-button" aria-label="打开 REST API 推送指令" title="REST API 推送指令" @click="openPrompt"><span>＋</span> REST 推送</button>
+        <button class="mcp-access-button" aria-label="打开 MCP 接入" title="MCP 接入" @click="openMCPAccess"><span>⌁</span><span class="mcp-access-label">MCP 接入</span></button>
         <div class="top-divider"></div>
         <div class="stat"><span class="stat-value">{{ stats.bot_count }}</span><span class="stat-label">Bots</span></div>
         <div class="stat"><span class="stat-value">{{ stats.report_count }}</span><span class="stat-label">报告</span></div>
@@ -564,8 +628,8 @@ function trapReaderFocus(event) {
     <footer class="app-footer"><span>BOLT DOCK <i>·</i> PERSONAL REPORT SPACE</span><span>数据只保存在你的服务端 <b>↗</b></span></footer>
     <div v-if="promptOpen" class="modal-scrim" @click.self="promptOpen = false">
       <section class="prompt-modal" role="dialog" aria-modal="true" aria-labelledby="prompt-title">
-        <header class="modal-heading"><div><p class="eyebrow">REPORT DELIVERY TEMPLATE</p><h2 id="prompt-title">复制 AI 推送指令</h2></div><button class="icon-button" aria-label="关闭" @click="promptOpen = false">×</button></header>
-        <p class="modal-intro">指令会自动使用当前站点地址，并要求 Agent 从稳定任务身份生成 Bot。外部 Agent 需要能通过公网 HTTPS 访问；localhost 和内网地址不可达。</p>
+        <header class="modal-heading"><div><p class="eyebrow">REST API · REPORT DELIVERY</p><h2 id="prompt-title">REST API 推送指令</h2></div><button class="icon-button" aria-label="关闭 REST API 推送指令" @click="promptOpen = false">×</button></header>
+        <p class="modal-intro">此路径通过 REST API 的 HTTPS POST 推送报告，适合脚本、Webhook 和不支持远程 MCP 的平台。支持 MCP 的客户端可从顶栏「MCP 接入」查看独立 MCP 服务地址。指令会使用当前站点地址，并要求 Agent 从稳定任务身份生成 Bot。</p>
         <button class="advanced-toggle" :aria-expanded="promptAdvanced" @click="promptAdvanced = !promptAdvanced">{{ promptAdvanced ? '收起高级设置' : '高级设置' }}</button>
         <div v-if="promptAdvanced" class="template-fields">
           <label class="wide-field">服务地址覆盖<input v-model="pushTemplate.endpoint" :placeholder="defaultEndpoint"></label>
@@ -578,13 +642,64 @@ function trapReaderFocus(event) {
       </section>
     </div>
     <div v-if="mcpConfigOpen" class="modal-scrim" @click.self="mcpConfigOpen = false">
-      <section class="prompt-modal mcp-config-modal" role="dialog" aria-modal="true" aria-labelledby="mcp-config-title">
-        <header class="modal-heading"><div><p class="eyebrow">REMOTE MCP · STREAMABLE HTTP</p><h2 id="mcp-config-title">Codex MCP 配置</h2></div><button class="icon-button" aria-label="关闭" @click="mcpConfigOpen = false">×</button></header>
-        <p class="modal-intro">配置只包含当前服务地址和环境变量名，不包含 ACCESS_TOKEN。先在运行 Codex 的环境中设置 <code>BOLT_DOCK_TOKEN</code>，其值与 Bolt Dock 的 <code>ACCESS_TOKEN</code> 相同。</p>
-        <div class="preview-heading"><span>config.toml 内容</span><span>Streamable HTTP</span></div>
-        <textarea class="prompt-preview mcp-config-preview" :value="mcpConfig" readonly aria-label="Codex MCP 配置内容"></textarea>
-        <p v-if="mcpConfigFallback" class="copy-fallback">浏览器未开放剪贴板权限。配置已选中，请使用 ⌘C / Ctrl+C 复制。</p>
-        <footer class="modal-actions"><span class="copy-note">服务需要从 Codex 环境通过 HTTPS 访问。</span><button class="primary-button copy-action" @click="copyMCPConfig">再次复制配置 <span>↗</span></button></footer>
+      <section ref="mcpDialog" class="prompt-modal mcp-access-modal" role="dialog" aria-modal="true" aria-labelledby="mcp-access-title" tabindex="-1" @keydown.tab="trapMCPFocus">
+        <header class="modal-heading"><div><p class="eyebrow">REMOTE MCP · STREAMABLE HTTP</p><h2 id="mcp-access-title">MCP 服务接入</h2></div><button ref="mcpCloseButton" class="icon-button" aria-label="关闭 MCP 接入" @click="mcpConfigOpen = false">×</button></header>
+        <p class="modal-intro">将 Bot Dock 作为 MCP 服务，供支持远程 Streamable HTTP MCP 的 AI Agent 发布和查询报告。MCP 是独立服务，不依赖 Codex。</p>
+
+        <section class="mcp-access-section" aria-labelledby="mcp-address-heading">
+          <div class="mcp-section-heading"><h3 id="mcp-address-heading">服务连接信息</h3><span class="mcp-protocol-badge">{{ mcpCapabilities?.transport || (mcpCapabilitiesLoading ? '读取能力中…' : '未确认') }}</span></div>
+          <label class="mcp-address-label" for="mcp-address-input">对外服务地址（可覆盖反向代理域名）</label>
+          <div class="mcp-address-editor"><input id="mcp-address-input" v-model="mcpAddressDraft" type="url" autocomplete="url" spellcheck="false" aria-describedby="mcp-address-help"><button class="secondary-button" @click="saveMCPAddress">保存地址</button><button class="text-button" @click="resetMCPAddress">恢复页面地址</button></div>
+          <p id="mcp-address-help" class="mcp-field-help">页面地址会自动补上 <code>/mcp</code>。如反向代理使用专用域名或路径，可填写对外 origin/path；覆盖值只保存在此浏览器。</p>
+          <p v-if="mcpAddressError" class="form-error" role="alert">{{ mcpAddressError }}</p>
+          <div class="mcp-service-url"><div><span class="mcp-field-label">MCP 服务地址</span><code :title="mcpServiceURL">{{ mcpServiceURL || '请填写有效的 HTTPS 服务地址' }}</code></div><button class="primary-button" :disabled="!mcpServiceURL" @click="copyMCPServiceURL">复制服务地址</button></div>
+          <p v-if="mcpAddressScope === 'invalid'" class="mcp-capability-error" role="alert">当前 MCP 服务地址无效，请输入有效地址后保存。</p>
+          <p v-else-if="mcpAddressScope === 'local'" class="mcp-local-warning" role="note">此地址指向本机或私有网络，只适用于能够访问该网络的客户端；远程 Agent 无法通过公网访问。请配置可达的 HTTPS 反向代理地址。</p>
+          <p v-else-if="mcpCapabilities" class="mcp-field-help">认证方式：<code>{{ mcpCapabilities.authentication }}</code>。页面不会读取或复制密钥，也不显示在线状态；地址能否从目标客户端访问取决于网络和反向代理配置。</p>
+        </section>
+
+        <section class="mcp-access-section" aria-labelledby="mcp-tools-heading">
+          <div class="mcp-section-heading"><h3 id="mcp-tools-heading">当前实例提供的工具</h3><span v-if="mcpCapabilitiesLoading" class="mcp-capability-state">读取中…</span></div>
+          <p v-if="mcpCapabilitiesError" class="mcp-capability-error" role="alert">{{ mcpCapabilitiesError }} 页面不会根据版本假定工具已就绪。</p>
+          <ul v-else-if="mcpCapabilities" class="mcp-tool-list">
+            <li v-for="tool in mcpCapabilities.tools" :key="tool.name">
+              <div class="mcp-tool-title"><code>{{ tool.name }}</code><span>{{ tool.access }}</span></div>
+              <p>{{ tool.description }}</p>
+              <small>{{ tool.fields.join('；') }}</small>
+              <div class="mcp-tool-example"><span>示例参数</span><code>{{ tool.example }}</code></div>
+            </li>
+          </ul>
+          <p v-else-if="!mcpCapabilitiesLoading" class="mcp-field-help">当前实例没有返回工具能力清单。</p>
+          <p class="mcp-field-help">Agent 能发现并调用工具不代表它会自动推送；这取决于具体客户端、权限和任务设置。</p>
+        </section>
+
+        <section class="mcp-access-section mcp-security-note" aria-labelledby="mcp-security-heading">
+          <h3 id="mcp-security-heading">认证与安全边界</h3>
+          <p>当前访问模式：{{ mcpCapabilities?.access_model || '由本服务管理员配置；没有工具能力清单时，请先更新服务端。' }}。服务复用管理员设置的 <code>ACCESS_TOKEN</code> 作为共享 Bearer 密钥，仅适合服务所有者本人或受信任的单用户客户端。持有该密钥的 MCP 客户端可发布并检索报告；不要把密钥发给不受信任的人或写入剪贴板。</p>
+          <p><code>ACCESS_TOKEN</code> 是服务器配置；本服务不签发独立 Agent Token，不提供按客户端授权、撤销或多租户隔离。</p>
+        </section>
+
+        <section class="mcp-access-section mcp-copy-section" aria-labelledby="mcp-copy-heading">
+          <div class="mcp-section-heading"><h3 id="mcp-copy-heading">通用接入说明</h3><button class="secondary-button" :disabled="!mcpCapabilities" @click="copyMCPGenericGuide">复制通用说明</button></div>
+          <p class="mcp-field-help">MCP 协议没有统一的客户端配置文件格式。请在支持自定义远程 MCP 的客户端中填写上方 URL，并在它的安全凭据设置中录入 Bearer Token。</p>
+          <ol class="mcp-connection-steps"><li>复制上方 MCP 服务 URL。</li><li>在支持远程 MCP 的客户端中填写 URL，并在客户端安全凭据设置中配置管理员提供的 Bearer Token。</li><li>允许客户端调用 <code>publish_report</code>；发布后在 Bot Dock 工作台查看报告。</li></ol>
+          <details class="mcp-client-example">
+            <summary>可选客户端示例：Codex CLI</summary>
+            <p>Codex CLI 0.162.0-alpha.2 已完成连接和工具调用测试。示例使用本地环境变量名 <code>BOLT_DOCK_TOKEN</code>，它只是本示例自行选择的名称，不是 MCP 标准字段，也不是服务器必需的环境变量。请在启动 Codex CLI 的环境中安全设置为服务端 ACCESS_TOKEN 的值。</p>
+            <pre class="mcp-client-config">{{ mcpCodexExample }}</pre>
+            <button class="secondary-button" @click="copyCodexExample">复制 Codex CLI 示例</button>
+          </details>
+          <p class="mcp-field-help">其他客户端需要支持自定义远程 MCP、Streamable HTTP 和 Bearer 凭据。未逐一验证的产品与版本均需先确认其支持情况。</p>
+          <details class="mcp-client-example mcp-troubleshooting">
+            <summary>连接故障排查</summary>
+            <ul><li><code>401</code>：检查客户端是否已安全设置正确的服务端 Bearer 密钥。</li><li><code>404</code>：检查反向代理是否将 <code>/mcp</code> 转发到 Bolt Dock。</li><li>协议不兼容：确认客户端支持远程 Streamable HTTP MCP；只支持 stdio 的客户端不能直接连接。</li><li>浏览器型客户端跨域失败：MCP 会拒绝不允许的跨源 Origin；请使用受支持的服务端连接方式并检查 HTTPS 代理转发。</li></ul>
+          </details>
+          <div class="mcp-copy-actions"><button class="secondary-button" @click="openRESTPushInstructions">改用 REST 推送指令</button></div>
+          <p v-if="mcpCopyStatus" class="mcp-copy-status" role="status">{{ mcpCopyStatus }}</p>
+          <label v-if="mcpCopyFallback" class="mcp-copy-fallback">浏览器未开放剪贴板权限，内容已选中，请按 ⌘C / Ctrl+C 复制。
+            <textarea class="prompt-preview mcp-copy-fallback-field" :value="mcpFallbackText" readonly aria-label="待手动复制的 MCP 内容"></textarea>
+          </label>
+        </section>
       </section>
     </div>
     <div v-if="renameTarget" class="modal-scrim" @click.self="renameTarget = null">

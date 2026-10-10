@@ -17,6 +17,7 @@ import (
 	"github.com/Nyakooo/grok-bot-dock/internal/events"
 	"github.com/Nyakooo/grok-bot-dock/internal/store"
 	"github.com/Nyakooo/grok-bot-dock/internal/webui"
+	"github.com/google/jsonschema-go/jsonschema"
 )
 
 func testHandler(t *testing.T, max int64) (http.Handler, *store.Store, *events.Hub) {
@@ -41,6 +42,70 @@ func request(h http.Handler, method, path, body, token string) *httptest.Respons
 func postBody(source, content, external string) string {
 	body, _ := json.Marshal(map[string]any{"source": source, "bot_id": "daily", "bot_name": "Daily", "executed_at": "2026-10-09T20:00:00+08:00", "external_id": external, "content": content})
 	return string(body)
+}
+
+func TestMCPCapabilitiesRequireAuthenticationAndMatchRegisteredTools(t *testing.T) {
+	h, _, _ := testHandler(t, 1<<20)
+	if unauthenticated := request(h, http.MethodGet, "/api/v1/mcp/capabilities", "", ""); unauthenticated.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated capabilities status = %d, want 401", unauthenticated.Code)
+	}
+	response := request(h, http.MethodGet, "/api/v1/mcp/capabilities", "", "test-secret")
+	if response.Code != http.StatusOK {
+		t.Fatalf("capabilities status = %d, body=%s", response.Code, response.Body.String())
+	}
+	var result struct {
+		Endpoint       string              `json:"endpoint"`
+		Transport      string              `json:"transport"`
+		Authentication string              `json:"authentication"`
+		AccessModel    string              `json:"access_model"`
+		Tools          []mcpToolCapability `json:"tools"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Endpoint != "/mcp" || result.Transport != "Streamable HTTP" || result.Authentication != "Authorization: Bearer <ACCESS_TOKEN>" {
+		t.Fatalf("unexpected MCP connection details: %#v", result)
+	}
+	if !strings.Contains(result.AccessModel, "受信任的单用户客户端") || strings.Contains(response.Body.String(), "test-secret") {
+		t.Fatalf("capabilities omitted trust boundary or exposed a secret: %s", response.Body.String())
+	}
+	if len(result.Tools) != len(mcpToolCapabilities) {
+		t.Fatalf("capabilities listed %d tools, want %d", len(result.Tools), len(mcpToolCapabilities))
+	}
+	for index, capability := range result.Tools {
+		if capability.Name != mcpToolCapabilities[index].Name || capability.Access == "" || capability.Description == "" || len(capability.Fields) == 0 || capability.Example == "" {
+			t.Errorf("capability %d does not match registered tool metadata: %#v", index, capability)
+		}
+		var schema *jsonschema.Schema
+		if index == 0 {
+			schema, _ = jsonschema.For[publishReportInput](nil)
+		} else {
+			schema, _ = jsonschema.For[searchReportsInput](nil)
+		}
+		if len(capability.Fields) != len(schema.Properties) {
+			t.Errorf("%s exposes %d field descriptions for %d schema properties", capability.Name, len(capability.Fields), len(schema.Properties))
+		}
+		var example map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(capability.Example), &example); err != nil {
+			t.Errorf("%s example is not JSON: %v", capability.Name, err)
+		} else {
+			for property := range example {
+				if _, exists := schema.Properties[property]; !exists {
+					t.Errorf("%s example contains unknown property %q", capability.Name, property)
+				}
+			}
+			for _, property := range schema.Required {
+				if _, exists := example[property]; !exists {
+					t.Errorf("%s example omits required schema property %q", capability.Name, property)
+				}
+			}
+			if capability.Name == "search_reports" {
+				if _, exists := example["cursor"]; exists {
+					t.Error("search_reports example must not use a placeholder cursor")
+				}
+			}
+		}
+	}
 }
 
 func TestBrowserSessionCookieLoginRefreshAndLogout(t *testing.T) {

@@ -173,16 +173,16 @@ GHCR 首次发布及后续多架构修复均已验收：PR #1–#3 已合并至 
 > 本轮执行和实测记录见 [P6 验收报告](./P6_ACCEPTANCE_REPORT.md)。本地 Go/Vue、真实浏览器、隔离 Docker 与 SQLite 持久性检查已通过；PR/Actions/GHCR 结果在合并后补录。生产部署 URL 未提供，生产版本与数据仍标记未验证。
 
 
-## P7 MCP 原生接入（2026-10-10，已合并并完成镜像验收）
+## P7 MCP 原生接入（2026-10-10，服务实现已合并；通用接入补充验收中）
 
-> [P7 MCP 技术设计与执行验收计划](./P7_MCP_EXECUTION_PLAN.md) 是本阶段唯一权威清单。`/mcp` 提供无状态 Streamable HTTP、`publish_report` 与 `search_reports`，共用 REST 校验、幂等、限流、SSE、SQLite 和 FTS5；工作台提供按当前站点生成 Codex TOML 的「MCP 配置」一键复制按钮，不读取实际 Token，并提供剪贴板失败降级。README、技术设计及反向代理说明已更新。PR #13 实现、PR #14 文档维护、PR #15 1280px 顶栏回归修复均已合并到 master；PR/master Actions、GHCR master 多架构发布、匿名 manifest/blob 拉取、Codex CLI、MCP Inspector 与页面响应式验收持续记录在 [P7 验收报告](./P7_MCP_ACCEPTANCE.md)。P6 全量设备矩阵及生产部署未验证，继续保留为未完成项。
+> [P7 MCP 技术设计与执行验收计划](./P7_MCP_EXECUTION_PLAN.md) 记录 MCP Server 的服务端实现，PR #13–#15 已在前期合并并通过 GHCR 验收。`/mcp` 提供无状态 Streamable HTTP、`publish_report` 与 `search_reports`，共用 REST 校验、幂等、限流、SSE、SQLite 和 FTS5。
 
 
 ### P7 产品定位纠偏（优先执行）
 
-> [P7 MCP 独立服务与通用接入纠偏](./P7_MCP_PRODUCT_POSITIONING_CORRECTION.md)：MCP Server 与 Codex 无依赖，默认 UI 不得以 Codex 为中心；支持任意兼容远程 MCP 的客户端。须先纠正“Codex MCP 配置已复制”等误导性文案，并验证非 Codex 客户端；共享管理员 Token 仅适用于受信任私有接入。**待实现/验收。**
+> [P7 MCP 独立服务与通用接入纠偏](./P7_MCP_PRODUCT_POSITIONING_CORRECTION.md)：已将默认入口、文案、服务能力展示和复制反馈改为通用 MCP 接入；共享管理员 Token 的私有单用户限制显著展示。MCP Inspector CLI `2.10.1` 完成非 Codex 工具发现、发布、幂等重试、搜索和 UI 可见性验证。Claude/Grok 等具体产品版本及生产反向代理仍未验证。**代码已实现，隔离验收证据见 [P7 MCP 验收报告](./P7_MCP_ACCEPTANCE.md)。**
 
 
-### P7 MCP 接入界面 UI/UX 优化（待执行）
+### P7 MCP 接入界面 UI/UX 优化（实现与隔离验收已完成）
 
-> [P7 MCP 通用接入界面优化与验收清单](./P7_MCP_UI_UX_OPTIMIZATION.md)。与 P7 独立服务定位纠偏同时执行：默认显示 MCP 服务 URL、Streamable HTTP、Bearer 认证、实际工具、复制地址与通用接入说明；REST 保留，Codex 等只作可选示例。不得在 UI 假造独立 Token 发行能力或已验证的第三方兼容性。**所有验收项待实测。**
+> [P7 MCP 通用接入界面优化与验收清单](./P7_MCP_UI_UX_OPTIMIZATION.md)：页面已展示服务 URL、Streamable HTTP、Bearer、后端工具与参数示例，并支持反代地址覆盖、实际 URL/说明复制、接入步骤和故障排查；REST 路径保留，Codex 仅为折叠示例。隔离浏览器覆盖 1440/1280/430/390/375/320px、深浅主题、剪贴板、键盘焦点、登录刷新退出和 REST 弹窗。验收报告记录了截图和限制；未验证的产品/生产项目继续标注未完成。

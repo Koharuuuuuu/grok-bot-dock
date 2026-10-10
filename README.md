@@ -80,26 +80,29 @@ curl -X POST "https://YOUR_DOMAIN/api/v1/reports" \
 
 ## 远程 MCP 接入
 
-Bolt Dock 在现有 Go 服务的 `/mcp` 路径提供远程**无状态 MCP Streamable HTTP**，不会启动额外容器或进程。MCP 与 REST 共用报告校验、SQLite、幂等及 SSE；REST API 保持不变。当前仅暴露 `publish_report`（写入已完成的正式报告）和 `search_reports`（只读历史检索），不提供删除、改名或管理凭据工具。
+Bolt Dock 是独立自托管 MCP Server，不依赖 Codex、本机 Agent 进程或额外容器。现有 Go 服务在 `/mcp` 提供无状态 **Streamable HTTP**；MCP 与 REST 共用报告校验、SQLite、幂等及 SSE，REST API 保持不变。支持自定义远程 MCP、Streamable HTTP 与 Bearer 凭据的客户端可连接服务，并按客户端能力发现和调用工具。具体产品、版本和托管环境的支持情况须单独验证，不能由协议本身推断。
 
-Codex 连接地址为 `https://YOUR_DOMAIN/mcp`。服务应经 HTTPS 反向代理访问；代理需保留 MCP 的 HTTP 方法、请求/响应头、SSE 流式响应和取消信号。不要将 ACCESS_TOKEN 放进 URL、TOML、页面、报告、日志或剪贴板。
+当前工具为 `publish_report`（写入已完成的正式报告）和 `search_reports`（只读历史检索）；不提供删除、改名或管理凭据工具。工作台的「MCP 接入」面板从服务端读取真实工具能力，并显示当前页面地址推导出的 `/mcp` URL。若 HTTPS 反向代理使用了其他公开域名或路径，可在面板覆盖地址；该覆盖仅保存在当前浏览器，不会配置服务器。localhost 或内网地址只对能访问相应网络的客户端可用，不代表公网地址。
 
-在 Codex 的运行环境中，将环境变量 `BOLT_DOCK_TOKEN` 安全设置为与 Bolt Dock 服务端 `ACCESS_TOKEN` 相同的值，然后把下面内容加入 `~/.codex/config.toml`（或 Codex 配置文件）：
+客户端连接字段：MCP URL 为 `https://<你的公开域名>/mcp`，传输为 Streamable HTTP，认证头为 `Authorization: Bearer <由服务管理员安全提供>`。协议没有统一的客户端配置文件格式；在客户端自身的安全凭据设置中配置密钥，不要将 `ACCESS_TOKEN` 放进 URL、配置模板、页面、报告、日志或剪贴板。可在工作台复制不含密钥的服务 URL 或通用接入说明。
+
+服务器目前复用管理员配置的 `ACCESS_TOKEN` 作为共享 Bearer 密钥。这只适合服务所有者本人或受信任的单用户私有接入；持有该密钥的客户端可发布和检索报告。本版本没有独立 Agent Token、按客户端权限、撤销、过期或多租户隔离，不能把管理员密钥作为公开连接码分享。若需要开放给其他人使用，应先完成独立的 Agent Token 安全设计与实现。
+
+连接步骤：复制 MCP 服务 URL；在兼容客户端中配置该 URL 和安全保存的 Bearer 凭据；允许客户端调用 `publish_report`，然后在工作台查看报告。客户端发现工具并不保证会自动发布，调用行为取决于客户端能力、授权和任务设置。
+
+常见排查：`401` 时检查 Bearer 密钥；`404` 时检查 HTTPS 反向代理是否转发 `/mcp`；连接失败时确认客户端支持远程 Streamable HTTP，而不是只支持 stdio。服务端允许没有 `Origin` 的已认证服务端客户端和同源请求，会拒绝不允许的跨源 `Origin`；浏览器型客户端需确认其连接模式与 Origin 策略兼容。不要用页面打开或健康检查结果推断 MCP 对特定客户端可达。
+
+### 可选客户端示例：Codex CLI
+
+Codex CLI 示例使用本地环境变量名 `BOLT_DOCK_TOKEN`：
 
 ```toml
 [mcp_servers.bolt_dock]
-url = "https://YOUR_DOMAIN/mcp"
+url = "https://<你的公开域名>/mcp"
 bearer_token_env_var = "BOLT_DOCK_TOKEN"
 ```
 
-也可使用 Codex CLI 添加配置：
-
-```sh
-codex mcp add bolt-dock --url https://YOUR_DOMAIN/mcp --bearer-token-env-var BOLT_DOCK_TOKEN
-codex mcp list
-```
-
-保存后重新载入 Codex 客户端会话。工作台顶栏的「MCP 配置」按钮可复制按当前站点地址生成的 Codex TOML 配置；复制内容只有 URL 和环境变量名，不会读取或复制实际 Token。Codex 运行环境必须能通过 HTTPS 访问该地址；`localhost`、局域网或未暴露的私有服务不能被远程托管环境访问。可参考 [Codex MCP 文档](https://developers.openai.com/codex/mcp) 与 [Streamable HTTP MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk)。
+`BOLT_DOCK_TOKEN` 只是该示例在 Codex 运行环境中选择的变量名，不是 MCP 标准字段，也不是服务器必需的环境变量。应在客户端安全设置中将它配置为服务端 `ACCESS_TOKEN` 的值。Codex CLI `0.162.0-alpha.2` 已完成本机及 GHCR 镜像连接测试；此结果不代表 Codex 其他形态或版本均已验证。Claude、Grok 及其他客户端需要分别确认具体产品版本是否支持自定义远程 MCP 与 Bearer 凭据。可参考 [Codex MCP 文档](https://developers.openai.com/codex/mcp) 与 [Streamable HTTP MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk)。
 
 `publish_report` 示例参数（只在最终报告完成后调用；每次执行的 `external_id` 必须唯一，重试时原样复用）：
 

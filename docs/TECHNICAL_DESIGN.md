@@ -63,10 +63,12 @@ UI：无左侧导航；顶部品牌 Bolt Dock、默认跨来源全局搜索、�
 
 MCP 通过现有 Go mux 的精确路径 `/mcp` 提供 Streamable HTTP，继续使用单 Go 服务、Vue 静态资源和 SQLite。协议层采用官方 [`github.com/modelcontextprotocol/go-sdk`](https://github.com/modelcontextprotocol/go-sdk) 固定版本 `v1.8.0`；其模块要求 Go `1.25.0`，与本仓库 `go.mod` 一致。SDK 支持 MCP `2026-07-28` 和多个旧版协议。锁定版本按贡献代码归属采用 Apache-2.0 或 MIT 许可，详见依赖 LICENSE。P7 使用 SDK 的无状态传输，不自行实现 JSON-RPC、SSE 或会话协议；SDK 限制 MCP 请求体不超过服务 `MAX_REQUEST_BYTES` 配置，默认 1 MiB。
 
-MCP 仅接受常量时间校验的 `Authorization: Bearer <ACCESS_TOKEN>`，拒绝网页登录 Cookie；Origin 为空时允许已认证的服务端客户端，同源 Origin 可通过，跨源 Origin 拒绝。MCP 不实现 OAuth 或多用户授权。发布继续使用原每客户端地址 120 次/分钟限流；MCP 搜索另限 60 次/分钟。日志仅记录 HTTP 方法、路径和耗时，不记录 Authorization、工具参数或报告正文。部署到公网时仍须使用 HTTPS，并建议反向代理限制来源和请求速率。
+MCP 是独立服务，不依赖 Codex 或特定客户端进程。它仅接受常量时间校验的 `Authorization: Bearer <ACCESS_TOKEN>`，拒绝网页登录 Cookie；Origin 为空时允许已认证的服务端客户端，同源 Origin 可通过，跨源 Origin 拒绝。MCP 不实现 OAuth 或多用户授权。发布继续使用原每客户端地址 120 次/分钟限流；MCP 搜索另限 60 次/分钟。日志仅记录 HTTP 方法、路径和耗时，不记录 Authorization、工具参数或报告正文。部署到公网时仍须使用 HTTPS，并建议反向代理限制来源和请求速率。
+
+登录后的 `GET /api/v1/mcp/capabilities` 返回服务路径、传输、共享 Bearer 认证、实际注册工具及无密钥示例参数，供工作台展示；该接口不报告服务在线状态，也不返回密钥。工作台默认以中立的「MCP 接入」展示当前站点推导的 `/mcp` URL，允许用户在当前浏览器本地覆盖反向代理公开地址，并提供无密钥通用说明复制。它保留独立 REST 推送入口。服务当前复用管理员 `ACCESS_TOKEN` 作为共享密钥，只适用于受信任的单用户私有接入；没有独立 Agent Token、按客户端授权、撤销、过期或多租户能力。
 
 `publish_report` 的参数投影与 REST `POST /api/v1/reports` 共用 `normalizeReportRequest` 与 `publishReport`：`executed_at` 为 RFC3339、`content` 必须非空；`source` 缺失时为 `unknown`；`bot_id` 与 `stable_task_id` 至少提供一个；稳定任务 ID 按既有 source+ID 规则确定性派生 Bot；Bot 名、标题、摘要、标签、外链头像、`external_id` 遵循 REST 长度和 URL 校验。数据库事务仍由 `Store.CreateReport` 处理；新报告广播原 `report.created` SSE，重复 `external_id` 返回旧 `report_id` 并不再次广播。结构化响应只返回 `report_id`、`created`、`duplicate`、source、Bot ID 和执行时间，不包含正文。缺少 external_id 时沿用 REST 行为，不保证跨请求重试幂等。
 
 `search_reports.query` 映射 REST 的 `q`，其余 `source`、`bot_id`、`from`、`to`、`limit`、`cursor` 直接复用 `Store.Search` 的 FTS5、筛选与稳定游标；日期为含首尾 `YYYY-MM-DD`，默认 limit 为 10、最大 20。MCP 搜索结果只投影报告 ID、来源、Bot ID/展示名、标题、摘要、执行时间和标签，不返回完整 Markdown；空结果为 `items: []`。过滤、FTS 查询和分页继续由现有存储层负责，不创建第二套 SQL 检索逻辑。
 
-Codex 可将当前站点地址配置为 `https://YOUR_DOMAIN/mcp`，并用 `bearer_token_env_var = "BOLT_DOCK_TOKEN"` 从启动 Codex 的环境安全读取 Token。页面「MCP 配置」按钮只复制自动生成的 URL 与变量名，不读取 ACCESS_TOKEN。样例配置和工具调用见 README 的“远程 MCP 接入”。客户端版本、托管执行环境的网络可达性以及生产反向代理尚需针对实际部署逐项验证；SDK 集成测试通过不代表所有客户端兼容。
+客户端需支持自定义远程 MCP、Streamable HTTP 和 Bearer 凭据，并将服务端 `ACCESS_TOKEN` 存在自身安全凭据配置中。README 的可选 Codex CLI 示例使用 `BOLT_DOCK_TOKEN` 作为该客户端本地环境变量名；它不是 MCP 标准字段或服务器必需变量。具体产品版本、托管执行环境网络可达性及生产反向代理仍需针对实际部署逐项验证；SDK 集成测试通过不代表所有客户端兼容。

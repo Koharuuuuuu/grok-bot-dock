@@ -2,12 +2,12 @@
 
 日期：2026-10-10（Asia/Shanghai）
 仓库：`Nyakooo/grok-bot-dock`（Private）
-验收基线：P7 实现基线 `7303e3f`；最终交付包含 PR #13、#14 和 #15，最新 master 提交 `641e4f5`。本报告在实现、回归修复和 GHCR 发布后持续维护。
-验收范围：P7 实现、隔离本地服务/浏览器/Codex CLI、Docker 镜像和 Compose 等效资源限制。未连接或修改用户生产服务及生产数据库；GHCR master 仅作匿名拉取和运行验证，没有修改镜像。
+验收基线：原 MCP 服务发布基线 `641e4f5`；本补充纠偏基于拉取的 master `cdb8f39`。通用接入 UI、动态能力清单、文档与回归证据记录在本节；PR/CI/镜像交付结果在合并后补录。
+验收范围：MCP 独立服务定位、真实工具能力接入 UI、非 Codex MCP Inspector 客户端与隔离 Docker/浏览器测试。未连接或修改用户生产服务及生产数据库；测试容器使用独立临时密钥和数据卷并在验收后清理。
 
 ## 结论
 
-P7 的两项 MCP 工具已通过协议、存储、REST、SSE、浏览器、真实 Codex CLI、本地 Docker 和发布后 GHCR 镜像集成验证。PR #13 实现 MCP 与页面上的 Codex 一键复制配置；PR #14 完成首轮交付文档；PR #15 修复新增操作导致的 1280px 顶栏溢出。各 PR 与 master 工作流的结果在下表按证据更新。REST 限流原有响应顺序保持不变；MCP Schema 声明了字段约束。Go、前端、竞态、静态检查及隔离 Docker 验收通过。
+原 P7 服务的两项 MCP 工具已通过协议、存储、REST、SSE、Codex CLI、本地 Docker 和已发布 GHCR 镜像验证。本次纠偏将工作台主入口改为通用 MCP 接入，动态读取工具清单并提供 URL/说明复制；Codex CLI 仅保留为可选示例。新版本的隔离 Docker 浏览器、MCP Inspector、完整构建与回归结果见下文新增验收记录。
 
 MCP Inspector 作为第二个独立客户端已完成发布镜像上的工具发现和搜索。P6 全量设备矩阵和生产部署仍未验证，因此不宣称这些项目通过或声称兼容所有 MCP 客户端。
 
@@ -19,8 +19,8 @@ MCP Inspector 作为第二个独立客户端已完成发布镜像上的工具发
 | Bearer、Origin、方法边界 | `internal/api/mcp.go` | 缺失/错误 Token、Cookie 不可代替 Bearer、跨源拒绝、错误方法和路径测试 |
 | `publish_report` | `internal/api/mcp.go`、`internal/api/server.go` | 复用 REST 规范化校验、Store 事务、限流和 SSE；外部执行 ID 重试幂等；stable_task_id 稳定分组；MCP 响应不含完整正文 |
 | `search_reports` | `internal/api/mcp.go` | 复用 SQLite FTS5/游标；默认 10、最大 20；日期、中文、空结果、来源/同名 Bot 隔离；仅返回元数据和摘要 |
-| Codex 一键复制 | `frontend/src/App.vue`、`frontend/src/ui-model.js`、`frontend/src/style.css`、`frontend/src/theme.css` | 当前站点地址生成 `/mcp` TOML；只包含 `BOLT_DOCK_TOKEN` 环境变量名、不读取实际 Token；剪贴板失败提供可选文本框降级 |
-| 嵌入静态资源与文档 | `internal/webui/dist/`、`README.md`、`docs/TECHNICAL_DESIGN.md`、`docs/EXECUTION_PLAN.md` | Vite 构建通过；README 含 CLI 配置、工具示例、HTTPS、反向代理和安全边界 |
+| 通用 MCP 接入 | `frontend/src/App.vue`、`frontend/src/ui-model.js`、`internal/api/server.go` | 登录保护的能力接口驱动实际工具、字段及示例；URL 与通用说明单独复制；可选 Codex CLI 示例折叠显示 |
+| 嵌入资源和完整文档 | `internal/webui/dist/`、`README.md`、`docs/TECHNICAL_DESIGN.md`、`docs/EXECUTION_PLAN.md` | README/设计说明记录独立服务、连接步骤、工具示例、HTTPS/Origin 代理及共享密钥限制；本次截图和结果在下方补录 |
 
 MCP 工具只提供发布及读取；没有增加删除、改名、任意 SQL、URL 抓取或命令执行工具。Bearer Token 是单用户共享密钥；本期不实现 OAuth，也不宣称多租户隔离。
 
@@ -78,3 +78,61 @@ MCP 工具只提供发布及读取；没有增加删除、改名、任意 SQL、
 - 真实 Codex 运行环境能否通过 HTTPS 访问用户部署、反向代理对 SSE/取消的配置、第二客户端支持范围及生产资源情况都没有本地测试替代品。
 - 独立 MCP Inspector CLI 已完成工具发现和只读搜索；其 Schema portability 检查提示 13 项可空字段方言警告，需在接入会拒绝该 Schema 方言的客户端时进一步适配。
 - 本轮代码审查发现并修复：REST 写入限流重新置于 JSON 解码之前；MCP 发布/搜索字段长度写入工具 JSON Schema；MCP 写入限流共享并通过超限不落库测试；补充非法 JSON-RPC、客户端取消与跨来源同名 Bot 测试。
+
+## P7 通用 MCP 接入定位与 UI/UX 补充验收（2026-10-10）
+
+### 改动与截图
+
+- 默认入口、标题和复制反馈使用「MCP 接入」「MCP 服务接入」；MCP 服务不依赖 Codex。客户端示例折叠在可选区域，`BOLT_DOCK_TOKEN` 仅在展开 Codex CLI 示例时出现。
+- 新增登录保护的 `GET /api/v1/mcp/capabilities`；UI 从实际服务端清单读取协议、共享 Bearer 认证、工具字段和无密钥示例参数，不根据页面打开状态声称服务在线。
+- 工具字段摘要和示例参数由 MCP 输入结构的 JSON Schema 生成；能力接口测试逐项核对 schema 字段数及示例字段，新增输入字段时页面清单会同步更新。发布工具完整列出来源、Bot/任务名称、标题、摘要、标签、头像地址及幂等字段。
+- 支持当前页面 origin/path 推导 `/mcp`，以及仅保存在当前浏览器的反向代理公开地址覆盖。localhost/内网地址显示网络可达性提示；未把私有地址称为公网可达。
+- 提供服务 URL、通用接入说明独立复制、三步接入指引、连接排查、密钥边界和 REST API 推送入口。共享 `ACCESS_TOKEN` 仅适合受信任的单用户私有接入；没有独立 Agent Token 管理。
+- 修改前截图：[`mcp-config-copied.png`](../output/playwright/p7/mcp-config-copied.png)。修改后浅色桌面：[`mcp-general-access-light-1440.png`](../output/playwright/p7/mcp-general-access-light-1440.png)；深色桌面：[`mcp-general-access-dark-1440.png`](../output/playwright/p7/mcp-general-access-dark-1440.png)；深色移动端：[`mcp-general-access-dark-375.png`](../output/playwright/p7/mcp-general-access-dark-375.png)。截图中的 URL 为本机隔离服务地址，不代表生产公开地址。
+
+### 非 Codex MCP 客户端与端到端数据
+
+在隔离镜像 `bolt-dock:p7-general-access`、`127.0.0.1:18771` 和独立命名卷 `bolt-dock-p7-general-access` 上，用临时 Token 运行 MCP Inspector CLI `2.10.1`（不是 Codex CLI）：
+
+```sh
+node /tmp/p7-mcp-inspector-cache/_npx/5a9d879542beca3a/node_modules/@modelcontextprotocol/inspector/clients/launcher/build/index.js \
+  --cli --transport http --server-url http://127.0.0.1:18771/mcp \
+  --header 'Authorization: Bearer <隔离验收密钥>' --method tools/list
+```
+
+`tools/list` 返回 `publish_report` 与 `search_reports`。对隔离测试报告调用 `publish_report` 首次结果为 `report_id: 1, created: true, duplicate: false`；相同 `external_id` 重试返回相同 ID 且 `duplicate: true`；`search_reports` 按中文关键词检索命中同一报告。登录工作台后可见对应 Bot 卡片和报告标题。MCP Inspector 对 Schema 报告 0 errors、13 portability warnings；警告与历史记录一致，表示部分 JSON Schema 方言对可空 `type` 数组的可移植性提示。
+
+这验证了独立 MCP 客户端库对本地服务的协议连接、发现、发布、幂等和搜索，不证明 Claude、Grok 或任意其他产品的具体版本已支持相同连接方式。
+
+### 浏览器、复制和布局
+
+Playwright CLI 使用真实 Chromium 登录隔离容器；验证地址与通用说明实际剪贴板文本和成功提示一致。通用说明包含正确 endpoint、Streamable HTTP、Bearer 头、工具列表、示例参数和安全边界；不包含测试密钥值或 `BOLT_DOCK_TOKEN`。自定义 `https://reports.example.com/gateway` 后得到 `/gateway/mcp`，本地存储仅包含地址覆盖；恢复页面地址后删除该覆盖。
+
+MCP 接入对话框打开时焦点落在关闭按钮，Tab/Shift+Tab 在对话框内循环，Esc 关闭后焦点返回入口；REST 推送入口仍可打开且标题为「REST API 推送指令」。登录后刷新会话仍有效，退出后回到登录界面。浅色和深色主题均通过截图检查。
+
+| 视口宽度 | `documentElement.scrollWidth` | MCP 对话框边界 | 结果 |
+|---:|---:|---|---|
+| 1440 | 1440 | x=330–1110 | 通过 |
+| 1280 | 1280 | x=250–1030 | 通过 |
+| 430 | 430 | x=12–418 | 通过 |
+| 390 | 390 | x=12–378 | 通过 |
+| 375 | 375 | x=12–363 | 通过 |
+| 320 | 320 | x=12–308 | 通过 |
+
+在 375px 发现旋转退出按钮使页面多出 2px 横向溢出，已收紧小屏按钮偏移；最终所有列出的视口均无水平溢出。
+
+### 本次命令结果和未验证边界
+
+| 检查 | 结果 |
+|---|---|
+| `make test` | 通过；Go 包通过，Vitest 13/13 通过。 |
+| `make build` | 通过；`npm ci`、Vite production build、`go build ./cmd/server` 成功。 |
+| `go test -race ./...` | 通过。 |
+| `go vet ./...` | 通过。 |
+| `docker build -t bolt-dock:p7-general-access .` | 通过；隔离容器 health 为 `{"status":"ok"}`。 |
+| Claude、Grok 与其他产品客户端 | 未验证具体产品和版本；不宣称兼容。 |
+| 用户生产 URL、HTTPS 反代、真实公网可达性及生产数据 | 未验证；未提供目标地址或部署主机。 |
+| PR #17 | [feat: make MCP onboarding client-agnostic](https://github.com/Nyakooo/grok-bot-dock/pull/17)，提交 `17659428` 加 `15dfd4a`（Schema 字段/示例同步修复）；尚待合并。 |
+| PR GitHub Actions | [run 38042295065](https://github.com/Nyakooo/grok-bot-dock/actions/runs/38042295065)；`validate` 通过。GHCR master 发布需在合并后核验。 |
+
+验收结束后移除了本轮独立 Docker 容器与命名卷；Playwright 临时会话目录 `.playwright-cli/` 保留为本机未跟踪用户数据。

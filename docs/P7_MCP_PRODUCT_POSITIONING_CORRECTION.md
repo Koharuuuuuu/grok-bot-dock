@@ -6,21 +6,23 @@
 Bot Dock 是独立自托管 MCP Server。任何**支持自定义远程 MCP 且允许工具调用**的 AI Agent（如在具备此能力的情况下的 Grok Bot、Claude、Codex 或第三方客户端）都能通过 HTTPS + MCP 协议调用 `publish_report` 推送报告，或调用 `search_reports` 查询历史。不得暗示 Grok 所有产品形态都已支持自定义 MCP；须按具体产品实测。REST API 始终保留。
 
 ## 必须修正的用户体验
-- [ ] 将所有以“Codex MCP 配置”为默认主入口的按钮、弹窗、Toast、说明文案，统一改为中立的“**MCP 接入**”或“**MCP 连接配置**”。
-- [ ] 默认展示通用服务地址 `https://YOUR_DOMAIN/mcp`、传输协议 Streamable HTTP、认证方式 Bearer、可用工具及其功能；支持复制**服务 URL**和**通用接入说明**。不要把某个客户端的专属配置作为唯一可复制内容。
-- [ ] Codex/Claude/其他客户端的具体配置仅在可选“客户端示例”中提供；不支持的客户端应明确写“需要客户端支持自定义远程 MCP”，不要伪装成已验证兼容。
-- [ ] 删除默认提示“Codex MCP 配置已复制。请先在启动 Codex 的环境中设置 BOLT_DOCK_TOKEN。”，改成与复制内容一致的中立反馈，例如“已复制 MCP 服务地址”或“已复制 MCP 接入说明”。仅在用户主动选择 Codex 示例时，才提示其本地环境变量要求。
-- [ ] `BOLT_DOCK_TOKEN` 是某个客户端示例的本地环境变量名，**不是 MCP 标准字段、不是 Codex 专属令牌，也不是服务器强制要求的环境变量名**；服务器鉴权只认 HTTP `Authorization: Bearer <token>`。若当前 P7 仍复用 `ACCESS_TOKEN`，须明确它是服务器当前配置的共享密钥，不要暗示已支持独立颁发 Token。
-- [ ] 页面不要把“连接 Codex”描述为 MCP 必经步骤。MCP 服务可独立运行，关闭 Codex 也可供其他客户端调用。
+- [x] 将默认入口、弹窗和 Toast 改为通用「MCP 接入」；服务端独立于 Codex。
+- [x] 默认显示页面推导的服务 URL、Streamable HTTP、Bearer 认证、后端真实工具能力，支持复制 URL 与通用接入说明；反代地址覆盖保存在当前浏览器。
+- [x] Codex CLI 仅在可选折叠示例中出现；其他客户端明确要求支持自定义远程 MCP、Streamable HTTP 与 Bearer 凭据，未宣称未经验证的兼容性。
+- [x] URL 和通用说明复制均使用对应中立反馈；`BOLT_DOCK_TOKEN` 只出现在可选 Codex CLI 示例。
+- [x] 明确说明服务器复用共享 `ACCESS_TOKEN`，仅适用于受信任的单用户接入；没有独立 Agent Token、多租户、按客户端权限或撤销。
+- [x] 页面不要求连接 Codex；REST 推送入口保留。
 
 ## 接入与安全边界
-- [ ] 复核 `/mcp` 远程访问、HTTPS 反向代理、认证、Origin 校验、tools/list、publish_report 与 search_reports，不允许依赖 Codex CLI、Codex 本地进程、stdio-only transport 或特定用户主机环境。
-- [ ] 验证至少一个**非 Codex**的标准 MCP 客户端连接与发布工具调用，记录客户端版本、命令、响应及 UI 收到报告的证据。若无法获得外部客户端，在集成测试中用独立标准 MCP 客户端库验证协议，并将真实第三方客户端验收标为未完成。
-- [ ] 若计划给“其他人”开放接入，安全上不得将管理员 ACCESS_TOKEN 当作可公开分享的连接码。独立 Agent Token（创建、只读/写权限、撤销、过期、哈希存储、密钥仅展示一次）应形成后续独立安全阶段；**在完成前只能定位为受信任单用户/私有客户端接入**，页面显著提示风险，不要虚称支持安全的多租户公开接入。
-- [ ] 不修改现有数据库或 API 身份模型，不破坏 P6 功能；不要擅自更改 GHCR、仓库、部署端口、数据卷。
+- [x] 隔离 Docker 实例不依赖 Codex 运行；MCP Inspector CLI 通过 Streamable HTTP 完成 `tools/list`、发布、重试和搜索。已有 Go 集成测试覆盖 Bearer、Origin 和协议边界。
+- [x] 非 Codex 标准 MCP 客户端验证版本为 MCP Inspector CLI `2.10.1`；隔离容器的报告在工作台可见，重复 `external_id` 返回同一报告。具体 Claude/Grok 产品形态与版本仍未验证。
+- [x] 共享管理员密钥限制、私有单用户定位、无独立 Token 能力已显著展示；独立 Agent Token 保留为后续安全阶段。
+- [x] 未修改数据库或既有身份模型；REST 路由和 P6 功能保留。
 
 ## 验收与交付
-- [ ] UI 默认没有 Codex 专属引导；复制内容与成功 Toast 对应；通用接入信息准确。
-- [ ] MCP Server 在无 Codex 环境运行；非 Codex 客户端完成工具发现与发布；REST/MCP 推送相互可见且 external_id 幂等。
-- [ ] README 与技术设计同步明确 MCP Server 独立性、客户端能力前提和共享密钥的当前限制。
-- [ ] 在 P7 验收报告记录修复前后截图、协议/客户端测试、未验证的平台限制；未测项目不得勾选。
+- [x] UI 默认没有 Codex 专属连接引导；实际 URL/通用说明与复制反馈匹配；通用信息包含工具示例与安全边界。
+- [x] 非 Codex MCP Inspector 完成工具发现、发布与搜索；相同 `external_id` 重试幂等；工作台读取发布报告。
+- [x] README、技术设计、执行计划同步记录独立 MCP、客户端能力前提和共享密钥限制。
+- [x] 验收报告记录前后截图、浏览器/协议/客户端证据及未验证的平台与生产部署边界。
+
+> 未验证具体 Claude、Grok 或其他第三方平台产品/版本；不把 MCP Inspector 的协议验证扩大成对这些产品的兼容承诺。
