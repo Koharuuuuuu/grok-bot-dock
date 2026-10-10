@@ -207,6 +207,98 @@ func TestReportPushAndReadFlow(t *testing.T) {
 	}
 }
 
+func TestReportPushCanResolveStableTaskIdentityAndUnknownSource(t *testing.T) {
+	h, db, _ := testHandler(t, 1<<20)
+	input := map[string]any{
+		"source": "", "stable_task_id": "platform-task-17", "task_name": "Weekly analysis",
+		"executed_at": "2026-10-09T20:00:00+08:00", "external_id": "run-2026-10-09T20:00Z",
+		"content": "# Weekly analysis",
+	}
+	body, _ := json.Marshal(input)
+	created := request(h, http.MethodPost, "/api/v1/reports", string(body), "test-secret")
+	if created.Code != http.StatusCreated {
+		t.Fatalf("stable task identity push: %d %s", created.Code, created.Body.String())
+	}
+	var first struct {
+		ReportID int64 `json:"report_id"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &first); err != nil || first.ReportID == 0 {
+		t.Fatalf("bad response: %#v err=%v", first, err)
+	}
+	bots, err := db.Bots(context.Background(), "")
+	if err != nil || len(bots) != 1 || bots[0].Source != "unknown" || !strings.HasPrefix(bots[0].BotID, "task-") || bots[0].BotName != "Weekly analysis" {
+		t.Fatalf("identity was not resolved: bots=%#v err=%v", bots, err)
+	}
+	input["executed_at"] = "2026-10-10T20:00:00+08:00"
+	input["external_id"] = "run-2026-10-10T20:00Z"
+	body, _ = json.Marshal(input)
+	second := request(h, http.MethodPost, "/api/v1/reports", string(body), "test-secret")
+	if second.Code != http.StatusCreated {
+		t.Fatalf("second daily run created a separate bot or failed: %d %s", second.Code, second.Body.String())
+	}
+	bots, err = db.Bots(context.Background(), "")
+	if err != nil || len(bots) != 1 || bots[0].ReportCount != 2 {
+		t.Fatalf("same task split into bots: %#v err=%v", bots, err)
+	}
+	delete(input, "stable_task_id")
+	body, _ = json.Marshal(input)
+	missing := request(h, http.MethodPost, "/api/v1/reports", string(body), "test-secret")
+	if missing.Code != http.StatusBadRequest || !strings.Contains(missing.Body.String(), "stable_task_id") {
+		t.Fatalf("missing stable identity should explain the requirement: %d %s", missing.Code, missing.Body.String())
+	}
+}
+
+func TestRenameBotRequiresBrowserSessionAndPreservesIdentity(t *testing.T) {
+	h, db, _ := testHandler(t, 1<<20)
+	created := request(h, http.MethodPost, "/api/v1/reports", postBody("grok", "# Before", "rename-1"), "test-secret")
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", created.Code, created.Body.String())
+	}
+	path := "/api/v1/bots?source=grok&bot_id=daily"
+	if got := request(h, http.MethodPatch, path, `{"display_name":"Private name"}`, "test-secret"); got.Code != http.StatusForbidden {
+		t.Fatalf("Bearer-only rename must be forbidden: %d %s", got.Code, got.Body.String())
+	}
+	login := httptest.NewRecorder()
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"token":"test-secret"}`))
+	h.ServeHTTP(login, loginReq)
+	cookie := login.Result().Cookies()[0]
+	patch := httptest.NewRequest(http.MethodPatch, path, strings.NewReader(`{"display_name":"Private name"}`))
+	patch.AddCookie(cookie)
+	patch.Header.Set("Origin", "http://example.com")
+	patch.Header.Set("Host", "example.com")
+	patchRecorder := httptest.NewRecorder()
+	h.ServeHTTP(patchRecorder, patch)
+	if patchRecorder.Code != http.StatusOK {
+		t.Fatalf("rename: %d %s", patchRecorder.Code, patchRecorder.Body.String())
+	}
+	updated := store.ReportInput{Source: "grok", BotID: "daily", BotName: "New agent name", ExecutedAt: time.Now(), ExternalID: "rename-2", Content: "# After"}
+	if _, _, err := db.CreateReport(context.Background(), updated); err != nil {
+		t.Fatal(err)
+	}
+	bots, err := db.Bots(context.Background(), "")
+	if err != nil || len(bots) != 1 || bots[0].BotID != "daily" || bots[0].BotName != "New agent name" || bots[0].DisplayName != "Private name" {
+		t.Fatalf("rename changed stable identity or was overwritten: %#v err=%v", bots, err)
+	}
+	if err := db.RenameBot(context.Background(), "grok", "daily", ""); err != nil {
+		t.Fatal(err)
+	}
+	bots, err = db.Bots(context.Background(), "")
+	if err != nil || bots[0].DisplayName != "" {
+		t.Fatalf("reset to raw name failed: %#v err=%v", bots, err)
+	}
+	for _, body := range []string{`{"display_name":"` + strings.Repeat("x", 81) + `"}`, `{"display_name":"line\nfeed"}`} {
+		bad := httptest.NewRequest(http.MethodPatch, path, strings.NewReader(body))
+		bad.AddCookie(cookie)
+		bad.Header.Set("Origin", "http://example.com")
+		bad.Header.Set("Host", "example.com")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, bad)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("invalid name accepted: %d %s", w.Code, w.Body.String())
+		}
+	}
+}
+
 func TestDeleteReportAndBotRequiresAuthAndPublishesChanges(t *testing.T) {
 	h, db, hub := testHandler(t, 1<<20)
 	created := request(h, http.MethodPost, "/api/v1/reports", postBody("grok", "# removable-report-token", "r1"), "test-secret")
@@ -406,21 +498,6 @@ func TestSSEStopsImmediatelyAfterSessionLogout(t *testing.T) {
 	logoutResponse.Body.Close()
 	if logoutResponse.StatusCode != http.StatusOK {
 		t.Fatalf("logout status=%d", logoutResponse.StatusCode)
-	}
-
-	push, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/reports", strings.NewReader(postBody("grok", "# after logout", "after-logout")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	push.Header.Set("Authorization", "Bearer test-secret")
-	push.Header.Set("Content-Type", "application/json")
-	pushResponse, err := server.Client().Do(push)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pushResponse.Body.Close()
-	if pushResponse.StatusCode != http.StatusCreated {
-		t.Fatalf("report push status=%d", pushResponse.StatusCode)
 	}
 
 	select {

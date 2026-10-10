@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -151,6 +152,55 @@ func TestAvatarRetentionAndPersistence(t *testing.T) {
 	}
 	if len(bots) != 1 || bots[0].AvatarURL != "https://example.com/bot.png" || bots[0].ReportCount != 2 {
 		t.Fatalf("data did not survive restart: %#v", bots)
+	}
+}
+
+func TestDisplayNameMigrationAndPersistence(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy.db")
+	legacy, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = legacy.Exec(`CREATE TABLE sources(source TEXT PRIMARY KEY, created_at TEXT NOT NULL);
+CREATE TABLE bots(id INTEGER PRIMARY KEY, source TEXT NOT NULL REFERENCES sources(source), bot_id TEXT NOT NULL, bot_name TEXT NOT NULL, avatar_url TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_report_at TEXT NOT NULL, last_read_report_id INTEGER NOT NULL DEFAULT 0, UNIQUE(source,bot_id));
+INSERT INTO sources(source,created_at) VALUES('grok','2026-10-01');
+INSERT INTO bots(source,bot_id,bot_name,created_at,updated_at,last_report_at) VALUES('grok','daily','Original name','2026-10-01','2026-10-01','2026-10-01');`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("legacy schema migration: %v", err)
+	}
+	ctx := context.Background()
+	before, err := s.Bots(ctx, "")
+	if err != nil || len(before) != 1 || before[0].BotName != "Original name" {
+		t.Fatalf("migration lost existing bot: %#v err=%v", before, err)
+	}
+	if err := s.RenameBot(ctx, "grok", "daily", "Custom name"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.CreateReport(ctx, report("grok", "daily", "later", "new report")); err != nil {
+		t.Fatal(err)
+	}
+	reports, err := s.ListReports(ctx, "grok", "daily", "", "", 20)
+	if err != nil || len(reports.Items) != 1 || reports.Items[0].BotName != "共享名称" || reports.Items[0].DisplayName != "Custom name" {
+		t.Fatalf("raw and display names were not separated: %#v err=%v", reports, err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	got, err := s.Bots(ctx, "")
+	if err != nil || len(got) != 1 || got[0].DisplayName != "Custom name" || got[0].ReportCount != 1 {
+		t.Fatalf("custom name did not survive restart: %#v err=%v", got, err)
 	}
 }
 

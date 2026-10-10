@@ -3,6 +3,7 @@ import createDOMPurify from 'dompurify'
 import { JSDOM } from 'jsdom'
 import { renderSanitizedMarkdown } from './markdown'
 import { highlightParts, makeSearchParams, notificationStatus, refreshesSelectedBot, searchSnippet } from './ui-model'
+import { readImmersivePreference, readReaderFontSize, writeImmersivePreference, writeReaderFontSize } from './reader-preferences'
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>')
 const purifier = createDOMPurify(dom.window)
@@ -49,5 +50,29 @@ describe('Bolt Dock interface helpers', () => {
     expect(notificationStatus(false, 'default')).toBe('当前浏览器不支持通知')
     expect(notificationStatus(true, 'denied')).toBe('通知未获授权')
     expect(notificationStatus(true, 'granted')).toBe('通知已开启')
+  })
+
+  it('persists versioned global reading preferences and falls back on invalid values', () => {
+    const values = new Map()
+    const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) }
+    expect(readImmersivePreference(storage)).toBe(false)
+    writeImmersivePreference(true, storage)
+    expect(readImmersivePreference(storage)).toBe(true)
+    writeReaderFontSize(24, storage)
+    expect(readReaderFontSize(storage)).toBe(24)
+    writeReaderFontSize(25, storage)
+    expect(readReaderFontSize(storage)).toBe(16)
+    values.set('bolt-dock:reader-font-size:v1', '{broken')
+    expect(readReaderFontSize(storage)).toBe(16)
+    values.set('bolt-dock:reader-preferences:v1', JSON.stringify({ version: 2, immersive: true }))
+    expect(readImmersivePreference(storage)).toBe(false)
+  })
+
+  it('keeps working when browser storage is present but unavailable', () => {
+    const unavailable = { getItem() { throw new Error('storage blocked') }, setItem() { throw new Error('storage blocked') } }
+    expect(readImmersivePreference(unavailable)).toBe(false)
+    expect(readReaderFontSize(unavailable)).toBe(16)
+    expect(() => writeImmersivePreference(true, unavailable)).not.toThrow()
+    expect(() => writeReaderFontSize(20, unavailable)).not.toThrow()
   })
 })

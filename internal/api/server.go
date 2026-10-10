@@ -3,10 +3,12 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
 	"embed"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -36,6 +38,7 @@ type Server struct {
 	rate      map[string]rateWindow
 	sessionMu sync.Mutex
 	sessions  map[string]time.Time
+	streams   map[string]map[chan struct{}]struct{}
 }
 
 const (
@@ -51,7 +54,7 @@ type rateWindow struct {
 var sourcePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 func New(s *store.Store, h *events.Hub, token string, maxBytes int64, static embed.FS) *Server {
-	return &Server{store: s, hub: h, token: token, maxBytes: maxBytes, static: static, rate: make(map[string]rateWindow), sessions: make(map[string]time.Time)}
+	return &Server{store: s, hub: h, token: token, maxBytes: maxBytes, static: static, rate: make(map[string]rateWindow), sessions: make(map[string]time.Time), streams: make(map[string]map[chan struct{}]struct{})}
 }
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -109,7 +112,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	s.sessionMu.Lock()
 	for existing, expiry := range s.sessions {
 		if !now.Before(expiry) {
-			delete(s.sessions, existing)
+			s.revokeSessionLocked(existing)
 		}
 	}
 	s.sessions[id] = now.Add(sessionTTL)
@@ -129,7 +132,7 @@ func (s *Server) validSession(id string, now time.Time) bool {
 	defer s.sessionMu.Unlock()
 	expires, ok := s.sessions[id]
 	if ok && !now.Before(expires) {
-		delete(s.sessions, id)
+		s.revokeSessionLocked(id)
 		return false
 	}
 	return ok
@@ -137,8 +140,42 @@ func (s *Server) validSession(id string, now time.Time) bool {
 
 func (s *Server) revokeSession(id string) {
 	s.sessionMu.Lock()
-	delete(s.sessions, id)
+	s.revokeSessionLocked(id)
 	s.sessionMu.Unlock()
+}
+
+func (s *Server) revokeSessionLocked(id string) {
+	delete(s.sessions, id)
+	for stream := range s.streams[id] {
+		close(stream)
+	}
+	delete(s.streams, id)
+}
+
+func (s *Server) registerSessionStream(id string, stream chan struct{}) bool {
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
+	expires, ok := s.sessions[id]
+	if !ok || !time.Now().Before(expires) {
+		s.revokeSessionLocked(id)
+		return false
+	}
+	if s.streams[id] == nil {
+		s.streams[id] = make(map[chan struct{}]struct{})
+	}
+	s.streams[id][stream] = struct{}{}
+	return true
+}
+
+func (s *Server) unregisterSessionStream(id string, stream chan struct{}) {
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
+	if streams := s.streams[id]; streams != nil {
+		delete(streams, stream)
+		if len(streams) == 0 {
+			delete(s.streams, id)
+		}
+	}
 }
 
 func (s *Server) allowLogin(remote string, now time.Time) bool {
@@ -171,7 +208,7 @@ func requestIsHTTPS(r *http.Request) bool {
 func sameOrigin(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
-		return true
+		return false
 	}
 	u, err := url.Parse(origin)
 	if err != nil || u.Host == "" {
@@ -207,6 +244,8 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		s.sse(w, r)
 	case r.Method == "POST" && r.URL.Path == "/api/v1/bots/read":
 		s.markRead(w, r)
+	case r.Method == http.MethodPatch && r.URL.Path == "/api/v1/bots":
+		s.renameBot(w, r)
 	case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/bots":
 		s.deleteBot(w, r)
 	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/reports/"):
@@ -229,16 +268,18 @@ func (s *Server) createReport(w http.ResponseWriter, r *http.Request) {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	var raw struct {
-		Source     string   `json:"source"`
-		BotID      string   `json:"bot_id"`
-		BotName    string   `json:"bot_name"`
-		ExecutedAt string   `json:"executed_at"`
-		Title      string   `json:"title"`
-		Summary    string   `json:"summary"`
-		Tags       []string `json:"tags"`
-		ExternalID string   `json:"external_id"`
-		AvatarURL  string   `json:"avatar_url"`
-		Content    string   `json:"content"`
+		Source       string   `json:"source"`
+		BotID        string   `json:"bot_id"`
+		BotName      string   `json:"bot_name"`
+		StableTaskID string   `json:"stable_task_id"`
+		TaskName     string   `json:"task_name"`
+		ExecutedAt   string   `json:"executed_at"`
+		Title        string   `json:"title"`
+		Summary      string   `json:"summary"`
+		Tags         []string `json:"tags"`
+		ExternalID   string   `json:"external_id"`
+		AvatarURL    string   `json:"avatar_url"`
+		Content      string   `json:"content"`
 	}
 	if err := dec.Decode(&raw); err != nil {
 		if isTooLarge(err) {
@@ -253,12 +294,37 @@ func (s *Server) createReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid_json", "request must contain one JSON object")
 		return
 	}
+	raw.Source = strings.TrimSpace(raw.Source)
+	if raw.Source == "" {
+		raw.Source = "unknown"
+	}
 	if !sourcePattern.MatchString(raw.Source) {
 		writeError(w, 400, "invalid_source", "source must be lowercase letters, digits, or hyphens")
 		return
 	}
-	if strings.TrimSpace(raw.BotID) == "" || len(raw.BotID) > 128 || strings.TrimSpace(raw.BotName) == "" || len(raw.BotName) > 256 {
-		writeError(w, 400, "invalid_bot", "bot_id and bot_name are required and must fit the length limits")
+	raw.BotID = strings.TrimSpace(raw.BotID)
+	raw.StableTaskID = strings.TrimSpace(raw.StableTaskID)
+	raw.TaskName = strings.TrimSpace(raw.TaskName)
+	if raw.BotID == "" {
+		if raw.StableTaskID == "" || len(raw.StableTaskID) > 512 {
+			writeError(w, 400, "invalid_bot", "bot_id or a stable_task_id is required; a stable task identity is needed to keep reports under one Bot")
+			return
+		}
+		digest := sha256.Sum256([]byte(raw.Source + "\x00" + raw.StableTaskID))
+		raw.BotID = "task-" + hex.EncodeToString(digest[:12])
+	}
+	if len(raw.BotID) > 128 {
+		writeError(w, 400, "invalid_bot", "bot_id must be at most 128 characters")
+		return
+	}
+	if strings.TrimSpace(raw.BotName) == "" {
+		raw.BotName = raw.TaskName
+	}
+	if strings.TrimSpace(raw.BotName) == "" {
+		raw.BotName = raw.BotID
+	}
+	if len(raw.BotName) > 256 {
+		writeError(w, 400, "invalid_bot", "bot_name must be at most 256 characters")
 		return
 	}
 	at, err := time.Parse(time.RFC3339, raw.ExecutedAt)
@@ -457,6 +523,49 @@ func (s *Server) deleteBot(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true, "deleted_reports": reports})
 }
 
+func (s *Server) renameBot(w http.ResponseWriter, r *http.Request) {
+	if id, _ := r.Context().Value(sessionContextKey{}).(string); id == "" {
+		writeError(w, http.StatusForbidden, "session_required", "Bot display names can only be changed from a browser session")
+		return
+	}
+	q := r.URL.Query()
+	source, botID := q.Get("source"), q.Get("bot_id")
+	if !sourcePattern.MatchString(source) || strings.TrimSpace(botID) == "" || len(botID) > 128 {
+		writeError(w, http.StatusBadRequest, "invalid_bot", "valid source and bot_id are required")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	var in struct {
+		DisplayName string `json:"display_name"`
+	}
+	if err := dec.Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "display_name is required; use an empty string to restore the original name")
+		return
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "invalid_json", "request must contain one JSON object")
+		return
+	}
+	in.DisplayName = strings.TrimSpace(in.DisplayName)
+	if len([]rune(in.DisplayName)) > 80 || strings.IndexFunc(in.DisplayName, func(r rune) bool { return r < 0x20 && r != '\t' }) >= 0 {
+		writeError(w, http.StatusBadRequest, "invalid_display_name", "display_name must be at most 80 characters and contain no control characters")
+		return
+	}
+	if err := s.store.RenameBot(r.Context(), source, botID, in.DisplayName); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "not_found", "bot not found")
+			return
+		}
+		serverError(w, err)
+		return
+	}
+	s.hub.Publish("bot.updated", map[string]string{"source": source, "bot_id": botID})
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	term := strings.TrimSpace(q.Get("q"))
@@ -507,6 +616,15 @@ func (s *Server) sse(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	ch := s.hub.Subscribe()
 	defer s.hub.Unsubscribe(ch)
+	var revoked <-chan struct{}
+	if id, _ := r.Context().Value(sessionContextKey{}).(string); id != "" {
+		streamClosed := make(chan struct{})
+		if !s.registerSessionStream(id, streamClosed) {
+			return
+		}
+		defer s.unregisterSessionStream(id, streamClosed)
+		revoked = streamClosed
+	}
 	ticker := time.NewTicker(25 * time.Second)
 	defer ticker.Stop()
 	_, _ = io.WriteString(w, "retry: 3000\n\n")
@@ -514,6 +632,8 @@ func (s *Server) sse(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-r.Context().Done():
+			return
+		case <-revoked:
 			return
 		case msg, ok := <-ch:
 			if !ok {

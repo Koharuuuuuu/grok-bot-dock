@@ -44,3 +44,9 @@
 - 本地 `docker build -t bolt-dock:p5-final .`：通过；BuildKit 使用 Dockerfile 的单次前端构建和 Go arm64 交叉编译。
 - 最终镜像容器验证：`/healthz` 返回 ok，Bearer 报告推送成功，容器健康状态为 healthy、UID 为 `10001:10001`；容器重启后 SQLite 报告仍可读。仅使用 `/tmp/bolt-dock-p5-final`，未操作部署 Compose 命名卷。
 - SQLite 数据卷未改动 Compose 定义；API Bearer 推送协议和现有删除、搜索、通知实现保持兼容。PR #8 已合并 master，提交 `02cfdb6`；GitHub Actions 验证/发布通过，匿名 GHCR 双架构读取、拉取和运行健康检查通过，详见 P5.6。
+
+## P6 集中修复复验（2026-10-10）
+
+- 本轮以当前 master `a97abba40076a1a876fda30aae56c503c56572b5` 为基线，逐项重验登录、悬浮阅读器、响应式布局、阅读偏好、推送指令、Bot 展示名和品牌。完整根因/修改文件、Go/前端/Docker 命令、真实浏览器尺寸矩阵、截图路径及未验证边界见 [P6 验收报告](./P6_ACCEPTANCE_REPORT.md)。
+- 本地 `go test -race ./... && go vet ./...`、前端 Vitest 7/7 + 构建、`docker build -t bolt-dock:p6 .` 和隔离容器健康检查/SQLite 报告及 display_name 重启持久性通过；报告、Bot 删除 UI 确认通过本地浏览器实测。
+- P6 PR/CI/合并/GHCR 数据待本次交付流程完成后补录。生产 URL/主机未提供，生产部署版本、缓存和数据库未验证；不得将本地验证视作生产验收。未触发 semver tag。
