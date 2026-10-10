@@ -123,6 +123,24 @@ bearer_token_env_var = "BOLT_DOCK_TOKEN"
 
 MCP 使用当前单用户共享 Bearer `ACCESS_TOKEN`，不是 OAuth，也不提供多用户隔离；任何持有该 Token 的客户端可发布及读取历史。反向代理如将服务暴露到公网，应限制访问、配置 HTTPS 和代理侧限流。MCP 能让客户端发现工具，不保证 Agent 只在最终报告时调用，也不提供定时触发保证；定时推送继续使用 REST API。Codex/其他客户端的具体版本兼容性以真实客户端连接测试为准；P7 验收状态和未验证项见 [docs/P7_MCP_ACCEPTANCE.md](docs/P7_MCP_ACCEPTANCE.md)。
 
+
+## P8 规划：MCP OAuth 2.1 双认证升级（尚未实现）
+
+> **状态：设计与 Codex TODO 已提交，当前 master 服务仍只提供共享 `ACCESS_TOKEN` Bearer MCP 认证。** 请勿把 Grok、Claude、Cursor 的 OAuth 接入当作已经可用；启用生产前必须完成实现、测试、授权与迁移验证。
+
+Bolt Dock 将在不改变现有 `/mcp` Streamable HTTP、`publish_report` / `search_reports`、`POST /api/v1/reports`、`stable_task_id` / `external_id`、SQLite 历史报告和 GHCR 单容器部署的前提下，**新增** OAuth 2.1 授权码 + PKCE S256。现有 Codex CLI / 私有脚本继续使用 Legacy Bearer Token；经用户确认授权的第三方 MCP 客户端使用独立、可过期/撤销、具 `reports:read` 或 `reports:write` 权限的 OAuth Token。管理员 `ACCESS_TOKEN` **不能**作为 OAuth Client Secret 或分享给第三方平台。
+
+现有网页登录只是管理员密钥换取内存 Cookie 的单所有者机制，**并无普通用户注册/多租户体系**。P8 第一阶段为单所有者 OAuth 授权，不声称不同用户、来源或 Bot 的数据隔离；授权读意味着可检索该所有者的现有报告库。Grok 等外部客户端的实际注册方式、OAuth 弹窗字段、工具可调用性及定时任务能力均需真实联调，不能仅凭协议推断。
+
+实施入口：
+
+- [P8 技术架构与 OAuth 安全规范](docs/P8_OAUTH_ARCHITECTURE.md)
+- [P8 数据迁移、兼容与回滚](docs/P8_OAUTH_MIGRATION.md)
+- [P8 Grok / Claude / Cursor / Codex 客户端接入](docs/P8_OAUTH_CLIENTS.md)
+- [P8 Codex 严格执行 TODO](docs/P8_OAUTH_EXECUTION_PLAN.md)
+
+**交给 Codex：** 从 `master` 拉取最新文档，优先执行 [P8 执行计划 Phase 0](docs/P8_OAUTH_EXECUTION_PLAN.md)，逐阶段实施并在隔离环境验收。未经批准不得修改生产凭据、运行生产数据库迁移或部署镜像。
+
 ## Docker 部署（拉取 GHCR 镜像）
 
 1. 创建 `.env` 并设置随机密钥：`cp .env.example .env`。
