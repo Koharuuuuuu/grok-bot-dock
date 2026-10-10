@@ -50,7 +50,7 @@
 
 ## Phase 1：协议发现与受控客户端注册
 
-- [ ] 明确稳定 `PUBLIC_BASE_URL` / issuer / MCP resource 配置和受信任反代规则，不由任意 Host 推断。
+- [x] 本地明确并测试固定 `PUBLIC_BASE_URL`、issuer、MCP resource 和 Host/forwarded-header 隔离；真实生产反代拓扑仍需部署前验证（见 G4）。
 - [x] Protected Resource Metadata：符合 RFC 9728 的路径发现（含路径型资源的规则），正确 HTTPS 资源标识/AS 列表。
 - [x] AS Metadata：符合 RFC 8414 的 issuer、authorize/token/revoke 等字段，宣告 PKCE S256。
 - [x] 401 `WWW-Authenticate` 按 MCP OAuth 标准携带 resource metadata 指引；现有 MCP 处理器及旧 Bearer 不回归。
@@ -94,7 +94,7 @@
 - [x] “MCP 接入”面板展示准确双认证能力，OAuth 未启用时不得出现可用的 OAuth 接入指导。
 - [x] README、TECHNICAL_DESIGN、客户端/安全/迁移文档与实际接口同步，不覆盖 P7 已验收说明。
 - [ ] 仅测试环境或经过允许的外部客户端真实验证 Grok 与 Claude 的 OAuth 连接。Cookie/session 不可被 AI Client 复用。
-- [ ] 验证 Codex CLI 既有 Bearer 配置和其他 P7 Inspector 场景。
+- [x] Codex CLI 既有 Bearer 验收见 [P7 验收报告](./P7_MCP_ACCEPTANCE.md)；MCP Inspector CLI 2.10.1 已连接当前 P8 分支的隔离服务，完成 tools/list 与只读 search_reports 调用（见 P8 验收记录）。Codex OAuth 仍待真实客户端联调。
 
 - [x] 授权页必须显著展示：客户端名称、准确 redirect 域名、请求的 read/write 权限、读权限可访问**整个单所有者报告库**、写权限可声明 source/bot_id；明确允许/拒绝，不默认勾选或自动授权。
 - [x] 本地 Chromium 覆盖桌面与 390×844 窄视口、浅色/深色/跟随系统；授权同意页可用 Tab/Space 完成 scope 选择并到达允许/拒绝，客户端停用有确认并即时更新列表状态。
@@ -103,27 +103,28 @@
 
 ## Phase 5：自动化安全回归（所有必须通过）
 
-- [ ] Discovery 正常/坏 Host/代理头污染/HTTPS 假冒；跨源 Origin 和 CSRF；scope/resource/issuer 错误。
+- [x] 自动化覆盖正常 discovery、坏 Host/代理头、跨源 Origin/CSRF、scope/resource/issuer 错误；固定公网 HTTPS origin 与真实证书/反代假冒仍待部署验收。
 - [x] PKCE 空/错误/plain 禁止、错误 redirect_uri、code 过期/重放、无效 client、用户拒绝。
 - [x] Access Token 过期/撤销、客户端撤销、只读尝试写入、只写尝试读取、OAuth token 不能调用 REST。
 - [x] 若提供 refresh：不适用，本期不签发 refresh token。
 - [x] CIMD 元数据获取与授权路径已覆盖 SSRF、redirect、大小/类型、client_id 和 redirect URI 校验；DCR 未实现且未开放匿名注册。
 - [x] 新旧认证并存、报告重复 external_id、中文搜索/游标、FTS、SSE、网页登录/注销、所有已有 Go/Vue 测试。
-- [ ] SQLite schema 从旧版本升级、重复迁移、容器重启、备份恢复演练；不丢历史报告/Bot。
+- [x] 隔离 SQLite 覆盖 v1→当前、v2→v3、重复启动迁移、历史数据与备份恢复；临时 Docker 命名卷在 graceful restart 与 SIGKILL 后报告均可读，容器/卷随后删除。
 - [x] `make test`、`make build`、Docker 构建与健康检查、镜像内运行 smoke test、资源实测。
 
 - [x] 增加独立 OAuth 协议测试客户端（不是 Codex 专属），完成 discovery→authorize→consent→token→tools/list→publish/search→revoke 全链路，使用本地测试数据库，不依赖真实第三方账户。
-- [ ] 测试断电/重启、SQLite busy/锁竞争、并发兑换同一 code、并发 refresh 轮换、撤销与调用竞争；记录事务一致性和错误语义。
+- [x] 本地验证重启/强制进程终止、SQLite busy/锁竞争、同一 code 并发兑换和撤销竞态，并记录事务与错误语义；真实主机断电未模拟，已开始执行的 MCP 工具调用不会被撤销主动中断。
   - [x] 容器重启后确认持久卷中的报告仍可读取；实际断电未模拟。
   - [x] 外部 SQLite writer lock 阻塞写入、释放锁后写入恢复；并发双重兑换仅成功一次。
   - [x] 并发 Token 查验/撤销竞态完成后，后续查验拒绝被撤销 Token；已签发的 in-flight 工具调用不会被主动取消。
   - [x] Refresh rotation 不适用：本期不签发 refresh token。
-- [ ] 验证 Token/Client Secret 不会出现在前端静态资源、URL 查询日志、重定向泄露、错误栈、CI artifacts 或数据库明文字段中；必要时扫描提交内容。
+- [x] 本地检查嵌入静态资源和容器日志不含临时 token/报告正文标记；HTTP logger 只写 URL path，Store 测试断言 token/secret 仅存摘要。
+- [ ] GitHub CI artifacts/logs 和生产日志需在对应远程工作流/部署运行后检查；本地环境无法证明这些远端产物。
 - [x] 将“真正多用户隔离”明确列为 P8 范围外：本期单所有者，不能将多用户隔离测试标为通过；本次不把多个客户端的存在宣称为多租户数据隔离。
 
 ## Phase 6：交付策略和验收记录
 
-- [ ] 按仓库 PR 保护策略准备本地分阶段提交与 CI 验证方案；**未经用户明确授权，不得推送远程提交、创建 PR 或合并**。获授权后执行相应远程步骤；不得以 docs-only push 误当作 GHCR 新版本已发布。
+- [x] 本地分阶段提交与 Go/frontend/Docker 验证方案已执行并记录；未远程查询或改变 PR 保护策略。未经用户明确授权，不 push、不建 PR、不合并；不把本地镜像构建称为发布。
 - [x] 默认 OAuth 功能关闭；未开启生产 OAuth/未触碰真实生产 DB。
 - [x] 更新 `docs/P8_OAUTH_ACCEPTANCE.md`：记录日期、基线 SHA、实现提交 SHA、测试命令/结果、客户端阻塞、部署风险和隔离备份恢复演练。
 - [x] 文档 README 仅宣称已经完成且验证的功能；未验证项明确标记。
