@@ -261,6 +261,7 @@ func TestOAuthAuthorizationRejectsUnknownClientRedirectAndPKCE(t *testing.T) {
 			}
 		})
 	}
+
 }
 
 func TestOAuthTokenAcceptsOmittedTokenRequestRedirectURI(t *testing.T) {
@@ -341,8 +342,8 @@ func TestOAuthAuthorizeAllowsOmittedSingleRedirectAndRejectsAmbiguousOrOversized
 	req.AddCookie(cookie)
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, req)
-	if w.Code != http.StatusBadRequest || w.Header().Get("Location") != "" {
-		t.Fatalf("explicit empty redirect_uri must not be treated as omitted: status=%d location=%q", w.Code, w.Header().Get("Location"))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "https://client.example/callback") {
+		t.Fatalf("empty redirect_uri must be treated as omitted when exactly one is registered: status=%d body=%s", w.Code, w.Body.String())
 	}
 
 	ambiguous := url.Values{}
@@ -413,6 +414,68 @@ func TestOAuthEndpointsRejectRepeatedParametersAndMixedClientAuthentication(t *t
 	conflictingRevoke := formRequest("/oauth/revoke", url.Values{"client_id": {"confidential-client"}, "client_secret": {"client-secret"}, "token": {"opaque-token"}})
 	conflictingRevoke.SetBasicAuth("confidential-client", "client-secret")
 	assertInvalidRequest("revoke basic and post authentication", conflictingRevoke)
+}
+
+func TestOAuth2IgnoresRepeatedUnknownParametersAndChallengesFailedBasicAuth(t *testing.T) {
+	db, err := store.Open(t.TempDir() + "/oauth2-unknown-params.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.RegisterOAuthClient(context.Background(), "confidential-client", "Confidential", []string{"https://client.example/callback"}, oauthHash("client-secret")); err != nil {
+		t.Fatal(err)
+	}
+	h := NewWithOAuth(db, events.New(), "owner-secret", 1<<20, webui.Files, OAuthConfig{Enabled: true, PublicBaseURL: "https://oauth.example"}).Handler()
+
+	query := url.Values{"response_type": {"unsupported"}, "client_id": {"confidential-client"}, "extension_hint": {"one", "two"}}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+query.Encode(), nil))
+	if w.Code == http.StatusBadRequest && strings.Contains(w.Body.String(), "appear no more than once") {
+		t.Fatalf("repeated unknown extension parameter must be ignored: status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	tokenForm := url.Values{"grant_type": {"unsupported"}, "client_id": {"confidential-client"}, "client_secret": {"client-secret"}, "extension_hint": {"one", "two"}}
+	tokenRequest := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(tokenForm.Encode()))
+	tokenRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, tokenRequest)
+	var tokenResponse map[string]string
+	if w.Code != http.StatusBadRequest || json.Unmarshal(w.Body.Bytes(), &tokenResponse) != nil || tokenResponse["error"] != "unsupported_grant_type" {
+		t.Fatalf("repeated unknown token extension must be ignored and request processing must continue: status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	for _, tc := range []struct {
+		name, clientID, secret string
+	}{
+		{name: "wrong secret", clientID: "confidential-client", secret: "wrong"},
+		{name: "unknown client", clientID: "missing-client", secret: "anything"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader("grant_type=authorization_code"))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.SetBasicAuth(tc.clientID, tc.secret)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+			var response map[string]string
+			if w.Code != http.StatusUnauthorized || !strings.HasPrefix(w.Header().Get("WWW-Authenticate"), "Basic ") || json.Unmarshal(w.Body.Bytes(), &response) != nil || response["error"] != "invalid_client" {
+				t.Fatalf("Basic authentication failure must include a Basic challenge: status=%d challenge=%q body=%s", w.Code, w.Header().Get("WWW-Authenticate"), w.Body.String())
+			}
+		})
+	}
+
+	const metadataClientID = "https://client.example:8443/oauth/metadata.json"
+	if err := db.RegisterOAuthClient(context.Background(), metadataClientID, "Metadata client", []string{"https://client.example/callback"}, oauthHash("secret: with spaces")); err != nil {
+		t.Fatal(err)
+	}
+	encodedCredentials := url.QueryEscape(metadataClientID) + ":" + url.QueryEscape("secret: with spaces")
+	request := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader("grant_type=unsupported"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(encodedCredentials)))
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, request)
+	if w.Code != http.StatusBadRequest || json.Unmarshal(w.Body.Bytes(), &tokenResponse) != nil || tokenResponse["error"] != "unsupported_grant_type" {
+		t.Fatalf("RFC 6749 form-encoded client_secret_basic credentials must authenticate: status=%d challenge=%q body=%s", w.Code, w.Header().Get("WWW-Authenticate"), w.Body.String())
+	}
 }
 
 func TestOAuthTokenHandlerRateLimitsByPeerAndClient(t *testing.T) {

@@ -129,7 +129,7 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q, err := url.ParseQuery(r.URL.RawQuery)
-	if err != nil || hasRepeatedOAuthParams(q) {
+	if err != nil || hasRepeatedOAuthParams(q, "response_type", "client_id", "redirect_uri", "scope", "state", "code_challenge", "code_challenge_method", "resource") {
 		oauthError(w, r, "invalid_request", "authorization parameters must be valid and appear no more than once")
 		return
 	}
@@ -145,7 +145,7 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, r, "invalid_request", "invalid client or redirect_uri")
 		return
 	}
-	if !q.Has("redirect_uri") && len(client.Redirects) == 1 {
+	if redirect == "" && len(client.Redirects) == 1 {
 		redirect = client.Redirects[0]
 	}
 	if !containsExact(client.Redirects, redirect) {
@@ -311,7 +311,7 @@ func (s *Server) oauthToken(w http.ResponseWriter, r *http.Request) {
 		oauthJSONError(w, 405, "invalid_request")
 		return
 	}
-	if err := parseOAuthForm(w, r); err != nil {
+	if err := parseOAuthForm(w, r, "grant_type", "code", "redirect_uri", "resource", "code_verifier", "client_id", "client_secret"); err != nil {
 		oauthJSONError(w, 400, "invalid_request")
 		return
 	}
@@ -327,6 +327,10 @@ func (s *Server) oauthToken(w http.ResponseWriter, r *http.Request) {
 	}
 	_, status, ok := s.authenticateOAuthClient(r, clientID, secret)
 	if !ok {
+		if oauthBasicAuthAttempt(r) {
+			w.Header().Set("WWW-Authenticate", `Basic realm="oauth"`)
+			status = http.StatusUnauthorized
+		}
 		oauthJSONError(w, status, "invalid_client")
 		return
 	}
@@ -377,7 +381,7 @@ func (s *Server) oauthRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	if err := parseOAuthForm(w, r); err != nil {
+	if err := parseOAuthForm(w, r, "token", "token_type_hint", "client_id", "client_secret"); err != nil {
 		oauthJSONError(w, 400, "invalid_request")
 		return
 	}
@@ -393,6 +397,10 @@ func (s *Server) oauthRevoke(w http.ResponseWriter, r *http.Request) {
 	}
 	_, status, ok := s.authenticateOAuthClient(r, clientID, secret)
 	if !ok {
+		if oauthBasicAuthAttempt(r) {
+			w.Header().Set("WWW-Authenticate", `Basic realm="oauth"`)
+			status = http.StatusUnauthorized
+		}
 		oauthJSONError(w, status, "invalid_client")
 		return
 	}
@@ -448,7 +456,14 @@ func (s *Server) originIsPublicBase(r *http.Request) bool {
 func oauthClientCredentials(r *http.Request) (string, string) {
 	id, secret := r.Form.Get("client_id"), r.Form.Get("client_secret")
 	if username, password, ok := r.BasicAuth(); ok {
-		return username, password
+		// OAuth client_secret_basic applies form encoding to both values before
+		// placing them in the HTTP Basic username/password fields.
+		formID, idErr := url.QueryUnescape(username)
+		formSecret, secretErr := url.QueryUnescape(password)
+		if idErr != nil || secretErr != nil {
+			return "", ""
+		}
+		return formID, formSecret
 	}
 	return id, secret
 }
@@ -461,7 +476,7 @@ func oauthError(w http.ResponseWriter, r *http.Request, code, description string
 	writeJSON(w, 400, map[string]string{"error": code, "error_description": description})
 }
 
-func parseOAuthForm(w http.ResponseWriter, r *http.Request) error {
+func parseOAuthForm(w http.ResponseWriter, r *http.Request, parameters ...string) error {
 	if r.URL.RawQuery != "" {
 		return errors.New("OAuth credentials and parameters must not appear in URL query")
 	}
@@ -473,19 +488,24 @@ func parseOAuthForm(w http.ResponseWriter, r *http.Request) error {
 	if err := r.ParseForm(); err != nil {
 		return err
 	}
-	if hasRepeatedOAuthParams(r.Form) {
+	if hasRepeatedOAuthParams(r.Form, parameters...) {
 		return errors.New("OAuth parameters must not appear more than once")
 	}
 	return nil
 }
 
-func hasRepeatedOAuthParams(values url.Values) bool {
-	for _, items := range values {
-		if len(items) > 1 {
+func hasRepeatedOAuthParams(values url.Values, parameters ...string) bool {
+	for _, parameter := range parameters {
+		if len(values[parameter]) > 1 {
 			return true
 		}
 	}
 	return false
+}
+
+func oauthBasicAuthAttempt(r *http.Request) bool {
+	fields := strings.Fields(r.Header.Get("Authorization"))
+	return len(fields) > 0 && strings.EqualFold(fields[0], "Basic")
 }
 
 func hasOAuthClientAuthConflict(r *http.Request) bool {
