@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -350,6 +351,82 @@ func TestSSEReportsNewReportAndDisconnect(t *testing.T) {
 	case <-readerDone:
 	case <-time.After(time.Second):
 		t.Fatal("SSE reader did not disconnect")
+	}
+}
+
+func TestSSEStopsImmediatelyAfterSessionLogout(t *testing.T) {
+	h, _, _ := testHandler(t, 1<<20)
+	server := httptest.NewServer(h)
+	defer server.Close()
+
+	login, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/auth/login", strings.NewReader(`{"token":"test-secret"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	login.Header.Set("Content-Type", "application/json")
+	loginResponse, err := server.Client().Do(login)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loginResponse.Body.Close()
+	if loginResponse.StatusCode != http.StatusOK {
+		t.Fatalf("login status=%d", loginResponse.StatusCode)
+	}
+	cookie := loginResponse.Cookies()[0]
+
+	streamRequest, err := http.NewRequest(http.MethodGet, server.URL+"/api/v1/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	streamRequest.AddCookie(cookie)
+	stream, err := server.Client().Do(streamRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Body.Close()
+	if stream.StatusCode != http.StatusOK {
+		t.Fatalf("SSE status=%d", stream.StatusCode)
+	}
+	readerDone := make(chan struct{})
+	go func() {
+		defer close(readerDone)
+		_, _ = io.Copy(io.Discard, stream.Body)
+	}()
+
+	logout, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/auth/logout", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logout.AddCookie(cookie)
+	logout.Header.Set("Origin", server.URL)
+	logoutResponse, err := server.Client().Do(logout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logoutResponse.Body.Close()
+	if logoutResponse.StatusCode != http.StatusOK {
+		t.Fatalf("logout status=%d", logoutResponse.StatusCode)
+	}
+
+	push, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/reports", strings.NewReader(postBody("grok", "# after logout", "after-logout")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	push.Header.Set("Authorization", "Bearer test-secret")
+	push.Header.Set("Content-Type", "application/json")
+	pushResponse, err := server.Client().Do(push)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pushResponse.Body.Close()
+	if pushResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("report push status=%d", pushResponse.StatusCode)
+	}
+
+	select {
+	case <-readerDone:
+	case <-time.After(time.Second):
+		t.Fatal("SSE stream remained open after logout")
 	}
 }
 

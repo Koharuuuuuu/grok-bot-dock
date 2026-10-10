@@ -519,6 +519,9 @@ func (s *Server) sse(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
+			if id, _ := r.Context().Value(sessionContextKey{}).(string); id != "" && !s.validSession(id, time.Now()) {
+				return
+			}
 			if _, e := w.Write(msg); e != nil {
 				return
 			}

@@ -8,7 +8,7 @@
 
 - 根因：访问密钥仅保存在 `App.vue` 的组件内存中；刷新重建应用后没有认证恢复流程，API 也只识别 Bearer Token。
 - 修复：增加服务端随机会话 ID、12 小时服务端过期、HttpOnly/SameSite=Lax 会话 Cookie、HTTPS Secure 属性、登录限流、同源写请求校验、会话探测及登出撤销。网页不持有 Bearer Token；外部推送仍用 Bearer Token。
-- 验证：`go test ./...` 覆盖有效/无效/过期会话、HTTPS 代理 Secure、Origin 校验、注销撤销、Cookie 清除和 Bearer 兼容；Playwright 登录后刷新、第二标签访问成功，注销后另一标签刷新回到登录页。浏览器检查结果为 HttpOnly=true、SameSite=Lax、Path=/、无持久 Expires，`document.cookie`、localStorage、sessionStorage 均无会话凭据。
+- 验证：`go test ./...` 覆盖有效/无效/过期会话、HTTPS 代理 Secure、Origin 校验、注销撤销、Cookie 清除和 Bearer 兼容；`TestSSEStopsImmediatelyAfterSessionLogout` 验证登出后已打开的 SSE 不再推送报告事件。Playwright 登录后刷新、第二标签访问成功，注销后另一标签刷新回到登录页。浏览器检查结果为 HttpOnly=true、SameSite=Lax、Path=/、无持久 Expires，`document.cookie`、localStorage、sessionStorage 均无会话凭据。
 - 限制：服务进程重启会清空内存会话并要求重新登录。会话 Cookie 不设置持久期限，但浏览器会话恢复可能保留它；网页无法可靠侦测整个浏览器进程关闭，不承诺关闭浏览器即登出。HTTPS Secure 依赖 HTTPS 请求或可信反向代理覆盖 `X-Forwarded-Proto`。
 
 ## P5.2 / P5.4 详情抖动与悬浮阅读器
@@ -40,6 +40,6 @@
 ## P5.7 集成验证
 
 - `make test`：Go 全包通过，前端 6 项通过；`make build`：前端 Vite 生产构建与 Go 二进制构建通过。`npm ci` audit 报告 0 vulnerabilities。
-- 本地 `docker build -t bolt-dock:p5-check .`：通过；BuildKit 使用 Dockerfile 的单次前端构建和 Go arm64 交叉编译。
-- 临时容器运行验证：报告推送及 Cookie 登录成功；容器重启后健康检查恢复为 healthy，SQLite 报告仍可读；UID 为 `10001:10001`。仅使用 `/tmp/bolt-dock-p5-container`，未操作部署 Compose 命名卷。
+- 本地 `docker build -t bolt-dock:p5-final .`：通过；BuildKit 使用 Dockerfile 的单次前端构建和 Go arm64 交叉编译。
+- 最终镜像容器验证：`/healthz` 返回 ok，Bearer 报告推送成功，容器健康状态为 healthy、UID 为 `10001:10001`；容器重启后 SQLite 报告仍可读。仅使用 `/tmp/bolt-dock-p5-final`，未操作部署 Compose 命名卷。
 - SQLite 数据卷未改动 Compose 定义；API Bearer 推送协议和现有删除、搜索、通知实现保持兼容。GHCR 与 master 合并验收待 PR 后补充。
