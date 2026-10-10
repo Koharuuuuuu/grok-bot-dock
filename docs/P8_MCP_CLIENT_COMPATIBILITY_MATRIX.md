@@ -1,6 +1,6 @@
 # P8 · 主流 AI Agent MCP 客户端兼容性策略与验收矩阵
 
-> 状态：待执行 / 待实测（2026-10-10）。这是 Bot Dock 的产品级目标：**尽可能兼容主流支持自定义远程 MCP 的 AI Agent**，而非绑定 Codex 或 Grok。该文件是 P8 必须遵循的验收标准。不能将“符合协议”直接等同于“某个客户端已验证”。
+> 状态：协议级本地实现持续验收中；真实客户端仍待实测（2026-10-10）。这是 Bot Dock 的产品级目标：**尽可能兼容主流支持自定义远程 MCP 的 AI Agent**，而非绑定 Codex 或 Grok。该文件是 P8 必须遵循的验收标准。不能将“符合协议”直接等同于“某个客户端已验证”。
 
 ## 1. 目标与边界
 
@@ -18,7 +18,7 @@
 | Codex CLI / App | 先确保已有 Bearer 不回归，再验证 OAuth（如客户端支持） | 具体版本、远程 Streamable HTTP、凭据设置、tools/list、读写工具 | **P7 已有特定版本 Bearer 验收；P8 OAuth 未实测** |
 | Cursor | 远程 MCP + Bearer/OAuth，按具体版本支持情况选择 | 客户端配置、OAuth 浏览器回调、工具调用、Token 续期 | **未实测** |
 | Claude（具体产品/计划） | 远程 MCP + OAuth | 是否开放自定义远程 MCP、授权回调、工具权限、刷新与撤销 | **未实测** |
-| MCP Inspector / 独立测试客户端 | 标准协议及 OAuth 双路径 | 初始化、发现、工具列表、发布、查询、撤销、错误路径 | **P8 待实测** |
+| MCP Inspector / 独立测试客户端 | 标准协议及 OAuth 双路径 | 初始化、发现、工具列表、发布、查询、撤销、错误路径 | **本地协议测试通过；不代表第三方产品通过** |
 | 其他 AI Agent | 能力探测后选择 Bearer/OAuth | 远程 MCP 支持、鉴权机制、工具调用权限 | **未实测** |
 
 > 表中现状是文档层面的保守标记；实施时必须用真实日志、截图或自动化测试结果更新。不要伪造兼容性徽章或宣称“已支持”。
@@ -26,10 +26,10 @@
 ## 3. 协议层强制兼容清单
 
 - [ ] Streamable HTTP MCP 初始化、协议版本协商、tools/list、tools/call、HTTP Accept/Content-Type、JSON-RPC 错误和请求取消符合 SDK 与当期规范。
-- [ ] MCP Protected Resource Metadata（RFC 9728）及正确 `WWW-Authenticate` discovery，Authorization Server Metadata（RFC 8414），固定可信公网 HTTPS issuer/resource，防代理 Host 伪造。
-- [ ] OAuth Authorization Code + PKCE S256、标准 OAuth 错误、精确 redirect URI、资源绑定（RFC 8707）、scope 权限、Token 过期与撤销。
-- [ ] 预注册 OAuth Client ID 为第一优先；支持公开/机密客户端各自安全规则；CIMD/DCR 仅在规范要求与客户端需求成立且安全评审后启用。
-- [ ] Legacy Bearer 与 OAuth 双栈并存，绝不互认、越权或将 OAuth Token 用于 REST 管理 API；OAuth 只读/只写权限真正由服务端工具调用强制执行。
+- [x] MCP Protected Resource Metadata（RFC 9728）及正确 `WWW-Authenticate` discovery，Authorization Server Metadata（RFC 8414），固定 issuer/resource，防代理 Host 伪造（本地验证；公网反代仍待验）。
+- [x] OAuth Authorization Code + PKCE S256、标准 OAuth 错误、精确 redirect URI、资源绑定（RFC 8707）、scope 权限、Token 过期与撤销（本地协议测试）。
+- [x] 预注册 OAuth Client ID 和公开/机密客户端安全规则；CIMD 元数据获取、校验、缓存和授权已有本地实现与隔离测试。CIMD 草案完整符合性、第三方支持及 DCR 仍未验收。
+- [x] Legacy Bearer 与 OAuth 双栈并存，绝不互认、越权或将 OAuth Token 用于 REST 管理 API；OAuth 只读/只写权限由服务端工具调用强制执行（本地矩阵测试）。
 - [ ] 客户端配置示例必须明确标注**客户端特有**，通用接入页仅显示 MCP URL、认证方式、工具和通用步骤；不要求 Codex 或本地 CLI 存在。
 - [ ] 网络/反代兼容：HTTPS、正确 well-known 路由、`WWW-Authenticate` 透传、重定向和 CORS/Origin 规则、超时/断连与响应大小限制。
 - [ ] 报告写入共享业务层、stable_task_id、external_id 幂等、FTS 查询、SQLite/SSE、旧 REST 路由保持兼容。
@@ -57,6 +57,6 @@
 ## 6. 交付
 
 - [ ] 更新 `docs/P8_OAUTH_CLIENTS.md` 与 README 的“客户端兼容性”章节，逐个给出经验证的步骤和限制。
-- [ ] 在 `docs/P8_OAUTH_ACCEPTANCE.md` 加入按客户端的证据矩阵，明确“协议通过”和“真实平台联调通过”的区别。
+- [x] 在 `docs/P8_OAUTH_ACCEPTANCE.md` 加入按客户端的证据矩阵，明确“协议通过”和“真实平台联调通过”的区别。
 - [ ] 前端「MCP 接入」保持客户端无关，显示双认证与通用配置；可选客户端示例不得假设所有客户端配置格式相同。
 - [ ] 继续遵守 P8 执行计划的授权边界：**未经额外明确授权，Codex 不得自动 push、创建 PR、合并或部署生产**。

@@ -1,6 +1,6 @@
 # P8 · OAuth 2.1 MCP 授权升级：架构与安全规范
 
-> 状态：**P8 代码已在本地功能分支实现，默认关闭，尚未发布或真实客户端验收**（2026-10-10）。本文描述代码目标与安全边界；不能据此宣称生产或第三方客户端已启用。
+> 状态：**P8 受限 OAuth profile 与 CIMD 现已在本地功能分支实现，默认关闭，尚未发布或真实客户端验收**（2026-10-10）。这不是完整 OAuth 2.1 符合性声明。本文描述代码目标与安全边界；不能据此宣称生产或第三方客户端已启用。
 >
 > 目标仓库：`Nyakooo/grok-bot-dock`（私有）；默认分支 `master`。关联 [执行清单](./P8_OAUTH_EXECUTION_PLAN.md)、[迁移/回滚](./P8_OAUTH_MIGRATION.md)、[客户端接入](./P8_OAUTH_CLIENTS.md)。
 
@@ -39,12 +39,14 @@ Bolt Dock 同时实现 OAuth **Authorization Server (AS)** 和 MCP **Protected R
 - `POST /oauth/token`：`authorization_code` 与可选 `refresh_token` grant；校验 PKCE、绑定的 redirect URI/client/resource；授权码一次性事务消费；返回 `access_token`、`token_type=Bearer`、`expires_in`、scope，按策略返回 refresh token。OAuth 错误采用标准格式且不暴露敏感内容。
 - `POST /oauth/revoke`：按 RFC 7009 及客户端身份/持有权处理，撤销 refresh/access token；对授权链传播失效。
 - `GET/POST /oauth/consent`（实际 UI 路由可调整）：明确显示客户端身份、读写权限和账户；拒绝/取消有规范回调；服务器必须防 CSRF。
-- **客户端注册优先级：** 1) 受控预注册（可提供 Client ID，必要时 confidential secret）；2) **Client ID Metadata Documents (CIMD)**，严格 HTTPS、元数据获取 SSRF/redirect/大小/超时防护及精确 redirect URI 核验；3) 视客户端实测兼容性和安全评估启用 RFC 7591 DCR。客户端的 credential 输入框并不意味着一定需要 secret，必须按真实平台流程判断。禁止匿名开放 DCR 造成数据库膨胀。
+- **客户端注册优先级：** 1) 受控预注册（可提供 Client ID，必要时 confidential secret）；2) **Client ID Metadata Documents (CIMD)**，已实现严格 HTTPS、元数据获取 SSRF/redirect/大小/超时防护及精确 redirect URI 核验，并仅在明确同意后持久化 client；3) DCR 暂不实现，须有真实客户端需求且完成滥用防护评审后再考虑。客户端的 credential 输入框并不意味着一定需要 secret，必须按真实平台流程判断。禁止匿名开放注册造成数据库膨胀。
 - `GET /oauth/jwks.json` **仅当**采用 JWT 且确实需要外部验签时增加；首选服务端存储摘要的不透明 access token，不暴露无用 JWKS 接口。
 - 401 MCP 响应：`WWW-Authenticate: Bearer resource_metadata="https://…/.well-known/oauth-protected-resource", scope="reports:read"`（真实 scope 视资源/调用而定）；不能破坏 SDK 的 MCP 协议错误语义。缺/无效凭据 401；有效但权限不足 403，遵循 OAuth/MCP 规范。
 
 官方参考：
 - MCP Authorization: https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization
+- OAuth 2.1 active Internet-Draft (draft-ietf-oauth-v2-1-16; work in progress): https://datatracker.ietf.org/doc/draft-ietf-oauth-v2-1/
+- OAuth Client ID Metadata Document active Internet-Draft (draft-ietf-oauth-client-id-metadata-document-02; work in progress): https://datatracker.ietf.org/doc/draft-ietf-oauth-client-id-metadata-document/
 - RFC 9728 protected resource metadata: https://www.rfc-editor.org/rfc/rfc9728
 - RFC 8414 AS metadata: https://www.rfc-editor.org/rfc/rfc8414
 - RFC 7636 PKCE: https://www.rfc-editor.org/rfc/rfc7636
@@ -68,6 +70,6 @@ Bolt Dock 同时实现 OAuth **Authorization Server (AS)** 和 MCP **Protected R
 
 ## 5. 质量门槛和部署
 
-必须完成 discovery、PKCE、redirect URI 精确匹配、state/consent 防 CSRF、code 重放、refresh 重放、scope/audience/issuer、Client Metadata SSRF、代理 Host 伪造、撤销即时生效、旧 Bearer 不回归、跨来源身份和 external_id 幂等测试。集成测试只对本地临时 SQLite、隔离容器运行，不向生产写测试报告。
+本地自动化覆盖 discovery、PKCE、redirect URI 精确匹配、state/consent 防 CSRF、code 重放、scope/audience/issuer、Client Metadata SSRF、代理 Host 伪造、撤销和旧 Bearer 回归、跨来源身份与 external_id 幂等。refresh-token rotation/replay 是条件功能，当前没有签发 refresh token。集成测试只对本地临时 SQLite、隔离容器运行，不向生产写测试报告。
 
 新增 OAuth 配置默认**关闭或仅回环开发可用**；先做双栈内部测试、手动启用、灰度验证后才对公网开放。必须说明 AS 公网 URL 和反代路径。风险/回滚见 [迁移方案](./P8_OAUTH_MIGRATION.md)。

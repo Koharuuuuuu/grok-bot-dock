@@ -4,7 +4,7 @@
 
 ## 已实现数据模型
 
-基线 schema 为 v1，P8 启动时在事务中幂等创建 v2。当前迁移实际只新增下表，不改写旧报告/Bot/FTS 结构；SQLite 外键与 WAL 单连接策略保持不变。
+基线 schema 为 v1。P8 在事务中幂等创建 OAuth 表，并由 v2 升级到 v3；v3 为 `oauth_clients` 添加 `registration_type`，用于区分手动登记和 CIMD 客户端。迁移不改写旧报告/Bot/FTS 结构；SQLite 外键与 WAL 单连接策略保持不变。
 
 | 建议表 | 最少字段 / 索引 | 约束 |
 | --- | --- | --- |
@@ -14,7 +14,7 @@
 | `oauth_access_tokens` | `token_hash`，`grant_id`，`client_id`，`resource`，`scopes_json`，`expires_at`，`revoked_at` | 不透明 token 只存 SHA-256 摘要；每个 MCP 请求查库 |
 | `oauth_audit_events` | `id`，`event_at`，`event_type`，`client_id`，`result`，`subject_ref` | 不存 token、secret、code、Cookie 或报告正文；授权时清理 90 天前审计 |
 
-尚未建 refresh-token 表，因为当前未发放 refresh token；客户端如要求刷新暂标不兼容，需基于实测再设计 rotation/family replay 防护。Access token TTL 为 15 分钟，授权 grant 最长 30 天，授权码 TTL 为 5 分钟；过期 grant/token 在校验时拒绝，后续授权创建时清理过期 code/token/grant 和 90 天前审计。CIMD 与 DCR 未实现，也无外部 URL 获取路径。
+尚未建 refresh-token 表，因为当前未发放 refresh token；客户端如要求刷新暂标不兼容，需基于实测再设计 rotation/family replay 防护。Access token TTL 为 15 分钟，授权 grant 最长 30 天，授权码 TTL 为 5 分钟；过期 grant/token 在校验时拒绝，后续授权创建时清理过期 code/token/grant 和 90 天前审计。CIMD 已实现：只允许 HTTPS、禁止重定向、校验解析出的全部 IP 为公网地址并固定到已校验 IP、限制响应大小/超时/并发、校验 client_id 与文档内容及 redirect URI；成功结果按受限缓存策略缓存。匿名 DCR 未实现。
 
 建议使用单独的 schema version migration 和幂等索引；所有 timestamp 使用 UTC；设置紧凑的数据保留和清理周期，确保不增加轻量服务器资源压力。授权管理页只暴露可撤销 metadata，client secret 永不可二次显示。若项目选 JWT，需要明确解释撤销设计与为何优于不透明 token；不得两套方案混搭。
 
@@ -32,7 +32,7 @@
 
 - **准备**：记录 `master` 基线 SHA/当前数据库 schema、容器 digest 和部署配置；先 `go test ./...`、`npm test`/build 建立回归基线。密钥不打印。
 - **备份**：生产停写/停服后，备份 `/data/bolt-dock.db`（同时检查 WAL/SHM 一致性），备份加密并校验；勿使用 `docker compose down -v`。
-- **前向迁移**：实现为 `internal/store/store.go` 调用的事务式 additive v2 DDL；多次启动通过 `IF NOT EXISTS` 和 schema version 识别，不会对 P7 表执行 UPDATE/DELETE。自动化测试关闭/重新打开临时数据库，确认 v2、历史报告和 token 持久性。
+- **前向迁移**：实现为 `internal/store/store.go` 调用的事务式 additive DDL；多次启动通过 schema version 识别，不会对 P7 表执行 UPDATE/DELETE。自动化测试覆盖 v1→当前版本及 v2→v3 升级、重复迁移、历史报告和 token 持久性。
 - **启用**：OAuth 默认为关闭；`OAUTH_ENABLED=true` 时必须设置 `PUBLIC_BASE_URL` 为固定 HTTPS origin（仅 loopback 测试可 HTTP）；代理公网转发和备份仍需部署者验证。
 - **灰度**：先隔离测试客户端与专用报告或本地测试实例做联调；需要真实 Grok OAuth 时仅进行不修改生产报告的握手/工具发现验证，写入工具必须经用户认可。
 - **上线**：启用 OAuth 之前配置速率限制、监控和撤销入口；完成正式生产变更审批。
@@ -47,4 +47,4 @@
 
 ## 验收证据
 
-本地证据：`internal/store/oauth_test.go` 验证空 v1 数据库前向迁移后关闭/重开、隔离闭库文件备份恢复、保留历史报告、schema v2 记录、OAuth token 持久/过期拒绝和客户端停用即时失效；`internal/api/oauth_test.go` 验证本地 SQLite 授权/token 生命周期。命令与实际输出见 [P8 验收记录](./P8_OAUTH_ACCEPTANCE.md)。未执行生产数据库备份/恢复、公开反向代理验证、GHCR 发布或生产回滚；这些保持“未验收”，不得把本地演练外推成部署证明。
+本地证据：`internal/store/oauth_test.go` 验证 v1/v2 前向迁移、闭库文件备份恢复、历史数据保留、schema v3、OAuth token 持久/过期拒绝和客户端停用即时失效；`internal/api/oauth_test.go` 验证本地 SQLite 授权/token 生命周期及 CIMD 元数据获取和授权。命令与实际输出见 [P8 验收记录](./P8_OAUTH_ACCEPTANCE.md)。未执行生产数据库备份/恢复、公开反向代理验证、GHCR 发布或生产回滚；这些保持“未验收”，不得把本地演练外推成部署证明。

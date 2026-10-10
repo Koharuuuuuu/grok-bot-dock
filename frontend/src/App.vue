@@ -725,7 +725,7 @@ function trapReaderFocus(event) {
 
         <section v-if="mcpCapabilities?.oauth_enabled" class="mcp-access-section" aria-labelledby="oauth-owner-heading">
           <div class="mcp-section-heading"><h3 id="oauth-owner-heading">OAuth 客户端与授权</h3><span class="mcp-protocol-badge">PKCE · 独立凭据</span></div>
-          <p class="mcp-field-help">只向可信客户端登记精确回调地址。机密客户端的 Client Secret 仅在创建或轮换时显示一次；OAuth 默认无刷新令牌，Token 有效期 15 分钟，授权最长 30 天。</p>
+          <p class="mcp-field-help">可在此预登记客户端，也可由支持 CIMD 的公开客户端提交 HTTPS 元数据地址；两种方式都要核对精确回调 URI 并经管理员同意。机密客户端的 Client Secret 仅在创建或轮换时显示一次；OAuth 默认无刷新令牌，Token 有效期 15 分钟，授权最长 30 天。</p>
           <form class="oauth-client-form" @submit.prevent="createOAuthClient">
             <label>客户端名称<input v-model="oauthClientName" maxlength="120" required autocomplete="off"></label>
             <label>精确回调 URI（每行一个）<textarea v-model="oauthRedirectURI" required rows="2" spellcheck="false" placeholder="https://client.example/oauth/callback"></textarea></label>
@@ -734,7 +734,7 @@ function trapReaderFocus(event) {
           </form>
           <p v-if="oauthManagementError" class="form-error" role="alert">{{ oauthManagementError }}</p>
           <div v-if="oauthCreatedClient" class="oauth-created-client" role="status"><strong>{{ oauthCreatedClient.notice || '客户端已登记' }}：{{ oauthCreatedClient.client_id }}</strong><p v-if="oauthCreatedClient.client_secret">Client Secret（只显示本次）：<code>{{ oauthCreatedClient.client_secret }}</code> <button class="secondary-button" @click="copyOAuthClientSecret">复制 Secret</button></p><p v-else>此客户端为公开客户端，不签发 Client Secret。</p></div>
-          <ul v-if="oauthClients.length" class="oauth-managed-list"><li v-for="client in oauthClients" :key="client.client_id"><div><strong>{{ client.client_name }}</strong><code>{{ client.client_id }}</code><small>{{ client.redirect_uris.join(' · ') }}</small><small v-if="client.disabled_at">已停用</small></div><button v-if="!client.disabled_at && client.confidential" class="text-button" @click="rotateOAuthClientSecret(client)">轮换 Secret</button><button v-if="!client.disabled_at" class="text-button" @click="disableOAuthClient(client)">停用</button></li></ul>
+          <ul v-if="oauthClients.length" class="oauth-managed-list"><li v-for="client in oauthClients" :key="client.client_id"><div><strong>{{ client.client_name }}</strong><code>{{ client.client_id }}</code><small v-if="client.registration_type === 'cimd'">Client ID Metadata Document（公开客户端）</small><small v-else>管理员预注册客户端</small><small>{{ client.redirect_uris.join(' · ') }}</small><small v-if="client.disabled_at">已停用</small></div><button v-if="!client.disabled_at && client.confidential" class="text-button" @click="rotateOAuthClientSecret(client)">轮换 Secret</button><button v-if="!client.disabled_at" class="text-button" @click="disableOAuthClient(client)">停用</button></li></ul>
           <h4>已授权记录</h4>
           <ul v-if="oauthGrants.length" class="oauth-managed-list"><li v-for="grant in oauthGrants" :key="grant.id"><div><strong>{{ grant.client_name }} <small>授权 #{{ grant.id }}</small></strong><small>{{ grant.scopes.join(' · ') }} · {{ grant.resource }}</small><small>{{ grant.revoked_at ? '已撤销' : `有效期至 ${grant.expires_at}` }}</small></div><button v-if="!grant.revoked_at" class="text-button" @click="revokeOAuthGrant(grant)">撤销</button></li></ul>
           <p v-else class="mcp-field-help">目前没有 OAuth 授权记录。</p>

@@ -1,6 +1,6 @@
 # P8 · OAuth 2.1 MCP 升级：Codex 严格执行计划与 TODO
 
-> 状态（2026-10-10）：**P8 已在本地分支实现；隔离协议、API/UI、回归及容器验收通过；生产部署与真实第三方 OAuth 联调仍阻塞/待外部验收。** 当前证据和边界见 [验收记录](./P8_OAUTH_ACCEPTANCE.md)。实现尚未推送、创建 PR 或合并。目标：为已上线 P7 Streamable HTTP MCP 增加独立 OAuth 授权，完整保留共享 Bearer、REST、SQLite 报告数据和前端工作台。关联 [设计](./P8_OAUTH_ARCHITECTURE.md)、[迁移](./P8_OAUTH_MIGRATION.md)、[客户端](./P8_OAUTH_CLIENTS.md)。**每项验证前不得打勾**。
+> 状态（2026-10-10）：**P8 本地分支已实现受限 OAuth 授权配置；CIMD 支持及隔离测试现已加入，仍未达到完整 OAuth 2.1 符合性验收。生产部署与真实第三方 OAuth 联调仍待外部验收。** 当前证据和边界见 [验收记录](./P8_OAUTH_ACCEPTANCE.md)。实现尚未推送、创建 PR 或合并。目标：为已上线 P7 Streamable HTTP MCP 增加独立 OAuth 授权，完整保留共享 Bearer、REST、SQLite 报告数据和前端工作台。关联 [设计](./P8_OAUTH_ARCHITECTURE.md)、[迁移](./P8_OAUTH_MIGRATION.md)、[客户端](./P8_OAUTH_CLIENTS.md)。**每项验证前不得打勾**。
 
 ## 执行授权边界（优先于本文其他交付措辞）
 
@@ -55,11 +55,11 @@
 - [x] AS Metadata：符合 RFC 8414 的 issuer、authorize/token/revoke 等字段，宣告 PKCE S256。
 - [x] 401 `WWW-Authenticate` 按 MCP OAuth 标准携带 resource metadata 指引；现有 MCP 处理器及旧 Bearer 不回归。
 - [x] 手动预注册可信 OAuth Client，回调 URI 精确比对、client type/secret 存储保护；提供客户端信息展示与注册撤销流程。
-- [ ] 确认 CIMD 的处理与第三方实际支持；如需 DCR，先安全评估并增加保护策略，禁止无限开放写入。
+- [x] 实现并隔离测试 CIMD 客户端元数据处理；真实第三方客户端对 CIMD 的支持仍待联调。如需 DCR，先安全评估并增加保护策略，禁止无限开放写入。
 
 - [x] 定义并测试 OAuth 授权服务器与资源服务器的**精确 URI 规则**：issuer、resource identifier、well-known 路径插入、redirect URI、trailing slash、URL 编码和 HTTPS；客户端使用标准发现而非硬编码私有端点。
 - [x] Client ID 及 Client Secret 的发放、展示、轮换、禁用分开设计；公开客户端不可强制要求保密的 secret，机密客户端应验证 secret；client secret 不可等同 ACCESS_TOKEN。
-- [ ] CIMD 的 client_id URL 与元数据内容/域名绑定、redirect URI 匹配、缓存和重新验证策略须遵循当期规范；DCR 必须先通过滥用防护评审再开放，不得把任意外部 URL 当成可信元数据源。
+- [x] CIMD 的 client_id URL、元数据 client_id、redirect URI、受限缓存和重新验证策略已实现并由隔离测试覆盖；当期草案的独立符合性审查和第三方互操作仍未验收。DCR 必须先通过滥用防护评审再开放，不得把任意外部 URL 当成可信元数据源。
 
 ## Phase 2：数据库 + 授权码与 Token
 
@@ -84,7 +84,7 @@
 - [x] source/bot identity、stable_task_id、external_id 幂等、SQLite/FTS/SSE 共用原服务，无复刻写入/检索业务。
 - [x] 401/403/工具权限错误一致；MCP SDK 的初始化和 tools/list 协议兼容。
 
-- [ ] 形成按端点/工具的权限矩阵：Legacy ACCESS_TOKEN、OAuth read、OAuth write、OAuth read+write、浏览器 Cookie、匿名请求，逐项测试 200/401/403/工具错误的规范语义；不得出现 OAuth token 被 REST 管理接口接受的路径。
+- [x] 形成并测试 MCP 工具权限矩阵：Legacy ACCESS_TOKEN、OAuth read、OAuth write、OAuth read+write、浏览器 Cookie、匿名/无效 Bearer；结合 REST 认证矩阵验证 OAuth token 不会被 REST 接受。
 - [x] 明确 MCP `tools/list` 可见性与调用权限策略，确保工具描述不会误导客户端；**真正权限在服务端 tools/call 时强制校验**，不可只靠隐藏按钮或工具描述。
 - [x] 检查 token confusion、authorization code 注入、重放、scope 升级、resource/audience 不匹配、登录会话固定及 SSRF，形成独立威胁清单。剩余撤销/调用竞态和部署边界列入威胁清单。
 
@@ -106,7 +106,7 @@
 - [x] PKCE 空/错误/plain 禁止、错误 redirect_uri、code 过期/重放、无效 client、用户拒绝。
 - [x] Access Token 过期/撤销、客户端撤销、只读尝试写入、只写尝试读取、OAuth token 不能调用 REST。
 - [x] 若提供 refresh：不适用，本期不签发 refresh token。
-- [x] 如接入 CIMD/DCR：不适用，本期未实现 CIMD/DCR，不读取外部 client metadata，也未开放匿名注册。
+- [x] CIMD 元数据获取与授权路径已覆盖 SSRF、redirect、大小/类型、client_id 和 redirect URI 校验；DCR 未实现且未开放匿名注册。
 - [x] 新旧认证并存、报告重复 external_id、中文搜索/游标、FTS、SSE、网页登录/注销、所有已有 Go/Vue 测试。
 - [ ] SQLite schema 从旧版本升级、重复迁移、容器重启、备份恢复演练；不丢历史报告/Bot。
 - [x] `make test`、`make build`、Docker 构建与健康检查、镜像内运行 smoke test、资源实测。

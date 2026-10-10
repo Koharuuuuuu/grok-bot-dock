@@ -78,6 +78,13 @@ func TestOAuthAdditiveMigrationAndTokenSurviveRestart(t *testing.T) {
 	if err = db.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations WHERE version=2").Scan(&migration); err != nil || migration != 1 {
 		t.Fatalf("OAuth migration record=%d err=%v", migration, err)
 	}
+	if err = db.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations WHERE version=3").Scan(&migration); err != nil || migration != 1 {
+		t.Fatalf("CIMD client metadata migration record=%d err=%v", migration, err)
+	}
+	client, err := db.OAuthClient(ctx, "client")
+	if err != nil || client.Registration != "manual" {
+		t.Fatalf("legacy OAuth client registration type=%q err=%v", client.Registration, err)
+	}
 	var storedPlain int
 	if err = db.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM oauth_access_tokens WHERE token_hash='raw-token'").Scan(&storedPlain); err != nil || storedPlain != 0 {
 		t.Fatalf("plain token rows=%d err=%v", storedPlain, err)
@@ -95,6 +102,37 @@ func TestOAuthAdditiveMigrationAndTokenSurviveRestart(t *testing.T) {
 	}
 	if _, err = db.OAuthToken(ctx, "token-hash", "https://dock.example/mcp"); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("disabled client token error=%v", err)
+	}
+}
+
+func TestOAuthV2DatabaseMigratesClientRegistrationType(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "oauth-v2.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RegisterOAuthClient(ctx, "v2-client", "V2 client", []string{"https://client.example/cb"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.db.ExecContext(ctx, `ALTER TABLE oauth_clients DROP COLUMN registration_type; DELETE FROM schema_migrations WHERE version=3`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = Open(path)
+	if err != nil {
+		t.Fatalf("open v2 database with v3 additive migration: %v", err)
+	}
+	defer db.Close()
+	client, err := db.OAuthClient(ctx, "v2-client")
+	if err != nil || client.Registration != "manual" {
+		t.Fatalf("migrated client registration type=%q err=%v", client.Registration, err)
+	}
+	var migrations int
+	if err := db.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations WHERE version=3").Scan(&migrations); err != nil || migrations != 1 {
+		t.Fatalf("v3 migration count=%d err=%v", migrations, err)
 	}
 }
 
@@ -178,6 +216,49 @@ func TestOAuthClientSecretRotationKeepsClientTypeAndDoesNotStorePlaintext(t *tes
 	}
 	if err := db.RotateOAuthClientSecret(ctx, "confidential", "another-hash"); !errors.Is(err, ErrOAuthDisabled) {
 		t.Fatalf("disabled client rotation error=%v want ErrOAuthDisabled", err)
+	}
+}
+
+func TestOAuthMetadataClientUpdateInvalidatesGrantsAndTokens(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "cimd.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	clientID := "https://client.example/oauth/metadata.json"
+	redirects := []string{"https://client.example/callback", "http://127.0.0.1:3434/callback"}
+	if err := db.UpsertOAuthMetadataClient(ctx, clientID, "CIMD client", redirects); err != nil {
+		t.Fatal(err)
+	}
+	client, err := db.OAuthClient(ctx, clientID)
+	if err != nil || client.Registration != "cimd" || client.Confidential || len(client.Redirects) != 2 {
+		t.Fatalf("CIMD client=%#v err=%v", client, err)
+	}
+	code := OAuthCode{ClientID: clientID, RedirectURI: redirects[0], Challenge: "challenge", Resource: "https://dock.example/mcp", Scopes: []string{"reports:read"}, ExpiresAt: time.Now().Add(time.Minute)}
+	if _, err := db.CreateOAuthCode(ctx, "cimd-code", code, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExchangeOAuthCode(ctx, "cimd-code", OAuthCodeBinding{ClientID: clientID, RedirectURI: redirects[0], Resource: code.Resource}, "cimd-token", time.Now().Add(15*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertOAuthMetadataClient(ctx, clientID, "Renamed CIMD client", []string{"https://client.example/new-callback"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.OAuthToken(ctx, "cimd-token", code.Resource); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("token survived changed CIMD metadata: %v", err)
+	}
+	if err := db.RegisterOAuthClient(ctx, "manual-id", "Manual", []string{"https://client.example/cb"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertOAuthMetadataClient(ctx, "manual-id", "Impostor", []string{"https://attacker.example/cb"}); !errors.Is(err, ErrOAuthClientTypeConflict) {
+		t.Fatalf("CIMD overwrote manual client: %v", err)
+	}
+	if err := db.DisableOAuthClient(ctx, clientID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertOAuthMetadataClient(ctx, clientID, "CIMD client", redirects); !errors.Is(err, ErrOAuthDisabled) {
+		t.Fatalf("metadata refresh re-enabled disabled client: %v", err)
 	}
 }
 

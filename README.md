@@ -130,9 +130,9 @@ Legacy MCP Bearer 仍使用共享 `ACCESS_TOKEN`；OAuth 另行按 P8 配置启�
 
 P8 本地功能分支为 `/mcp` 增加可选 OAuth Authorization Code + PKCE S256；原共享 Bearer 和 REST API 保持兼容。该代码尚未发布到 master 或 GHCR，OAuth 默认关闭。启用前配置 `OAUTH_ENABLED=true` 与 `PUBLIC_BASE_URL=https://<canonical-public-host>`；该值必须是固定 HTTPS origin，不支持 URL 子路径，不能由请求 `Host` 或 `X-Forwarded-*` 推导。仅 `localhost` / loopback 可用 HTTP 做本地隔离测试。OAuth 启用而 URL 缺失或不合规则会拒绝启动。
 
-服务支持资源元数据 `/.well-known/oauth-protected-resource/mcp`、AS 元数据 `/.well-known/oauth-authorization-server`、授权/同意、Token、撤销端点。管理员在工作台「MCP 接入」中登记客户端名称和精确回调 URI；可选签发一次性展示的 confidential client secret。授权码有效 5 分钟，PKCE 必须为 S256；access token 为不透明随机值，数据库仅存 SHA-256 摘要，有效 15 分钟；授权最长 30 天，可按授权或客户端撤销。权限为 `reports:read`（仅 `search_reports`）与 `reports:write`（仅 `publish_report`），有效但缺少工具 scope 的请求返回 403。OAuth token 不可访问 REST API。尚不支持 refresh token、CIMD 或匿名 DCR；需要这些行为的客户端暂不兼容，应先完成客户端实测和安全评估。
+服务支持资源元数据 `/.well-known/oauth-protected-resource/mcp`、AS 元数据 `/.well-known/oauth-authorization-server`、授权/同意、Token、撤销端点。管理员在工作台「MCP 接入」中登记客户端名称和精确回调 URI；可选签发一次性展示的 confidential client secret。授权码有效 5 分钟，PKCE 必须为 S256；access token 为不透明随机值，数据库仅存 SHA-256 摘要，有效 15 分钟；授权最长 30 天，可按授权或客户端撤销。权限为 `reports:read`（仅 `search_reports`）与 `reports:write`（仅 `publish_report`），有效但缺少工具 scope 的请求返回 403。OAuth token 不可访问 REST API。除手动预注册外，授权端支持通过 CIMD 发现公开客户端元数据，并在所有者明确同意后持久化；CIMD 元数据仅从经过 SSRF 防护的 HTTPS URL 获取。匿名 DCR 和 refresh token 未实现。
 
-OAuth 使用增量 SQLite v2 迁移，不修改既有报告/Bot/FTS 表；禁用 OAuth 不删授权表。公开启用前须验证实际反向代理原样转发 well-known、`/oauth/*`、`/mcp` 与 `WWW-Authenticate`，并完成数据库备份。**未在真实 Grok、Codex OAuth、Cursor 或 Claude 平台完成授权与工具调用实测；协议测试通过不等于这些客户端已验收。** 服务仍是单所有者模型；`reports:read` 可检索全库，写入者可声明 source/Bot 身份，不构成租户隔离。
+OAuth 使用增量 SQLite v3 迁移，不修改既有报告/Bot/FTS 表；禁用 OAuth 不删授权表。公开启用前须验证实际反向代理原样转发 well-known、`/oauth/*`、`/mcp` 与 `WWW-Authenticate`，并完成数据库备份。**未在真实 Grok、Codex OAuth、Cursor 或 Claude 平台完成授权与工具调用实测；协议测试通过不等于这些客户端已验收。** 服务仍是单所有者模型；`reports:read` 可检索全库，写入者可声明 source/Bot 身份，不构成租户隔离。
 
 接入及验收文档：[P8 架构](docs/P8_OAUTH_ARCHITECTURE.md)、[迁移与回滚](docs/P8_OAUTH_MIGRATION.md)、[客户端说明](docs/P8_OAUTH_CLIENTS.md)、[执行计划](docs/P8_OAUTH_EXECUTION_PLAN.md)、[基线审计](docs/P8_BASELINE_AUDIT.md)、[验收记录](docs/P8_OAUTH_ACCEPTANCE.md)。
 

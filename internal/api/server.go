@@ -42,6 +42,10 @@ type Server struct {
 	oauth     OAuthConfig
 	consentMu sync.Mutex
 	consents  map[string]pendingConsent
+	cimdMu    sync.Mutex
+	cimdCache map[string]cimdCacheEntry
+	cimdFetch chan struct{}
+	fetchCIMD func(context.Context, string) (cimdDocument, time.Duration, error)
 }
 
 const (
@@ -60,7 +64,7 @@ func New(s *store.Store, h *events.Hub, token string, maxBytes int64, static emb
 	return NewWithOAuth(s, h, token, maxBytes, static, OAuthConfig{})
 }
 func NewWithOAuth(s *store.Store, h *events.Hub, token string, maxBytes int64, static embed.FS, oauth OAuthConfig) *Server {
-	return &Server{store: s, hub: h, token: token, maxBytes: maxBytes, static: static, rate: make(map[string]rateWindow), sessions: make(map[string]time.Time), streams: make(map[string]map[chan struct{}]struct{}), oauth: oauth, consents: make(map[string]pendingConsent)}
+	return &Server{store: s, hub: h, token: token, maxBytes: maxBytes, static: static, rate: make(map[string]rateWindow), sessions: make(map[string]time.Time), streams: make(map[string]map[chan struct{}]struct{}), oauth: oauth, consents: make(map[string]pendingConsent), cimdCache: make(map[string]cimdCacheEntry), cimdFetch: make(chan struct{}, 8), fetchCIMD: fetchCIMDMetadata}
 }
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()

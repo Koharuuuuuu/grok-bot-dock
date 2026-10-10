@@ -81,4 +81,4 @@ P8 在 P7 `/mcp` 上可选启用 OAuth Authorization Code + PKCE S256。`OAUTH_E
 
 授权码绑定 client、redirect URI、PKCE S256 challenge、resource、scope，5 分钟过期且事务一次性兑换。Access token 是随机不透明值，摘要存储、15 分钟过期；每个 MCP 请求检查 token、grant、client 状态及 resource。授权有效期 30 天；撤销 grant/client 即时撤销现存 access token。`reports:read` 只允许 `search_reports`，`reports:write` 只允许 `publish_report`，MCP HTTP 层对缺 scope 的调用返回 403；OAuth token 不通过 REST Bearer 鉴权。未实现 refresh token、CIMD、DCR、JWKS。
 
-SQLite schema v2 只新增 `oauth_clients`、`oauth_grants`、`oauth_authorization_codes`、`oauth_access_tokens`、`oauth_audit_events`；启动迁移不依赖 feature flag，关闭功能不删除表。持久授权主体固定为单所有者 `owner`；读 scope 可访问整个报告库，写 scope 可声明 source/Bot 标识，不构成多租户或来源隔离。生产启用、实际 TLS/反代、数据库备份、镜像发布与 Grok/Claude/Cursor OAuth 联调不在本地代码验收范围内，状态见 P8 验收报告。
+SQLite schema v3 包含 `oauth_clients`、`oauth_grants`、`oauth_authorization_codes`、`oauth_access_tokens`、`oauth_audit_events`；v3 为 OAuth client 增加注册来源字段，以区分手动预注册与 CIMD。启动迁移不依赖 feature flag，关闭功能不删除表。持久授权主体固定为单所有者 `owner`；读 scope 可访问整个报告库，写 scope 可声明 source/Bot 标识，不构成多租户或来源隔离。生产启用、实际 TLS/反代、数据库备份、镜像发布与 Grok/Claude/Cursor OAuth 联调不在本地代码验收范围内，状态见 P8 验收报告。

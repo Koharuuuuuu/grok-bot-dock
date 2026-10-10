@@ -3,11 +3,15 @@ package api
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -19,6 +23,126 @@ import (
 	"github.com/Nyakooo/grok-bot-dock/internal/webui"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+type cimdRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f cimdRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+type oauthResponseRecorder struct {
+	next   http.RoundTripper
+	status int
+	header http.Header
+}
+
+func (r *oauthResponseRecorder) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := r.next.RoundTrip(req)
+	if err == nil {
+		r.status = resp.StatusCode
+		r.header = resp.Header.Clone()
+	}
+	return resp, err
+}
+
+func TestCIMDClientIDAndPublicAddressValidation(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  bool
+	}{
+		{"https://client.example/oauth/metadata.json", true},
+		{"https://client.example:8443/client.json", true},
+		{"https://client.example/", true},
+		{"http://client.example/client.json", false},
+		{"https://client.example", false},
+		{"https://client.example/a/../client.json", false},
+		{"https://user@client.example/client.json", false},
+		{"https://client.example/client.json?token=secret", false},
+		{"https://client.example/client.json#fragment", false},
+		{" https://client.example/client.json", false},
+		{strings.Repeat("a", 2049), false},
+	} {
+		if got := validCIMDClientID(tc.value); got != tc.want {
+			t.Errorf("validCIMDClientID(%q)=%v want %v", tc.value, got, tc.want)
+		}
+	}
+	for _, tc := range []struct {
+		value string
+		want  bool
+	}{
+		{"8.8.8.8", true}, {"2606:4700:4700::1111", true},
+		{"127.0.0.1", false}, {"10.0.0.1", false}, {"169.254.169.254", false},
+		{"100.64.0.1", false}, {"192.0.2.10", false}, {"198.18.0.1", false},
+		{"::ffff:127.0.0.1", false}, {"fd00::1", false}, {"fe80::1", false},
+		{"2001:db8::1", false}, {"2002::1", false}, {"3fff::1", false},
+	} {
+		ip := netip.MustParseAddr(tc.value)
+		if got := isPublicMetadataIP(ip); got != tc.want {
+			t.Errorf("isPublicMetadataIP(%q)=%v want %v", tc.value, got, tc.want)
+		}
+	}
+	called := false
+	lookup := func(context.Context, string, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("8.8.8.8"), netip.MustParseAddr("127.0.0.1")}, nil
+	}
+	dial := func(context.Context, string, string) (net.Conn, error) {
+		called = true
+		return nil, nil
+	}
+	if _, err := dialCIMDHost(context.Background(), "tcp", "client.example:443", lookup, dial); err == nil || called {
+		t.Fatalf("mixed public/private DNS answer was not blocked before dialing: called=%v err=%v", called, err)
+	}
+	var dialAddress string
+	lookup = func(context.Context, string, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("8.8.8.8")}, nil
+	}
+	dial = func(_ context.Context, _, address string) (net.Conn, error) {
+		dialAddress = address
+		return nil, errors.New("captured dial target")
+	}
+	_, _ = dialCIMDHost(context.Background(), "tcp", "client.example:443", lookup, dial)
+	if dialAddress != "8.8.8.8:443" {
+		t.Fatalf("dial used unresolved hostname instead of checked IP: %q", dialAddress)
+	}
+}
+
+func TestCIMDMetadataValidationAndFetchLimits(t *testing.T) {
+	const clientID = "https://client.example/oauth/metadata.json"
+	valid := `{"client_id":"https://client.example/oauth/metadata.json","client_name":"Example Agent","redirect_uris":["http://127.0.0.1:4747/callback"],"token_endpoint_auth_method":"none","grant_types":["authorization_code"],"response_types":["code"]}`
+	response := func(status int, contentType, cacheControl, body string) *http.Response {
+		return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": []string{contentType}, "Cache-Control": []string{cacheControl}}, Body: io.NopCloser(strings.NewReader(body)), ContentLength: int64(len(body))}
+	}
+	client := func(resp *http.Response) *http.Client {
+		return &http.Client{Transport: cimdRoundTripper(func(*http.Request) (*http.Response, error) { return resp, nil })}
+	}
+	doc, lifetime, err := fetchCIMDMetadataWithHTTPClient(context.Background(), clientID, client(response(200, "application/json", "public, max-age=600", valid)))
+	if err != nil || doc.ClientName != "Example Agent" || len(doc.RedirectURIs) != 1 || lifetime != cimdMaxCacheLifetime {
+		t.Fatalf("valid CIMD fetch doc=%#v lifetime=%s err=%v", doc, lifetime, err)
+	}
+	if parseCIMDCacheLifetime(http.Header{"Cache-Control": []string{"max-age=120, no-store"}}) != 0 {
+		t.Fatal("no-store directive did not override max-age")
+	}
+	for _, tc := range []struct {
+		name string
+		resp *http.Response
+	}{
+		{"redirect", response(http.StatusFound, "application/json", "", valid)},
+		{"wrong content type", response(http.StatusOK, "text/html", "", valid)},
+		{"wrong client id", response(http.StatusOK, "application/json", "", strings.Replace(valid, clientID, "https://other.example/client.json", 1))},
+		{"shared secret method", response(http.StatusOK, "application/json", "", strings.Replace(valid, `"none"`, `"client_secret_basic"`, 1))},
+		{"client secret null", response(http.StatusOK, "application/json", "", strings.Replace(valid, `,"token_endpoint_auth_method"`, `,"client_secret":null,"token_endpoint_auth_method"`, 1))},
+		{"invalid redirect", response(http.StatusOK, "application/json", "", strings.Replace(valid, "http://127.0.0.1:4747/callback", "http://attacker.example/callback", 1))},
+		{"oversized", response(http.StatusOK, "application/json", "", strings.Repeat("x", cimdMaxDocumentBytes+1))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, _, err := fetchCIMDMetadataWithHTTPClient(context.Background(), clientID, client(tc.resp)); err == nil {
+				t.Fatal("invalid metadata response was accepted")
+			}
+		})
+	}
+	redirectClient := cimdHTTPClient(time.Second)
+	if err := redirectClient.CheckRedirect(&http.Request{}, []*http.Request{{}}); !errors.Is(err, http.ErrUseLastResponse) {
+		t.Fatalf("CIMD HTTP client follows redirects: %v", err)
+	}
+}
 
 func TestValidatePublicBaseURL(t *testing.T) {
 	for _, tc := range []struct {
@@ -294,6 +418,243 @@ func TestOAuthPrincipalMatrixDoesNotCrossIntoREST(t *testing.T) {
 	}
 }
 
+func TestOAuthPrincipalPermissionMatrixAcrossMCPTools(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	db, err := store.Open(t.TempDir() + "/oauth-principal-matrix.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	const base = "https://oauth.example"
+	resource := base + "/mcp"
+	redirect := "https://client.example/callback"
+	for _, scope := range []struct {
+		id     string
+		scopes []string
+	}{
+		{"read-client", []string{oauthReadScope}},
+		{"write-client", []string{oauthWriteScope}},
+		{"both-client", []string{oauthReadScope, oauthWriteScope}},
+	} {
+		if err := db.RegisterOAuthClient(ctx, scope.id, scope.id, []string{redirect}, ""); err != nil {
+			t.Fatal(err)
+		}
+		codeHash := oauthHash("code-" + scope.id)
+		token := "token-" + scope.id
+		challenge := "matrix-challenge-" + scope.id
+		code := store.OAuthCode{ClientID: scope.id, RedirectURI: redirect, Challenge: challenge, Resource: resource, Scopes: scope.scopes, ExpiresAt: time.Now().Add(time.Minute)}
+		if _, err := db.CreateOAuthCode(ctx, codeHash, code, time.Now().Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExchangeOAuthCode(ctx, codeHash, store.OAuthCodeBinding{ClientID: scope.id, RedirectURI: redirect, Resource: resource}, oauthHash(token), time.Now().Add(15*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := db.CreateReport(ctx, store.ReportInput{Source: "matrix", BotID: "seed", BotName: "Seed", ExecutedAt: time.Now().UTC(), Content: "oauth matrix searchable marker"}); err != nil {
+		t.Fatal(err)
+	}
+	h := NewWithOAuth(db, events.New(), "legacy-secret", 1<<20, webui.Files, OAuthConfig{Enabled: true, PublicBaseURL: base}).Handler()
+	remote := httptest.NewServer(h)
+	t.Cleanup(remote.Close)
+	login := request(h, http.MethodPost, "/api/v1/auth/login", `{"token":"legacy-secret"}`, "")
+	if login.Code != http.StatusOK {
+		t.Fatalf("owner login: %d %s", login.Code, login.Body.String())
+	}
+	unauthenticated := []struct {
+		name   string
+		token  string
+		cookie *http.Cookie
+	}{
+		{name: "anonymous"},
+		{name: "browser cookie cannot authenticate MCP", cookie: login.Result().Cookies()[0]},
+		{name: "invalid bearer", token: "invalid-token"},
+	}
+	for _, tc := range unauthenticated {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, remote.URL+"/mcp", nil)
+			if tc.token != "" {
+				req.Header.Set("Authorization", "Bearer "+tc.token)
+			}
+			if tc.cookie != nil {
+				req.AddCookie(tc.cookie)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusUnauthorized {
+				t.Fatalf("unauthorized principal got HTTP %d", resp.StatusCode)
+			}
+		})
+	}
+	principals := []struct {
+		name       string
+		token      string
+		canSearch  bool
+		canPublish bool
+	}{
+		{name: "legacy bearer", token: "legacy-secret", canSearch: true, canPublish: true},
+		{name: "OAuth read", token: "token-read-client", canSearch: true},
+		{name: "OAuth write", token: "token-write-client", canPublish: true},
+		{name: "OAuth read and write", token: "token-both-client", canSearch: true, canPublish: true},
+	}
+	for _, principal := range principals {
+		t.Run(principal.name, func(t *testing.T) {
+			recorder := &oauthResponseRecorder{next: http.DefaultTransport}
+			httpClient := &http.Client{Transport: bearerRoundTripper{next: recorder, token: principal.token}}
+			mcpClient := mcp.NewClient(&mcp.Implementation{Name: "principal-matrix", Version: "1"}, nil)
+			session, err := mcpClient.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: remote.URL + "/mcp", HTTPClient: httpClient}, &mcp.ClientSessionOptions{ProtocolVersion: "2025-11-25"})
+			if err != nil {
+				t.Fatalf("initialize: %v", err)
+			}
+			defer session.Close()
+			listed, err := session.ListTools(ctx, nil)
+			if err != nil || len(listed.Tools) != 2 {
+				t.Fatalf("tools/list=%#v err=%v", listed, err)
+			}
+			searched, searchErr := session.CallTool(ctx, &mcp.CallToolParams{Name: "search_reports", Arguments: map[string]any{"query": "oauth matrix searchable marker"}})
+			if principal.canSearch {
+				if searchErr != nil || searched.IsError || len(searched.Content) == 0 {
+					t.Fatalf("allowed search failed: result=%#v err=%v", searched, searchErr)
+				}
+			} else if searchErr == nil && !searched.IsError {
+				t.Fatal("write-only token searched report history")
+			} else if recorder.status != http.StatusForbidden || !strings.Contains(recorder.header.Get("WWW-Authenticate"), `error="insufficient_scope"`) || !strings.Contains(recorder.header.Get("WWW-Authenticate"), oauthReadScope) {
+				t.Fatalf("read denial status=%d challenge=%q err=%v", recorder.status, recorder.header.Get("WWW-Authenticate"), searchErr)
+			}
+			published, publishErr := session.CallTool(ctx, &mcp.CallToolParams{Name: "publish_report", Arguments: map[string]any{
+				"source": "matrix", "bot_id": strings.ReplaceAll(principal.name, " ", "-"), "executed_at": "2026-10-10T10:00:00Z", "external_id": "matrix-" + strings.ReplaceAll(principal.name, " ", "-"), "content": "principal matrix publish " + principal.name,
+			}})
+			if principal.canPublish {
+				if publishErr != nil || published.IsError {
+					t.Fatalf("allowed publish failed: result=%#v err=%v", published, publishErr)
+				}
+			} else if publishErr == nil && !published.IsError {
+				t.Fatal("read-only token published a report")
+			} else if recorder.status != http.StatusForbidden || !strings.Contains(recorder.header.Get("WWW-Authenticate"), `error="insufficient_scope"`) || !strings.Contains(recorder.header.Get("WWW-Authenticate"), oauthWriteScope) {
+				t.Fatalf("write denial status=%d challenge=%q err=%v", recorder.status, recorder.header.Get("WWW-Authenticate"), publishErr)
+			}
+		})
+	}
+}
+
+func TestCIMDAuthorizationDiscoversConsentsAndIssuesPublicClientToken(t *testing.T) {
+	db, err := store.Open(t.TempDir() + "/cimd-flow.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	const base = "https://oauth.example"
+	const clientID = "https://client.example/oauth/metadata.json"
+	metadata := cimdDocument{
+		ClientID: clientID, ClientName: "CIMD Example", RedirectURIs: []string{"http://127.0.0.1:4765/callback", "http://localhost:4765/callback"},
+		TokenEndpointAuthMethod: "none", GrantTypes: []string{"authorization_code"}, ResponseTypes: []string{"code"},
+	}
+	server := NewWithOAuth(db, events.New(), "owner-secret", 1<<20, webui.Files, OAuthConfig{Enabled: true, PublicBaseURL: base})
+	fetchCount := 0
+	server.fetchCIMD = func(_ context.Context, id string) (cimdDocument, time.Duration, error) {
+		fetchCount++
+		if id != clientID {
+			return cimdDocument{}, 0, errors.New("unexpected metadata URL")
+		}
+		return metadata, time.Minute, nil
+	}
+	h := server.Handler()
+	login := request(h, http.MethodPost, "/api/v1/auth/login", `{"token":"owner-secret"}`, "")
+	if login.Code != http.StatusOK {
+		t.Fatalf("owner login: status=%d body=%s", login.Code, login.Body.String())
+	}
+	cookie := login.Result().Cookies()[0]
+	newAuthorizeRequest := func(state, challenge string) *httptest.ResponseRecorder {
+		query := url.Values{
+			"response_type": {"code"}, "client_id": {clientID}, "redirect_uri": {metadata.RedirectURIs[0]},
+			"code_challenge_method": {"S256"}, "code_challenge": {challenge},
+			"resource": {base + "/mcp"}, "scope": {oauthReadScope}, "state": {state},
+		}
+		req := httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+query.Encode(), nil)
+		req.AddCookie(cookie)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w
+	}
+	deniedPage := newAuthorizeRequest("denied", base64.RawURLEncoding.EncodeToString(make([]byte, sha256.Size)))
+	if deniedPage.Code != http.StatusOK || !strings.Contains(deniedPage.Body.String(), "客户端身份域名：<strong>client.example</strong>") || !strings.Contains(deniedPage.Body.String(), "CIMD Example") || strings.Contains(deniedPage.Body.String(), `name="scope" value="reports:write"`) {
+		t.Fatalf("CIMD consent did not disclose identity and requested permission: status=%d body=%s", deniedPage.Code, deniedPage.Body.String())
+	}
+	if _, err := db.OAuthClient(context.Background(), clientID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("unconsented CIMD client was persisted: %v", err)
+	}
+	deniedForm := url.Values{"csrf": {extractOAuthCSRF(t, deniedPage.Body.String())}, "decision": {"deny"}}
+	denied := httptest.NewRequest(http.MethodPost, "/oauth/consent", strings.NewReader(deniedForm.Encode()))
+	denied.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	denied.Header.Set("Origin", base)
+	denied.AddCookie(cookie)
+	deniedW := httptest.NewRecorder()
+	h.ServeHTTP(deniedW, denied)
+	if deniedW.Code != http.StatusFound {
+		t.Fatalf("deny CIMD consent status=%d body=%s", deniedW.Code, deniedW.Body.String())
+	}
+	if _, err := db.OAuthClient(context.Background(), clientID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("denied CIMD client was persisted: %v", err)
+	}
+
+	verifier := strings.Repeat("c", 43)
+	challengeSum := sha256.Sum256([]byte(verifier))
+	page := newAuthorizeRequest("approved", base64.RawURLEncoding.EncodeToString(challengeSum[:]))
+	if page.Code != http.StatusOK {
+		t.Fatalf("authorize page: status=%d body=%s", page.Code, page.Body.String())
+	}
+	csrf := extractOAuthCSRF(t, page.Body.String())
+	approvedForm := url.Values{"csrf": {csrf}, "decision": {"approve"}, "scope": {oauthReadScope}}
+	approved := httptest.NewRequest(http.MethodPost, "/oauth/consent", strings.NewReader(approvedForm.Encode()))
+	approved.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	approved.Header.Set("Origin", base)
+	approved.AddCookie(cookie)
+	approvedW := httptest.NewRecorder()
+	h.ServeHTTP(approvedW, approved)
+	callback, err := url.Parse(approvedW.Header().Get("Location"))
+	if err != nil || approvedW.Code != http.StatusFound {
+		t.Fatalf("consent: status=%d location=%q err=%v", approvedW.Code, approvedW.Header().Get("Location"), err)
+	}
+	client, err := db.OAuthClient(context.Background(), clientID)
+	if err != nil || client.Registration != "cimd" || client.Confidential || len(client.Redirects) != 2 {
+		t.Fatalf("consented CIMD client=%#v err=%v", client, err)
+	}
+	form := url.Values{
+		"grant_type": {"authorization_code"}, "client_id": {clientID}, "code": {callback.Query().Get("code")},
+		"redirect_uri": {metadata.RedirectURIs[0]}, "resource": {base + "/mcp"}, "code_verifier": {verifier},
+	}
+	tokenReq := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(form.Encode()))
+	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	tokenW := httptest.NewRecorder()
+	h.ServeHTTP(tokenW, tokenReq)
+	var result struct {
+		AccessToken string `json:"access_token"`
+	}
+	if tokenW.Code != http.StatusOK || json.Unmarshal(tokenW.Body.Bytes(), &result) != nil || result.AccessToken == "" {
+		t.Fatalf("public CIMD token exchange failed: status=%d body=%s", tokenW.Code, tokenW.Body.String())
+	}
+	if fetchCount != 1 {
+		t.Fatalf("metadata fetch count=%d want a single fetch within the cache lifetime", fetchCount)
+	}
+	remote := httptest.NewServer(h)
+	t.Cleanup(remote.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	mcpClient := mcp.NewClient(&mcp.Implementation{Name: "cimd-test", Version: "1"}, nil)
+	httpClient := &http.Client{Transport: bearerRoundTripper{next: http.DefaultTransport, token: result.AccessToken}}
+	session, err := mcpClient.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: remote.URL + "/mcp", HTTPClient: httpClient}, &mcp.ClientSessionOptions{ProtocolVersion: "2025-11-25"})
+	if err != nil {
+		t.Fatalf("CIMD token MCP initialize: %v", err)
+	}
+	defer session.Close()
+	if _, err := session.ListTools(ctx, nil); err != nil {
+		t.Fatalf("CIMD token tools/list: %v", err)
+	}
+}
+
 func TestOwnerLoginDoesNotAdoptPreexistingSessionIdentifier(t *testing.T) {
 	db, err := store.Open(t.TempDir() + "/session-fixation.db")
 	if err != nil {
@@ -370,6 +731,9 @@ func TestOAuthDiscoveryPKCEScopesAndRevocation(t *testing.T) {
 		resp.Body.Close()
 		if resp.StatusCode != 200 || !strings.Contains(string(raw), want) {
 			t.Fatalf("discovery %s: status=%d body=%s", path, resp.StatusCode, raw)
+		}
+		if path == "/.well-known/oauth-authorization-server" && !strings.Contains(string(raw), `"client_id_metadata_document_supported":true`) {
+			t.Fatalf("AS metadata must advertise CIMD support: %s", raw)
 		}
 	}
 	spoofedMetadata, err := http.NewRequest(http.MethodGet, remote.URL+"/.well-known/oauth-authorization-server", nil)

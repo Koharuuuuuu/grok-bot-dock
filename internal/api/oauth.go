@@ -43,13 +43,15 @@ type pendingConsent struct {
 	Expires time.Time
 }
 type oauthRequest struct {
-	ClientID    string
-	ClientName  string
-	RedirectURI string
-	Challenge   string
-	Resource    string
-	Scopes      []string
-	State       string
+	ClientID        string
+	ClientName      string
+	Registration    string
+	ClientRedirects []string
+	RedirectURI     string
+	Challenge       string
+	Resource        string
+	Scopes          []string
+	State           string
 }
 
 func (s *Server) oauthBase() string     { return strings.TrimRight(s.oauth.PublicBaseURL, "/") }
@@ -117,7 +119,7 @@ func (s *Server) authorizationServerMetadata(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, map[string]any{
 		"issuer": s.oauthBase(), "authorization_endpoint": s.oauthBase() + "/oauth/authorize", "token_endpoint": s.oauthBase() + "/oauth/token", "revocation_endpoint": s.oauthBase() + "/oauth/revoke",
 		"response_types_supported": []string{"code"}, "grant_types_supported": []string{"authorization_code"}, "code_challenge_methods_supported": []string{"S256"},
-		"token_endpoint_auth_methods_supported": []string{"none", "client_secret_post", "client_secret_basic"}, "scopes_supported": []string{oauthReadScope, oauthWriteScope}, "authorization_response_iss_parameter_supported": true,
+		"token_endpoint_auth_methods_supported": []string{"none", "client_secret_post", "client_secret_basic"}, "client_id_metadata_document_supported": true, "scopes_supported": []string{oauthReadScope, oauthWriteScope}, "authorization_response_iss_parameter_supported": true,
 	})
 }
 
@@ -128,7 +130,12 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	clientID := q.Get("client_id")
-	client, err := s.store.OAuthClient(r.Context(), clientID)
+	if allowed, wait := s.allowRate("oauth-authorize-ip:"+oauthPeerIP(r), 30, time.Now()); !allowed {
+		w.Header().Set("Retry-After", fmt.Sprintf("%d", max(1, int(wait.Seconds()))))
+		writeError(w, 429, "rate_limited", "too many authorization requests")
+		return
+	}
+	client, err := s.resolveOAuthAuthorizationClient(r.Context(), clientID)
 	redirect := q.Get("redirect_uri")
 	if err != nil || client.DisabledAt != "" || !containsExact(client.Redirects, redirect) {
 		oauthError(w, r, "invalid_request", "invalid client or redirect_uri")
@@ -148,7 +155,7 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 		s.oauthRedirectError(w, redirect, q.Get("state"), "invalid_scope")
 		return
 	}
-	request := oauthRequest{ClientID: client.ID, ClientName: client.Name, RedirectURI: redirect, Challenge: q.Get("code_challenge"), Resource: resource, Scopes: scopes, State: q.Get("state")}
+	request := oauthRequest{ClientID: client.ID, ClientName: client.Name, Registration: client.Registration, ClientRedirects: append([]string(nil), client.Redirects...), RedirectURI: redirect, Challenge: q.Get("code_challenge"), Resource: resource, Scopes: scopes, State: q.Get("state")}
 	cookie, _ := r.Cookie(sessionCookie)
 	session := ""
 	if cookie != nil && s.validSession(cookie.Value, time.Now()) {
@@ -179,10 +186,14 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 	s.consentMu.Unlock()
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	clientIDHost := ""
+	if clientIDURL, parseErr := url.Parse(request.ClientID); parseErr == nil && clientIDURL.Scheme == "https" {
+		clientIDHost = clientIDURL.Hostname()
+	}
 	data := struct {
-		CSRF, Name, ClientID, Redirect, Resource string
-		Read, Write                              bool
-	}{CSRF: csrf, Name: request.ClientName, ClientID: request.ClientID, Redirect: request.RedirectURI, Resource: request.Resource, Read: containsExact(scopes, oauthReadScope), Write: containsExact(scopes, oauthWriteScope)}
+		CSRF, Name, ClientID, ClientIDHost, Redirect, Resource string
+		Read, Write, CIMD                                      bool
+	}{CSRF: csrf, Name: request.ClientName, ClientID: request.ClientID, ClientIDHost: clientIDHost, Redirect: request.RedirectURI, Resource: request.Resource, Read: containsExact(scopes, oauthReadScope), Write: containsExact(scopes, oauthWriteScope), CIMD: request.Registration == "cimd"}
 	_ = oauthConsentTemplate.Execute(w, data)
 }
 
@@ -192,7 +203,7 @@ func (s *Server) renderOAuthLogin(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.WriteString(w, `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Bolt Dock 授权登录</title><body style="font:16px system-ui;max-width:38rem;margin:4rem auto;padding:1rem"><h1>登录 Bolt Dock</h1><p>输入服务管理员访问密钥以审核 MCP 客户端授权请求。密钥只发送到当前服务。</p><form id="f"><label>管理员访问密钥<br><input id="t" type="password" autocomplete="current-password" required style="font:inherit;width:100%;padding:.6rem"></label><p><button style="font:inherit;padding:.6rem">登录并继续</button></p><p id="e" role="alert"></p></form><script>document.querySelector('#f').addEventListener('submit',async e=>{e.preventDefault();const x=document.querySelector('#e');try{const r=await fetch('/api/v1/auth/login',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:document.querySelector('#t').value})});if(!r.ok)throw Error(r.status===401?'访问密钥无效':'登录失败');location.reload()}catch(err){x.textContent=err.message}})</script></body></html>`)
 }
 
-var oauthConsentTemplate = template.Must(template.New("consent").Parse(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>授权 MCP 客户端</title><body style="font:16px system-ui;max-width:42rem;margin:4rem auto;padding:1rem"><h1>授权 MCP 客户端</h1><p><strong>{{.Name}}</strong>（{{.ClientID}}）请求连接 Bolt Dock。</p><p>回调地址：<code>{{.Redirect}}</code></p><p>资源：<code>{{.Resource}}</code></p><p>读取权限可搜索整个单所有者报告库；写入权限可发布报告并声明 source / bot_id。</p><form method="post" action="/oauth/consent"><input type="hidden" name="csrf" value="{{.CSRF}}">{{if .Read}}<label><input type="checkbox" name="scope" value="reports:read"> 读取报告（reports:read）</label><br>{{end}}{{if .Write}}<label><input type="checkbox" name="scope" value="reports:write"> 发布报告（reports:write）</label>{{end}}<p><button name="decision" value="approve">允许</button> <button name="decision" value="deny">拒绝</button></p></form></body></html>`))
+var oauthConsentTemplate = template.Must(template.New("consent").Parse(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>授权 MCP 客户端</title><body style="font:16px system-ui;max-width:42rem;margin:4rem auto;padding:1rem"><h1>授权 MCP 客户端</h1><p><strong>{{.Name}}</strong>（{{.ClientID}}）请求连接 Bolt Dock。</p>{{if .CIMD}}<p>客户端身份域名：<strong>{{.ClientIDHost}}</strong>（由该站点提供客户端信息）</p>{{end}}<p>回调地址：<code>{{.Redirect}}</code></p><p>资源：<code>{{.Resource}}</code></p><p>读取权限可搜索整个单所有者报告库；写入权限可发布报告并声明 source / bot_id。</p><form method="post" action="/oauth/consent"><input type="hidden" name="csrf" value="{{.CSRF}}">{{if .Read}}<label><input type="checkbox" name="scope" value="reports:read"> 读取报告（reports:read）</label><br>{{end}}{{if .Write}}<label><input type="checkbox" name="scope" value="reports:write"> 发布报告（reports:write）</label>{{end}}<p><button name="decision" value="approve">允许</button> <button name="decision" value="deny">拒绝</button></p></form></body></html>`))
 
 func (s *Server) oauthConsent(w http.ResponseWriter, r *http.Request) {
 	if !s.validOAuthConfig() {
@@ -244,6 +255,16 @@ func (s *Server) oauthConsent(w http.ResponseWriter, r *http.Request) {
 	if len(selected) == 0 {
 		s.oauthRedirectError(w, req.RedirectURI, req.State, "access_denied")
 		return
+	}
+	if req.Registration == "cimd" {
+		if err := s.store.UpsertOAuthMetadataClient(r.Context(), req.ClientID, req.ClientName, req.ClientRedirects); err != nil {
+			if errors.Is(err, store.ErrOAuthDisabled) || errors.Is(err, store.ErrOAuthClientTypeConflict) {
+				writeError(w, http.StatusBadRequest, "invalid_client", "client metadata could not be accepted")
+			} else {
+				serverError(w, err)
+			}
+			return
+		}
 	}
 	code, err := randomOAuthValue(32)
 	if err != nil {

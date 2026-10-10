@@ -24,12 +24,12 @@
 ## OAuth（当前代码已实现；需版本包含 P8 且管理员启用）
 
 1. 仅在反向代理和 canonical `PUBLIC_BASE_URL` 已验证后，将 `OAUTH_ENABLED=true` 并配置 `PUBLIC_BASE_URL=https://<origin>`。当前不支持服务 URL 子路径。
-2. 工作台 MCP 接入页为可信 client 登记名称和平台提供的**精确** redirect URI；平台要求 confidential secret 时选择 confidential client，并立即将创建时返回的 secret 安全录入平台。管理员 `ACCESS_TOKEN` 不能替代它。
-3. 客户端复制 MCP URL 后触发发现。浏览器跳到 Bolt Dock；管理员登录并明确勾选所需 scope。登录、同意、授权码/PKCE、resource、client 和 redirect URI 由服务校验。
+2. 工作台 MCP 接入页可为可信 client 登记名称和平台提供的**精确** redirect URI；平台要求 confidential secret 时选择 confidential client，并立即将创建时返回的 secret 安全录入平台。支持 CIMD 的公开客户端也可用其 HTTPS Client ID Metadata Document URL 作为 `client_id`；服务会校验 URL、获取并验证元数据和 redirect URI，再让管理员审批。管理员 `ACCESS_TOKEN` 不能替代 client secret。
+3. 客户端复制 MCP URL 后触发发现。浏览器跳到 Bolt Dock；管理员登录并明确勾选所需 scope。登录、同意、授权码/PKCE、resource、client 和 redirect URI 由服务校验。CIMD 客户端名称和 redirect URI 来源于经验证的远端 metadata document。
 4. 授权仅发 `reports:read` 和/或 `reports:write`，可用 15 分钟；grant 期限 30 天。没有 refresh token，客户端需再次进行授权流程。
 5. 在工作台停用 client 或撤销单条 grant；已发 token 应立即失效。
 
-当前不支持 CIMD、DCR 或 refresh token。若目标客户端不能使用静态预注册信息、必须刷新 Token，或拒绝 service metadata/resource 参数，则本实现不能据此标记兼容；先记录实际客户端请求再扩展。
+当前支持 CIMD，但尚未完成真实第三方客户端联调，也未声称通过 CIMD 草案全部符合性验证；DCR 与 refresh token 未实现。若目标客户端必须刷新 Token，或拒绝 service metadata/resource 参数，则本实现不能据此标记兼容；先记录实际客户端请求再扩展。
 
 机密客户端可在 OAuth 管理页轮换 Client Secret。新 Secret 只在轮换响应中返回一次，数据库仅保存 SHA-256 摘要；公开客户端不能轮换 Secret。轮换只替换客户端认证凭据，不会重签或自动撤销已签发 access token；已有 Token 仍按各自 TTL、grant 撤销和客户端停用规则生效。客户端 Secret 与 `ACCESS_TOKEN` 相互独立。
 
