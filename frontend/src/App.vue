@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { renderSanitizedMarkdown } from './markdown'
 import { highlightParts, makeSearchParams, notificationStatus, refreshesSelectedBot, searchSnippet } from './ui-model'
+import { readImmersivePreference, readReaderFontSize, writeImmersivePreference, writeReaderFontSize } from './reader-preferences'
 
 const authenticated = ref(false)
 const authReady = ref(false)
@@ -26,12 +27,20 @@ const busy = ref(false)
 const error = ref('')
 const actionNotice = ref('')
 const deleting = ref('')
-const immersive = ref(false)
+const immersive = ref(readImmersivePreference())
+const readerFontSize = ref(readReaderFontSize())
+const narrowReader = ref(typeof window !== 'undefined' && window.matchMedia('(max-width: 800px)').matches)
 const notificationState = ref('')
 const promptOpen = ref(false)
 const promptCopied = ref(false)
 const promptFallback = ref(false)
-const pushTemplate = ref({ endpoint: 'https://YOUR_DOMAIN', source: '', botId: '', botName: '' })
+const pushTemplate = ref({ endpoint: '', source: '' })
+const promptAdvanced = ref(false)
+const defaultEndpoint = window.location.origin
+const renameTarget = ref(null)
+const renameValue = ref('')
+const renameError = ref('')
+const renameBusy = ref(false)
 const readerDialog = ref(null)
 const readerCloseButton = ref(null)
 let previousFocus
@@ -40,6 +49,8 @@ let previousBodyOverflow = ''
 let previousBodyPaddingRight = ''
 let streamAbort
 let refreshTimer
+let authChannel
+
 
 const renderedMarkdown = computed(() => selectedReport.value
   ? renderSanitizedMarkdown(selectedReport.value.content || '') : '')
@@ -48,13 +59,20 @@ const filteredSources = computed(() => sources.value)
 const isLoggedIn = computed(() => authenticated.value)
 const activeCount = computed(() => searching.value ? searchResults.value.length : visibleBots.value.length)
 const pushPrompt = computed(() => {
-  const endpoint = pushTemplate.value.endpoint.trim().replace(/\/$/, '') || 'https://YOUR_DOMAIN'
-  const sourceName = pushTemplate.value.source.trim() || 'your-source-id'
-  const botId = pushTemplate.value.botId.trim() || 'your-stable-bot-id'
-  const botName = pushTemplate.value.botName.trim() || 'Your task name'
-  const executedAt = new Date().toISOString()
-  const executionDate = executedAt.slice(0, 10)
-  return `你是一个定时信息收集 Agent。每次任务执行完成后，按以下规则向 Bolt Dock 推送正式报告。\n\n接口：POST ${endpoint}/api/v1/reports\n请求头：Content-Type: application/json\n请求头：Authorization: Bearer <BOLT_DOCK_TOKEN>（由执行环境提供，不得泄露）\n\n请求 JSON：\n${JSON.stringify({ source: sourceName, bot_id: botId, bot_name: botName, executed_at: executedAt, title: '本次正式报告标题', summary: '简短摘要', tags: ['可选标签'], external_id: `${botId}-${executionDate}`, content: '# 正式报告标题\\n\\n完整 Markdown 正文' }, null, 2)}\n\n要求：\n1. 只在本次任务最终正式报告已经完成、内容检查通过后推送一次；草稿、测试文件、模拟数据、调试日志、中间结果、空内容、失败或取消的任务一律不得推送。\n2. 正文必须是完整 Markdown，保留标题、列表、表格和引用链接；不要推送文件路径、占位符或仅有摘要的内容。\n3. source 与 bot_id 对同一个任务保持稳定；bot_name 可修改；executed_at 使用实际执行时间及明确时区；external_id 对同一次正式执行保持不变，重试时沿用以避免重复。\n4. 发送前校验 source、bot_id、bot_name、executed_at、content 非空；只发送最终 JSON，不要附加 Markdown 代码围栏。\n5. 只有 HTTP 201（新建）或 HTTP 200（幂等重复）算成功；网络错误或 5xx 可有限重试并使用相同 external_id；4xx 先修复配置/报文，不要盲目重试。\n6. 如果当前 AI 平台不能直接发起外部 HTTP POST，应明确报告不支持，不要虚构推送成功；由用户配置可用的 HTTP 调用能力后再执行。\n7. 禁止把测试报告推到正式 API；接口联调必须在独立测试环境完成。`
+  const endpoint = pushTemplate.value.endpoint.trim().replace(/\/$/, '') || window.location.origin
+  const sourceName = pushTemplate.value.source.trim()
+  const payload = {
+    source: sourceName,
+    stable_task_id: '<stable platform task ID or stable task slug>',
+    task_name: '<original stable task name>',
+    executed_at: '<actual RFC3339 execution time with timezone>',
+    external_id: '<unique ID for this formal report execution; reuse unchanged on retries>',
+    title: '<final report title>',
+    summary: '<short summary>',
+    tags: [],
+    content: '# Final report title\\n\\nComplete Markdown report',
+  }
+  return `You are a report delivery agent for Bolt Dock. Finish and validate the final report before sending it.\n\nPOST ${endpoint}/api/v1/reports\nContent-Type: application/json\nAuthorization: Bearer <BOLT_DOCK_ACCESS_TOKEN>\n\nSecure setup: read ACCESS_TOKEN from the execution environment's secret store and send it only in the Authorization header. Never include the token in this prompt, report, logs, screenshots, or source control. The server requires this Bearer token for pushes. The endpoint must be publicly reachable over HTTPS; localhost and private network addresses cannot be reached by an external agent.\n\nPayload shape (replace every placeholder with verified task/report values before sending):\n${JSON.stringify(payload, null, 2)}\n\nIdentity rules:\n- Detect the platform source when reliable (for example grok, codex, or qwen). If it cannot be identified, send source as an empty string; the server stores it as unknown.\n- Reuse the same stable_task_id for every run of this task. Use a real stable platform task ID when available; otherwise derive one from the unchanged task name/slug. Never use a random value, date, or run timestamp as task identity. The server deterministically derives bot_id from source and stable_task_id when bot_id is omitted. If you cannot obtain a stable identity, stop and report the missing identity; never create a new Bot per day.\n- Keep task_name stable. If it is unavailable, bot_name may be omitted and the server falls back to the derived bot_id.\n- Use the actual completion time in RFC3339 with its timezone. Generate one unique external_id for each completed formal report and persist/reuse that exact value for retries. Do not derive it from the calendar day.\n\nDelivery rules:\n1. Send exactly once only after the final formal Markdown report is complete and checked. Never send drafts, tests, samples, logs, intermediate output, failed/cancelled work, or empty content.\n2. Preserve the full original Markdown, links, headings, tables, and code. Do not send a summary in place of the report.\n3. HTTP 201 means a new report was stored; HTTP 200 means the same external_id was already stored. Only these responses confirm success. Retry network errors or 5xx a limited number of times with the same external_id; fix a 4xx instead of blindly retrying.\n4. If this platform cannot make HTTPS POST requests, say so clearly and do not claim success. Test only against an isolated test service, never against production.\n\nJSON example for reference only; no placeholder may be sent as a real value.`
 })
 
 function formatDate(value) {
@@ -109,15 +127,16 @@ async function logout() {
     const response = await fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'same-origin' })
     if (!response.ok && response.status !== 401) throw new Error(`退出失败 (${response.status})`)
   } catch (e) { error.value = e.message || '无法连接服务器，当前会话尚未注销。'; return }
-  authenticated.value = false
-  streamAbort?.abort(); selected.value = null; selectedReport.value = null
+  authChannel?.postMessage({ type: 'logout' })
+  expireSession(false)
 }
 
-function expireSession() {
+function expireSession(broadcast = true) {
+  if (broadcast) authChannel?.postMessage({ type: 'logout' })
   authenticated.value = false
   streamAbort?.abort()
-  selected.value = null; selectedReport.value = null; reports.value = []
-  bots.value = []; sources.value = []
+  selected.value = null; selectedReport.value = null; reports.value = []; reportCursor.value = ''
+  bots.value = []; sources.value = []; searchResults.value = []; searchCursor.value = ''; searching.value = false
 }
 
 async function loadData() {
@@ -170,8 +189,37 @@ async function selectReport(report) {
     } catch {}
   }
 }
-function closeReader() { selected.value = null; selectedReport.value = null; reports.value = []; immersive.value = false }
-function toggleImmersive() { immersive.value = !immersive.value }
+function closeReader() { selected.value = null; selectedReport.value = null; reports.value = [] }
+function toggleImmersive() {
+  if (narrowReader.value) return
+  immersive.value = !immersive.value
+  writeImmersivePreference(immersive.value)
+}
+function adjustReaderFont(delta) { readerFontSize.value = Math.min(24, Math.max(12, readerFontSize.value + delta)) }
+function effectiveBotName(bot) { return bot.display_name || bot.bot_name || bot.bot_id }
+function startRename(bot) {
+  renameTarget.value = bot
+  renameValue.value = effectiveBotName(bot)
+  renameError.value = ''
+}
+async function saveRename(value = renameValue.value) {
+  if (!renameTarget.value || renameBusy.value) return
+  const target = renameTarget.value
+  const displayName = value.trim()
+  if (displayName.length > 80) { renameError.value = '名称最多 80 个字符。'; return }
+  renameBusy.value = true
+  renameError.value = ''
+  try {
+    const params = new URLSearchParams({ source: target.source, bot_id: target.bot_id })
+    await api(`/api/v1/bots?${params}`, { method: 'PATCH', body: JSON.stringify({ display_name: displayName }) })
+    renameTarget.value = null
+    await loadData()
+    if (selected.value?.source === target.source && selected.value?.bot_id === target.bot_id) await loadReports()
+    if (searching.value) await runSearch()
+    actionNotice.value = displayName ? 'Bot 展示名称已更新。' : 'Bot 已恢复原始名称。'
+  } catch (e) { renameError.value = e.message }
+  finally { renameBusy.value = false }
+}
 
 async function deleteReport(report) {
   const name = report.title || '未命名报告'
@@ -190,7 +238,8 @@ async function deleteReport(report) {
 
 async function deleteBot(bot) {
   const count = bot.report_count || 0
-  if (!window.confirm(`确定永久删除 Bot「${bot.bot_name}」及其全部 ${count} 份报告？此操作无法撤销。`)) return
+  const name = effectiveBotName(bot)
+  if (!window.confirm(`确定永久删除 Bot「${name}」及其全部 ${count} 份报告？此操作无法撤销。`)) return
   deleting.value = `bot:${bot.source}:${bot.bot_id}`
   actionNotice.value = ''
   try {
@@ -198,7 +247,7 @@ async function deleteBot(bot) {
     await api(`/api/v1/bots?${params}`, { method: 'DELETE' })
     await loadData()
     if (searching.value) await runSearch()
-    actionNotice.value = `Bot「${bot.bot_name}」及其 ${count} 份报告已删除。`
+    actionNotice.value = `Bot「${name}」及其 ${count} 份报告已删除。`
   } catch (e) { error.value = e.message }
   finally { deleting.value = '' }
 }
@@ -266,12 +315,12 @@ async function startStream() {
           if (data) {
             const payload = JSON.parse(data)
             if (event === 'report.created') notify(payload)
-            if (['report.created', 'report.deleted', 'bot.deleted'].includes(event)) {
+            if (['report.created', 'report.deleted', 'bot.deleted', 'bot.updated'].includes(event)) {
               clearTimeout(refreshTimer)
               refreshTimer = setTimeout(async () => {
                 try {
                   await loadData()
-                  const selectedBotChanged = event === 'report.deleted'
+                  const selectedBotChanged = ['report.deleted', 'bot.updated'].includes(event)
                     && selected.value?.source === payload.source
                     && selected.value?.bot_id === payload.bot_id
                   if (selectedBotChanged || (event === 'report.created' && refreshesSelectedBot(selected.value, payload))) await loadReports()
@@ -286,24 +335,29 @@ async function startStream() {
     await new Promise(resolve => setTimeout(resolve, 3000))
   }
 }
-function onKey(event) { if (event.key === 'Escape' && promptOpen.value) promptOpen.value = false; else if (event.key === 'Escape' && selected.value) closeReader() }
+function onKey(event) {
+  if (event.key !== 'Escape') return
+  if (renameTarget.value) renameTarget.value = null
+  else if (promptOpen.value) promptOpen.value = false
+  else if (selected.value) closeReader()
+}
 
 watch(source, async () => {
   if (!authenticated.value) return
   searching.value = Boolean(query.value.trim())
   if (searching.value) await runSearch(); else await loadData()
 })
-watch([selected, promptOpen], async ([hasReader, hasPrompt], [hadReader, hadPrompt]) => {
-  const shouldLock = Boolean(hasReader || hasPrompt)
-  const wasLocked = Boolean(hadReader || hadPrompt)
+watch(readerFontSize, px => writeReaderFontSize(px))
+watch([selected, promptOpen, renameTarget], async ([hasReader, hasPrompt, hasRename], [hadReader, hadPrompt, hadRename]) => {
+  const shouldLock = Boolean(hasReader || hasPrompt || hasRename)
+  const wasLocked = Boolean(hadReader || hadPrompt || hadRename)
   if (shouldLock && !wasLocked) {
     previousFocus = document.activeElement
     lockedScrollY = window.scrollY
     previousBodyOverflow = document.body.style.overflow
     previousBodyPaddingRight = document.body.style.paddingRight
-    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth
     document.body.style.overflow = 'hidden'
-    if (scrollbarWidth > 0) document.body.style.paddingRight = `${scrollbarWidth}px`
+    // html keeps a stable scrollbar gutter; adding body padding would shift the page twice.
   }
   if (!shouldLock && wasLocked) {
     document.body.style.overflow = previousBodyOverflow
@@ -317,8 +371,14 @@ watch([selected, promptOpen], async ([hasReader, hasPrompt], [hadReader, hadProm
     readerCloseButton.value?.focus({ preventScroll: true })
   }
 })
+function updateNarrowReader() { narrowReader.value = window.matchMedia('(max-width: 800px)').matches }
 onMounted(async () => {
   window.addEventListener('keydown', onKey)
+  window.addEventListener('resize', updateNarrowReader)
+  if ('BroadcastChannel' in window) {
+    authChannel = new BroadcastChannel('bolt-dock-auth')
+    authChannel.onmessage = event => { if (event.data?.type === 'logout') expireSession(false) }
+  }
   try {
     const response = await fetch('/api/v1/auth/session', { credentials: 'same-origin' })
     if (response.ok && (await response.json()).authenticated) {
@@ -329,7 +389,7 @@ onMounted(async () => {
   } catch {}
   authReady.value = true
 })
-onUnmounted(() => { window.removeEventListener('keydown', onKey); streamAbort?.abort(); clearTimeout(refreshTimer); document.body.style.overflow = previousBodyOverflow; document.body.style.paddingRight = previousBodyPaddingRight })
+onUnmounted(() => { window.removeEventListener('keydown', onKey); window.removeEventListener('resize', updateNarrowReader); authChannel?.close(); streamAbort?.abort(); clearTimeout(refreshTimer); document.body.style.overflow = previousBodyOverflow; document.body.style.paddingRight = previousBodyPaddingRight })
 
 function trapReaderFocus(event) {
   const focusable = [...readerDialog.value.querySelectorAll('a[href], button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])')]
@@ -396,9 +456,9 @@ function trapReaderFocus(event) {
           <div v-for="item in searchResults" :key="item.id" class="result-row">
             <button class="result-card" @click="openSearchResult(item)">
               <div class="result-top"><span class="source-pill">{{ item.source }}</span><span>{{ formatDate(item.executed_at) }}</span></div>
-              <h2><template v-for="(part, index) in highlightParts(item.title || item.bot_name, query)" :key="index"><mark v-if="part.match">{{ part.text }}</mark><span v-else>{{ part.text }}</span></template></h2>
+              <h2><template v-for="(part, index) in highlightParts(item.title || item.display_name || item.bot_name, query)" :key="index"><mark v-if="part.match">{{ part.text }}</mark><span v-else>{{ part.text }}</span></template></h2>
               <p><template v-for="(part, index) in highlightParts(searchSnippet(item, query), query)" :key="index"><mark v-if="part.match">{{ part.text }}</mark><span v-else>{{ part.text }}</span></template></p>
-              <div class="result-foot"><span>{{ item.bot_name }}</span><span>打开报告 ↗</span></div>
+              <div class="result-foot"><span>{{ item.display_name || item.bot_name }}</span><span>打开报告 ↗</span></div>
             </button>
             <button class="delete-action result-delete" :disabled="Boolean(deleting)" :aria-label="`删除报告：${item.title || item.bot_name}`" @click="deleteReport(item)">删除报告</button>
           </div>
@@ -410,11 +470,12 @@ function trapReaderFocus(event) {
           <div v-for="bot in bots" :key="`${bot.source}:${bot.bot_id}`" class="bot-card-shell">
             <button class="bot-card" :class="{ selected: selected?.source === bot.source && selected?.bot_id === bot.bot_id }" @click="openBot(bot)">
               <div class="card-topline"><span class="source-pill">{{ bot.source }}</span><span v-if="bot.unread_count" class="unread-pill"><i></i> 新报告</span><span v-else class="report-number">{{ bot.report_count }} 份报告</span></div>
-              <div class="bot-identity"><div class="avatar-wrap"><img v-if="bot.avatar_url" :src="bot.avatar_url" alt="" @error="avatarFailed"><span class="avatar-fallback" :class="{ hidden: bot.avatar_url }">✳</span></div><div class="bot-titles"><h2>{{ bot.bot_name }}</h2><p>{{ bot.bot_id }}</p></div><span class="card-arrow">↗</span></div>
+              <div class="bot-identity"><div class="avatar-wrap"><img v-if="bot.avatar_url" :src="bot.avatar_url" alt="" @error="avatarFailed"><span class="avatar-fallback" :class="{ hidden: bot.avatar_url }">✳</span></div><div class="bot-titles"><h2>{{ effectiveBotName(bot) }}</h2><p>{{ bot.bot_id }}</p></div><span class="card-arrow">↗</span></div>
               <div class="card-preview"><span class="preview-label">LATEST REPORT</span><strong>{{ bot.latest_report?.title || '暂无报告' }}</strong><p>{{ bot.latest_report?.summary || '新报告将显示在这里。' }}</p></div>
               <div class="card-footer"><span><i class="time-icon">◷</i> {{ formatDate(bot.last_report_at) }}</span><span class="view-link">浏览报告 <b>→</b></span></div>
             </button>
-            <button class="delete-action bot-delete" :disabled="Boolean(deleting)" :aria-label="`删除 Bot：${bot.bot_name}`" @click.stop="deleteBot(bot)">删除 Bot</button>
+            <button class="rename-action" :aria-label="`重命名 Bot：${effectiveBotName(bot)}`" @click.stop="startRename(bot)">重命名</button>
+            <button class="delete-action bot-delete" :disabled="Boolean(deleting)" :aria-label="`删除 Bot：${effectiveBotName(bot)}`" @click.stop="deleteBot(bot)">删除 Bot</button>
           </div>
         </div>
         <div v-if="busy" class="loading-line"><span></span>正在更新…</div>
@@ -422,19 +483,19 @@ function trapReaderFocus(event) {
 
       <div v-if="selected" class="reader-scrim" aria-hidden="true" @click="closeReader"></div>
       <section v-if="selected" ref="readerDialog" class="reader-panel" :class="{ immersive }" role="dialog" aria-modal="true" aria-labelledby="reader-title" tabindex="-1" @keydown.tab="trapReaderFocus">
-        <div class="reader-toolbar"><button class="back-button" @click="closeReader"><span>←</span> 返回卡片</button><div class="reader-tools"><label class="date-filter"><span>日期</span><input v-model="reportDate" type="date" @change="loadReports()"></label><button class="icon-button" :title="immersive ? '退出沉浸阅读' : '放大阅读'" :aria-label="immersive ? '退出沉浸阅读' : '放大阅读'" @click="toggleImmersive">{{ immersive ? '⊙' : '⛶' }}</button><button ref="readerCloseButton" class="icon-button close-button" title="关闭" aria-label="关闭阅读面板" @click="closeReader">×</button></div></div>
+        <div class="reader-toolbar"><button class="back-button" @click="closeReader"><span>←</span> 返回卡片</button><div class="reader-tools"><label class="date-filter"><span>日期</span><input v-model="reportDate" type="date" @change="loadReports()"></label><div class="font-tools" aria-label="Markdown 字号"><button class="icon-button" :disabled="readerFontSize <= 12" aria-label="缩小 Markdown 字号" title="缩小字号" @click="adjustReaderFont(-1)">−</button><span>{{ readerFontSize }}px</span><button class="icon-button" :disabled="readerFontSize >= 24" aria-label="放大 Markdown 字号" title="放大字号" @click="adjustReaderFont(1)">＋</button><button class="font-reset" aria-label="重置 Markdown 字号" title="重置为 16px" @click="readerFontSize = 16">重置</button></div><button class="icon-button" :disabled="narrowReader" :title="narrowReader ? '移动端详情已全屏显示' : (immersive ? '退出沉浸阅读' : '放大阅读')" :aria-label="immersive ? '退出沉浸阅读' : '放大阅读'" @click="toggleImmersive">{{ immersive ? '⊙' : '⛶' }}</button><button ref="readerCloseButton" class="icon-button close-button" title="关闭" aria-label="关闭阅读面板" @click="closeReader">×</button></div></div>
         <div class="reader-layout">
           <nav class="report-list" aria-label="报告历史">
-            <div class="list-heading"><div><span class="eyebrow">{{ selected.source.toUpperCase() }} · HISTORY</span><h2 id="reader-title">{{ selected.bot_name }}</h2></div><span class="list-count">{{ reports.length }}</span></div>
+            <div class="list-heading"><div><span class="eyebrow">{{ selected.source.toUpperCase() }} · HISTORY</span><h2 id="reader-title">{{ effectiveBotName(selected) }}</h2></div><span class="list-count">{{ reports.length }}</span></div>
             <div v-for="item in reports" :key="item.id" class="history-row">
-              <button class="history-item" :class="{ active: selectedReport?.id === item.id }" @click="selectReport(item)"><span class="history-date">{{ formatDate(item.executed_at) }}</span><strong>{{ item.title || item.bot_name }}</strong><span>{{ item.summary || '打开查看完整报告' }}</span></button>
+              <button class="history-item" :class="{ active: selectedReport?.id === item.id }" @click="selectReport(item)"><span class="history-date">{{ formatDate(item.executed_at) }}</span><strong>{{ item.title || item.display_name || item.bot_name }}</strong><span>{{ item.summary || '打开查看完整报告' }}</span></button>
               <button class="delete-action history-delete" :disabled="Boolean(deleting)" :aria-label="`删除报告：${item.title || item.bot_name}`" @click="deleteReport(item)">删除</button>
             </div>
             <button v-if="reportCursor" class="history-more" :disabled="busy" @click="loadReports(true)">加载更早报告</button>
             <p v-if="!reports.length && !busy" class="history-empty">这个日期没有报告。</p>
           </nav>
-          <article v-if="selectedReport" class="report-document">
-            <div class="document-meta"><span class="source-pill">{{ selectedReport.source }}</span><span>{{ selectedReport.bot_name }}</span><span>·</span><time>{{ formatDate(selectedReport.executed_at) }}</time><button class="delete-action document-delete" :disabled="Boolean(deleting)" @click="deleteReport(selectedReport)">删除报告</button></div>
+          <article v-if="selectedReport" class="report-document" :style="{ '--reader-font-size': `${readerFontSize}px` }">
+            <div class="document-meta"><span class="source-pill">{{ selectedReport.source }}</span><span>{{ selectedReport.display_name || selectedReport.bot_name }}</span><span>·</span><time>{{ formatDate(selectedReport.executed_at) }}</time><button class="delete-action document-delete" :disabled="Boolean(deleting)" @click="deleteReport(selectedReport)">删除报告</button></div>
             <div v-if="selectedReport.tags?.length" class="tag-row"><span v-for="tag in selectedReport.tags" :key="tag"># {{ tag }}</span></div>
             <h1>{{ selectedReport.title || '运行报告' }}</h1>
             <p v-if="selectedReport.summary" class="document-summary">{{ selectedReport.summary }}</p>
@@ -449,17 +510,27 @@ function trapReaderFocus(event) {
     <div v-if="promptOpen" class="modal-scrim" @click.self="promptOpen = false">
       <section class="prompt-modal" role="dialog" aria-modal="true" aria-labelledby="prompt-title">
         <header class="modal-heading"><div><p class="eyebrow">REPORT DELIVERY TEMPLATE</p><h2 id="prompt-title">复制 AI 推送指令</h2></div><button class="icon-button" aria-label="关闭" @click="promptOpen = false">×</button></header>
-        <p class="modal-intro">填入任务信息，Bolt Dock 会生成可直接交给 AI Agent 的完整推送规范。</p>
-        <div class="template-fields">
-          <label class="wide-field">服务地址<input v-model="pushTemplate.endpoint" placeholder="https://YOUR_DOMAIN"></label>
-          <label>来源标识<input v-model="pushTemplate.source" placeholder="小写字母、数字和连字符"></label>
-          <label>稳定 Bot ID<input v-model="pushTemplate.botId" placeholder="例如 daily-briefing"></label>
-          <label class="wide-field">Bot 名称<input v-model="pushTemplate.botName" placeholder="例如 每日行业简报"></label>
+        <p class="modal-intro">指令会自动使用当前站点地址，并要求 Agent 从稳定任务身份生成 Bot。外部 Agent 需要能通过公网 HTTPS 访问；localhost 和内网地址不可达。</p>
+        <button class="advanced-toggle" :aria-expanded="promptAdvanced" @click="promptAdvanced = !promptAdvanced">{{ promptAdvanced ? '收起高级设置' : '高级设置' }}</button>
+        <div v-if="promptAdvanced" class="template-fields">
+          <label class="wide-field">服务地址覆盖<input v-model="pushTemplate.endpoint" :placeholder="defaultEndpoint"></label>
+          <label class="wide-field">来源覆盖（留空时自动识别，无法识别则归类 unknown）<input v-model="pushTemplate.source" placeholder="例如 grok、codex；留空自动识别"></label>
         </div>
         <div class="preview-heading"><span>完整指令预览</span><span>Token 使用安全占位符</span></div>
         <textarea class="prompt-preview" :value="pushPrompt" readonly aria-label="完整推送指令预览"></textarea>
         <p v-if="promptFallback" class="copy-fallback">浏览器未开放剪贴板权限。预览内容已选中，请使用 ⌘C / Ctrl+C 复制。</p>
         <footer class="modal-actions"><span v-if="promptCopied" class="copy-success">✓ 已复制完整推送指令</span><span v-else class="copy-note">仅推送最终正式报告，测试请使用独立环境。</span><button class="primary-button copy-action" @click="copyPrompt">{{ promptCopied ? '再次复制' : '复制完整指令' }} <span>↗</span></button></footer>
+      </section>
+    </div>
+    <div v-if="renameTarget" class="modal-scrim" @click.self="renameTarget = null">
+      <section class="rename-modal" role="dialog" aria-modal="true" aria-labelledby="rename-title">
+        <header class="modal-heading"><div><p class="eyebrow">BOT DISPLAY NAME</p><h2 id="rename-title">重命名 Bot</h2></div><button class="icon-button" aria-label="关闭" @click="renameTarget = null">×</button></header>
+        <p class="modal-intro">仅修改工作台展示名称，不会改变 Bot 身份或历史报告。</p>
+        <form @submit.prevent="saveRename()">
+          <label class="rename-field">展示名称<input v-model="renameValue" autofocus maxlength="80" autocomplete="off"></label>
+          <p v-if="renameError" class="form-error" role="alert">{{ renameError }}</p>
+          <footer class="modal-actions"><button class="font-reset" type="button" :disabled="renameBusy" @click="saveRename('')">恢复原始名称</button><span></span><button class="primary-button copy-action" type="submit" :disabled="renameBusy">{{ renameBusy ? '保存中…' : '保存名称' }} <span>↗</span></button></footer>
+        </form>
       </section>
     </div>
   </div>

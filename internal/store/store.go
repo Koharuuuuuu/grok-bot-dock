@@ -35,23 +35,25 @@ type ReportInput struct {
 }
 
 type Report struct {
-	ID         int64    `json:"id"`
-	Source     string   `json:"source"`
-	BotID      string   `json:"bot_id"`
-	BotName    string   `json:"bot_name"`
-	AvatarURL  string   `json:"avatar_url,omitempty"`
-	ExecutedAt string   `json:"executed_at"`
-	ReceivedAt string   `json:"received_at"`
-	Title      string   `json:"title"`
-	Summary    string   `json:"summary"`
-	Tags       []string `json:"tags"`
-	Content    string   `json:"content"`
+	ID          int64    `json:"id"`
+	Source      string   `json:"source"`
+	BotID       string   `json:"bot_id"`
+	BotName     string   `json:"bot_name"`
+	DisplayName string   `json:"display_name,omitempty"`
+	AvatarURL   string   `json:"avatar_url,omitempty"`
+	ExecutedAt  string   `json:"executed_at"`
+	ReceivedAt  string   `json:"received_at"`
+	Title       string   `json:"title"`
+	Summary     string   `json:"summary"`
+	Tags        []string `json:"tags"`
+	Content     string   `json:"content"`
 }
 
 type Bot struct {
 	Source           string  `json:"source"`
 	BotID            string  `json:"bot_id"`
 	BotName          string  `json:"bot_name"`
+	DisplayName      string  `json:"display_name,omitempty"`
 	AvatarURL        string  `json:"avatar_url,omitempty"`
 	LastReportAt     string  `json:"last_report_at"`
 	ReportCount      int     `json:"report_count"`
@@ -95,7 +97,7 @@ func (s *Store) Close() error { return s.db.Close() }
 func (s *Store) migrate(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sources(source TEXT PRIMARY KEY, created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS bots(id INTEGER PRIMARY KEY, source TEXT NOT NULL REFERENCES sources(source), bot_id TEXT NOT NULL, bot_name TEXT NOT NULL, avatar_url TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_report_at TEXT NOT NULL, last_read_report_id INTEGER NOT NULL DEFAULT 0, UNIQUE(source,bot_id));
+CREATE TABLE IF NOT EXISTS bots(id INTEGER PRIMARY KEY, source TEXT NOT NULL REFERENCES sources(source), bot_id TEXT NOT NULL, bot_name TEXT NOT NULL, display_name TEXT, avatar_url TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_report_at TEXT NOT NULL, last_read_report_id INTEGER NOT NULL DEFAULT 0, UNIQUE(source,bot_id));
 CREATE TABLE IF NOT EXISTS reports(id INTEGER PRIMARY KEY, bot_pk INTEGER NOT NULL REFERENCES bots(id) ON DELETE CASCADE, external_id TEXT, executed_at TEXT NOT NULL, received_at TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', summary TEXT NOT NULL DEFAULT '', tags_json TEXT NOT NULL DEFAULT '[]', content_md TEXT NOT NULL);
 CREATE UNIQUE INDEX IF NOT EXISTS reports_external_id_unique ON reports(bot_pk,external_id) WHERE external_id IS NOT NULL AND external_id <> '';
 CREATE INDEX IF NOT EXISTS reports_bot_time_idx ON reports(bot_pk,executed_at DESC,id DESC);
@@ -110,6 +112,34 @@ CREATE TRIGGER IF NOT EXISTS reports_fts_delete AFTER DELETE ON reports BEGIN
  DELETE FROM report_fts_map WHERE report_id=old.id;
 END;
 INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(1,datetime('now'));`)
+	if err != nil {
+		return err
+	}
+	rows, err := s.db.QueryContext(ctx, "PRAGMA table_info(bots)")
+	if err != nil {
+		return err
+	}
+	hasDisplayName := false
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			rows.Close()
+			return err
+		}
+		if name == "display_name" {
+			hasDisplayName = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	if !hasDisplayName {
+		_, err = s.db.ExecContext(ctx, "ALTER TABLE bots ADD COLUMN display_name TEXT")
+	}
 	return err
 }
 
@@ -171,14 +201,14 @@ func nullIfEmpty(v string) any {
 	return v
 }
 
-const reportSelect = `SELECT r.id,b.source,b.bot_id,b.bot_name,b.avatar_url,r.executed_at,r.received_at,r.title,r.summary,r.tags_json,r.content_md FROM reports r JOIN bots b ON b.id=r.bot_pk`
+const reportSelect = `SELECT r.id,b.source,b.bot_id,b.bot_name,COALESCE(b.display_name,''),b.avatar_url,r.executed_at,r.received_at,r.title,r.summary,r.tags_json,r.content_md FROM reports r JOIN bots b ON b.id=r.bot_pk`
 
 type rowScanner interface{ Scan(...any) error }
 
 func scanReport(row rowScanner, _ *Report) (Report, error) {
 	var r Report
 	var tags string
-	err := row.Scan(&r.ID, &r.Source, &r.BotID, &r.BotName, &r.AvatarURL, &r.ExecutedAt, &r.ReceivedAt, &r.Title, &r.Summary, &tags, &r.Content)
+	err := row.Scan(&r.ID, &r.Source, &r.BotID, &r.BotName, &r.DisplayName, &r.AvatarURL, &r.ExecutedAt, &r.ReceivedAt, &r.Title, &r.Summary, &tags, &r.Content)
 	if err == nil {
 		_ = json.Unmarshal([]byte(tags), &r.Tags)
 	}
@@ -240,6 +270,21 @@ func (s *Store) DeleteBot(ctx context.Context, source, botID string) (int, error
 	return reportCount, nil
 }
 
+func (s *Store) RenameBot(ctx context.Context, source, botID, displayName string) error {
+	result, err := s.db.ExecContext(ctx, "UPDATE bots SET display_name=?,updated_at=? WHERE source=? AND bot_id=?", nullIfEmpty(displayName), time.Now().UTC().Format(timestampFormat), source, botID)
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (s *Store) Sources(ctx context.Context) ([]Source, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT s.source,COUNT(DISTINCT b.id),COUNT(r.id) FROM sources s LEFT JOIN bots b ON b.source=s.source LEFT JOIN reports r ON r.bot_pk=b.id GROUP BY s.source ORDER BY s.source`)
 	if err != nil {
@@ -257,7 +302,7 @@ func (s *Store) Sources(ctx context.Context) ([]Source, error) {
 	return out, rows.Err()
 }
 func (s *Store) Bots(ctx context.Context, source string) ([]Bot, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT b.source,b.bot_id,b.bot_name,b.avatar_url,b.last_report_at,COUNT(r.id),COUNT(CASE WHEN r.id>b.last_read_report_id THEN 1 END),b.last_read_report_id FROM bots b LEFT JOIN reports r ON r.bot_pk=b.id WHERE (?='' OR b.source=?) GROUP BY b.id ORDER BY b.last_report_at DESC,b.id DESC`, source, source)
+	rows, err := s.db.QueryContext(ctx, `SELECT b.source,b.bot_id,b.bot_name,COALESCE(b.display_name,''),b.avatar_url,b.last_report_at,COUNT(r.id),COUNT(CASE WHEN r.id>b.last_read_report_id THEN 1 END),b.last_read_report_id FROM bots b LEFT JOIN reports r ON r.bot_pk=b.id WHERE (?='' OR b.source=?) GROUP BY b.id ORDER BY b.last_report_at DESC,b.id DESC`, source, source)
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +310,7 @@ func (s *Store) Bots(ctx context.Context, source string) ([]Bot, error) {
 	out := []Bot{}
 	for rows.Next() {
 		var b Bot
-		if err := rows.Scan(&b.Source, &b.BotID, &b.BotName, &b.AvatarURL, &b.LastReportAt, &b.ReportCount, &b.UnreadCount, &b.LastReadReportID); err != nil {
+		if err := rows.Scan(&b.Source, &b.BotID, &b.BotName, &b.DisplayName, &b.AvatarURL, &b.LastReportAt, &b.ReportCount, &b.UnreadCount, &b.LastReadReportID); err != nil {
 			return nil, err
 		}
 		out = append(out, b)

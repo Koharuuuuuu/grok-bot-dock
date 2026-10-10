@@ -29,7 +29,7 @@ set -a; . ./.env; set +a; ./bolt-dock
 
 ## 推送 API
 
-`POST /api/v1/reports` 必须带 `source`、`bot_id`、`bot_name`、RFC3339 `executed_at` 和非空 `content`。其他字段可选：`title`、`summary`、`tags`、`external_id`、`avatar_url`。`avatar_url` 只接受 HTTPS；不传时保留同一 Bot 已保存的头像。
+`POST /api/v1/reports` 必须带 RFC3339 `executed_at` 和非空 `content`。`source`、`bot_id`、`bot_name` 可省略：空来源归为 `unknown`；省略 `bot_id` 时必须提供稳定的 `stable_task_id`，服务器会从来源和稳定任务 ID 确定性生成 Bot ID；没有可靠稳定身份时返回 400，不会随机创建 Bot。省略 `bot_name` 时使用 `task_name`，再回退到生成的 Bot ID。其他字段可选：`title`、`summary`、`tags`、`external_id`、`avatar_url`。`avatar_url` 只接受 HTTPS；不传时保留同一 Bot 已保存的头像。
 
 ```sh
 curl -X POST "https://YOUR_DOMAIN/api/v1/reports" \
@@ -60,6 +60,7 @@ curl -X POST "https://YOUR_DOMAIN/api/v1/reports" \
 | `POST /api/v1/auth/logout` | 立即撤销浏览器会话并清除 Cookie |
 | `GET /api/v1/sources` | 已推送来源及计数 |
 | `GET /api/v1/bots?source=` | Bot 卡片、未读状态和统计 |
+| `PATCH /api/v1/bots?source=&bot_id=` | 浏览器会话修改或清除 Bot 展示名称（`display_name`）；Bearer-only 推送客户端不可调用 |
 | `GET /api/v1/reports?source=&bot_id=&date=&cursor=` | 报告列表和历史分页 |
 | `GET /api/v1/reports/{id}` | 单份报告 |
 | `DELETE /api/v1/reports/{id}` | 永久删除单份报告并更新 FTS 搜索索引 |
@@ -67,13 +68,13 @@ curl -X POST "https://YOUR_DOMAIN/api/v1/reports" \
 | `GET /api/v1/search?q=&source=&bot_id=&from=&to=&cursor=` | 全文检索及筛选 |
 | `GET /api/v1/events` | 新建/删除报告或 Bot 的 SSE 事件与心跳 |
 
-工作台的报告列表、搜索结果和阅读面板均可删除单份报告；Bot 卡片可删除整个 Bot。界面在执行前显示永久删除确认。删除 Bot 会连同其所有报告一起删除，不能恢复；删除最后一个关联 Bot 后，该来源也会从来源筛选中移除。删除后的卡片、统计、历史和搜索结果会刷新，其他打开的工作台通过 SSE 同步。
+工作台的报告列表、搜索结果和阅读面板均可删除单份报告；Bot 卡片可重命名或删除整个 Bot。展示名称存储在 SQLite `display_name` 中，与上报的 `bot_name` 和稳定 `(source, bot_id)` 分离；新报告不会覆盖自定义名称，清除展示名称可恢复使用上报名称。界面在执行永久删除前显示确认。删除 Bot 会连同其所有报告一起删除，不能恢复；删除最后一个关联 Bot 后，该来源也会从来源筛选中移除。删除后的卡片、统计、历史和搜索结果会刷新，其他打开的工作台通过 SSE 同步。
 
 默认页面将数据库容量标为“全库”，即使其他统计按来源筛选也不会把物理数据库大小伪装成来源大小。
 
 ## 一键复制 AI 推送指令
 
-登录工作台后点「推送指令」，填写部署地址、稳定的来源标识、Bot ID 和名称，再复制完整模板。模板包含最终报告边界、重试幂等、安全占位符及平台不支持 HTTP 时的处理要求。剪贴板不可用时，预览框会自动选中文本，可手动复制。
+登录工作台后点「推送指令」即可复制完整模板。服务地址默认采用当前站点 origin 和 `/api/v1/reports`，可在高级设置覆盖；来源由 Agent 尽量自动识别，缺失时服务端归类为 `unknown`。稳定任务 ID 由 Agent 从平台稳定 ID 或稳定任务名派生，服务器据此确定性生成 Bot ID；缺少可靠身份时拒绝推送，不按日期或随机值新建 Bot。模板包含执行端 `ACCESS_TOKEN` 安全配置要求、最终报告边界、单次执行幂等、移动端剪贴板失败手动复制提示及平台不支持 HTTP 时的处理要求。剪贴板不可用时，预览框会自动选中文本，可手动复制。
 
 发送规则：只推送已经完成并通过检查的正式报告。草稿、测试、模拟数据、日志、中间结果、失败和取消任务不得推送。Grok 或其他 AI 平台是否具备定时 HTTPS POST 能力必须在对应平台单独验证；不得把本地联调请求发向正式服务端。
 
@@ -144,4 +145,4 @@ go test ./...
 cd frontend && npm ci && npm test && npm run build
 ```
 
-完整验收及限制见 [docs/ACCEPTANCE_REPORT.md](docs/ACCEPTANCE_REPORT.md)。
+完整验收及限制见 [docs/ACCEPTANCE_REPORT.md](docs/ACCEPTANCE_REPORT.md)；P6 本轮逐项证据见 [docs/P6_ACCEPTANCE_REPORT.md](docs/P6_ACCEPTANCE_REPORT.md)。
