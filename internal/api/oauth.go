@@ -37,6 +37,10 @@ type OAuthConfig struct {
 
 type oauthPrincipalKey struct{}
 type oauthPrincipal struct{ scopes map[string]bool }
+type oauthState struct {
+	value   string
+	present bool
+}
 type pendingConsent struct {
 	Request oauthRequest
 	Session string
@@ -51,7 +55,7 @@ type oauthRequest struct {
 	Challenge       string
 	Resource        string
 	Scopes          []string
-	State           string
+	State           oauthState
 }
 
 func (s *Server) oauthBase() string     { return strings.TrimRight(s.oauth.PublicBaseURL, "/") }
@@ -133,6 +137,7 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, r, "invalid_request", "authorization parameters must be valid and appear no more than once")
 		return
 	}
+	state := oauthState{value: q.Get("state"), present: q.Has("state")}
 	clientID := q.Get("client_id")
 	if allowed, wait := s.allowRate("oauth-authorize-ip:"+oauthPeerIP(r), 30, time.Now()); !allowed {
 		w.Header().Set("Retry-After", fmt.Sprintf("%d", max(1, int(wait.Seconds()))))
@@ -159,28 +164,28 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 	}
 	responseType := q.Get("response_type")
 	if responseType == "" {
-		s.oauthRedirectError(w, redirect, q.Get("state"), "invalid_request")
+		s.oauthRedirectError(w, redirect, state, "invalid_request")
 		return
 	}
 	if responseType != "code" {
-		s.oauthRedirectError(w, redirect, q.Get("state"), "unsupported_response_type")
+		s.oauthRedirectError(w, redirect, state, "unsupported_response_type")
 		return
 	}
 	if q.Get("code_challenge_method") != "S256" || !validChallenge(q.Get("code_challenge")) {
-		s.oauthRedirectError(w, redirect, q.Get("state"), "invalid_request")
+		s.oauthRedirectError(w, redirect, state, "invalid_request")
 		return
 	}
 	resource := q.Get("resource")
 	if resource == "" || resource != s.oauthResource() {
-		s.oauthRedirectError(w, redirect, q.Get("state"), "invalid_target")
+		s.oauthRedirectError(w, redirect, state, "invalid_target")
 		return
 	}
 	scopes, ok := requestedOAuthScopes(q.Get("scope"))
 	if !ok {
-		s.oauthRedirectError(w, redirect, q.Get("state"), "invalid_scope")
+		s.oauthRedirectError(w, redirect, state, "invalid_scope")
 		return
 	}
-	request := oauthRequest{ClientID: client.ID, ClientName: client.Name, Registration: client.Registration, ClientRedirects: append([]string(nil), client.Redirects...), RedirectURI: redirect, Challenge: q.Get("code_challenge"), Resource: resource, Scopes: scopes, State: q.Get("state")}
+	request := oauthRequest{ClientID: client.ID, ClientName: client.Name, Registration: client.Registration, ClientRedirects: append([]string(nil), client.Redirects...), RedirectURI: redirect, Challenge: q.Get("code_challenge"), Resource: resource, Scopes: scopes, State: state}
 	cookie, _ := r.Cookie(sessionCookie)
 	session := ""
 	if cookie != nil && s.validSession(cookie.Value, time.Now()) {
@@ -548,11 +553,11 @@ func hasOAuthClientAuthConflict(r *http.Request) bool {
 	_, _, usesBasic := r.BasicAuth()
 	return usesBasic && (r.Form.Has("client_id") || r.Form.Has("client_secret"))
 }
-func (s *Server) oauthRedirectError(w http.ResponseWriter, redirect, state, code string) {
+func (s *Server) oauthRedirectError(w http.ResponseWriter, redirect string, state oauthState, code string) {
 	params := map[string]string{"error": code, "iss": s.oauthBase()}
 	redirectOAuth(w, redirect, state, params)
 }
-func redirectOAuth(w http.ResponseWriter, redirect, state string, params map[string]string) {
+func redirectOAuth(w http.ResponseWriter, redirect string, state oauthState, params map[string]string) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
 	u, err := url.Parse(redirect)
@@ -564,8 +569,8 @@ func redirectOAuth(w http.ResponseWriter, redirect, state string, params map[str
 	for k, v := range params {
 		q.Set(k, v)
 	}
-	if state != "" {
-		q.Set("state", state)
+	if state.present {
+		q.Set("state", state.value)
 	}
 	u.RawQuery = q.Encode()
 	w.Header().Set("Location", u.String())

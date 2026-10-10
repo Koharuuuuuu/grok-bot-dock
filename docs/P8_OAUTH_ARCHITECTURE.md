@@ -35,7 +35,7 @@ Bolt Dock 同时实现 OAuth **Authorization Server (AS)** 和 MCP **Protected R
 
 - `GET /.well-known/oauth-protected-resource`：给出 `resource`（规范化、稳定的 MCP 公网资源 URI）与 `authorization_servers`；若 MCP URL 含路径，按 RFC 9728 的路径插入规则同时支持所需发现地址，**不能只写一个假定路径**。
 - `GET /.well-known/oauth-authorization-server`：Issuer/authorization/token/revocation/registration 能力、`response_types_supported`、`code_challenge_methods_supported:["S256"]`、`scopes_supported` 等。Issuer 与生产公网 URL 必须一致；禁止信任请求的任意 Host/X-Forwarded-* 来生成发行者。
-- `GET /oauth/authorize`：支持 `response_type=code`、`client_id`、可选 `redirect_uri`、`code_challenge`、`code_challenge_method=S256`、`scope`、`resource`、`state`。若客户端恰有一个已注册回调，可省略 `redirect_uri` 并由服务端推断；多个回调时必须提供精确匹配项。授权码仍绑定最终确定的 URI。
+- `GET /oauth/authorize`：支持 `response_type=code`、`client_id`、可选 `redirect_uri`、`code_challenge`、`code_challenge_method=S256`、`scope`、`resource`、`state`。若客户端恰有一个已注册回调，可省略 `redirect_uri` 并由服务端推断；多个回调时必须提供精确匹配项。授权码仍绑定最终确定的 URI。只要 `state` 参数出现，成功和错误回调都原样返回其值（包括空值）；未提供时不添加 `state`。
 - `POST /oauth/token`：`authorization_code` 与可选 `refresh_token` grant；校验 PKCE、绑定的 client/resource；若请求带 `redirect_uri` 必须与授权码绑定值完全相同；授权码一次性事务消费；返回 `access_token`、`token_type=Bearer`、`expires_in`、scope，按策略返回 refresh token。OAuth 错误采用标准格式且不暴露敏感内容。
 - `POST /oauth/revoke`：按 RFC 7009 及客户端身份/持有权处理，撤销 refresh/access token；对授权链传播失效。
 - `GET/POST /oauth/consent`（实际 UI 路由可调整）：明确显示客户端身份、读写权限和账户；拒绝/取消有规范回调；服务器必须防 CSRF。

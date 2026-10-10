@@ -200,9 +200,21 @@ func TestOAuthRedirectURIValidationAndExactMatching(t *testing.T) {
 
 func TestOAuthRedirectIsNotCachedAndRateLimitUsesPeerIP(t *testing.T) {
 	w := httptest.NewRecorder()
-	redirectOAuth(w, "https://client.example/callback", "state", map[string]string{"code": "one-time"})
+	redirectOAuth(w, "https://client.example/callback", oauthState{value: "state", present: true}, map[string]string{"code": "one-time"})
 	if w.Code != http.StatusFound || w.Header().Get("Cache-Control") != "no-store" || w.Header().Get("Pragma") != "no-cache" {
 		t.Fatalf("authorization redirect headers/status: %d %#v", w.Code, w.Header())
+	}
+	emptyState := httptest.NewRecorder()
+	redirectOAuth(emptyState, "https://client.example/callback", oauthState{present: true}, map[string]string{"error": "access_denied"})
+	emptyStateLocation, err := url.Parse(emptyState.Header().Get("Location"))
+	if err != nil || !emptyStateLocation.Query().Has("state") || emptyStateLocation.Query().Get("state") != "" {
+		t.Fatalf("present but empty OAuth state must be returned unchanged: location=%q err=%v", emptyState.Header().Get("Location"), err)
+	}
+	missingState := httptest.NewRecorder()
+	redirectOAuth(missingState, "https://client.example/callback", oauthState{}, map[string]string{"error": "access_denied"})
+	missingStateLocation, err := url.Parse(missingState.Header().Get("Location"))
+	if err != nil || missingStateLocation.Query().Has("state") {
+		t.Fatalf("omitted OAuth state must remain omitted: location=%q err=%v", missingState.Header().Get("Location"), err)
 	}
 	first := httptest.NewRequest(http.MethodPost, "/oauth/token", nil)
 	first.RemoteAddr = "192.0.2.10:50001"
@@ -234,13 +246,16 @@ func TestOAuthAuthorizationRejectsUnknownClientRedirectAndPKCE(t *testing.T) {
 		mutate     func(url.Values)
 		wantStatus int
 		wantError  string
+		wantState  bool
 	}{
-		{"unknown client", func(q url.Values) { q.Set("client_id", "missing") }, http.StatusBadRequest, ""},
-		{"unregistered redirect", func(q url.Values) { q.Set("redirect_uri", "https://attacker.example/callback") }, http.StatusBadRequest, ""},
-		{"unsupported response type", func(q url.Values) { q.Set("response_type", "token") }, http.StatusFound, "unsupported_response_type"},
-		{"missing response type", func(q url.Values) { q.Del("response_type") }, http.StatusFound, "invalid_request"},
-		{"plain PKCE", func(q url.Values) { q.Set("code_challenge_method", "plain") }, http.StatusFound, "invalid_request"},
-		{"empty PKCE", func(q url.Values) { q.Set("code_challenge", "") }, http.StatusFound, "invalid_request"},
+		{"unknown client", func(q url.Values) { q.Set("client_id", "missing") }, http.StatusBadRequest, "", false},
+		{"unregistered redirect", func(q url.Values) { q.Set("redirect_uri", "https://attacker.example/callback") }, http.StatusBadRequest, "", false},
+		{"unsupported response type", func(q url.Values) { q.Set("response_type", "token") }, http.StatusFound, "unsupported_response_type", true},
+		{"missing response type", func(q url.Values) { q.Del("response_type") }, http.StatusFound, "invalid_request", true},
+		{"plain PKCE", func(q url.Values) { q.Set("code_challenge_method", "plain") }, http.StatusFound, "invalid_request", true},
+		{"empty PKCE", func(q url.Values) { q.Set("code_challenge", "") }, http.StatusFound, "invalid_request", true},
+		{"omitted state stays omitted", func(q url.Values) { q.Del("state"); q.Set("response_type", "token") }, http.StatusFound, "unsupported_response_type", false},
+		{"empty state is returned", func(q url.Values) { q.Set("state", ""); q.Set("response_type", "token") }, http.StatusFound, "unsupported_response_type", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -257,7 +272,7 @@ func TestOAuthAuthorizationRejectsUnknownClientRedirectAndPKCE(t *testing.T) {
 			}
 			if tc.wantError != "" {
 				location, err := url.Parse(w.Header().Get("Location"))
-				if err != nil || location.Query().Get("error") != tc.wantError {
+				if err != nil || location.Query().Get("error") != tc.wantError || location.Query().Has("state") != tc.wantState {
 					t.Fatalf("redirect error=%v location=%q", err, w.Header().Get("Location"))
 				}
 			}
@@ -882,7 +897,7 @@ func TestCIMDAuthorizationDiscoversConsentsAndIssuesPublicClientToken(t *testing
 
 	verifier := strings.Repeat("c", 43)
 	challengeSum := sha256.Sum256([]byte(verifier))
-	page := newAuthorizeRequest("approved", base64.RawURLEncoding.EncodeToString(challengeSum[:]))
+	page := newAuthorizeRequest("", base64.RawURLEncoding.EncodeToString(challengeSum[:]))
 	if page.Code != http.StatusOK {
 		t.Fatalf("authorize page: status=%d body=%s", page.Code, page.Body.String())
 	}
@@ -897,6 +912,9 @@ func TestCIMDAuthorizationDiscoversConsentsAndIssuesPublicClientToken(t *testing
 	callback, err := url.Parse(approvedW.Header().Get("Location"))
 	if err != nil || approvedW.Code != http.StatusFound {
 		t.Fatalf("consent: status=%d location=%q err=%v", approvedW.Code, approvedW.Header().Get("Location"), err)
+	}
+	if !callback.Query().Has("state") || callback.Query().Get("state") != "" {
+		t.Fatalf("approved authorization must return present empty state unchanged: location=%q", approvedW.Header().Get("Location"))
 	}
 	client, err := db.OAuthClient(context.Background(), clientID)
 	if err != nil || client.Registration != "cimd" || client.Confidential || len(client.Redirects) != 2 {
@@ -1183,6 +1201,9 @@ func TestOAuthDiscoveryPKCEScopesAndRevocation(t *testing.T) {
 	deniedURL, err := url.Parse(deniedW.Header().Get("Location"))
 	if err != nil || deniedW.Code != http.StatusFound || deniedURL.Query().Get("error") != "access_denied" {
 		t.Fatalf("consent denial did not return access_denied: status=%d location=%q err=%v", deniedW.Code, deniedW.Header().Get("Location"), err)
+	}
+	if !deniedURL.Query().Has("state") || deniedURL.Query().Get("state") != "denied-state" {
+		t.Fatalf("consent denial did not return the exact OAuth state: location=%q", deniedW.Header().Get("Location"))
 	}
 }
 
