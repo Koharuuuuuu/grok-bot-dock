@@ -2,7 +2,7 @@
 
 日期：2026-10-10（Asia/Shanghai）
 仓库：`Nyakooo/grok-bot-dock`（Private）
-验收基线：原 MCP 服务发布基线 `641e4f5`；本补充纠偏基于拉取的 master `cdb8f39`。通用接入 UI、动态能力清单、文档与回归证据记录在本节；PR/CI/镜像交付结果在合并后补录。
+验收基线：原 MCP 服务发布基线 `641e4f5`；通用接入纠偏基于 master `cdb8f39`，最终合并提交 `5002de3ba988b3a71267a881b81b844cef2c883a`。通用接入 UI、动态能力清单、文档与回归证据记录在本节。
 验收范围：MCP 独立服务定位、真实工具能力接入 UI、非 Codex MCP Inspector 客户端与隔离 Docker/浏览器测试。未连接或修改用户生产服务及生产数据库；测试容器使用独立临时密钥和数据卷并在验收后清理。
 
 ## 结论
@@ -132,7 +132,10 @@ MCP 接入对话框打开时焦点落在关闭按钮，Tab/Shift+Tab 在对话�
 | `docker build -t bolt-dock:p7-general-access .` | 通过；隔离容器 health 为 `{"status":"ok"}`。 |
 | Claude、Grok 与其他产品客户端 | 未验证具体产品和版本；不宣称兼容。 |
 | 用户生产 URL、HTTPS 反代、真实公网可达性及生产数据 | 未验证；未提供目标地址或部署主机。 |
-| PR #17 | [feat: make MCP onboarding client-agnostic](https://github.com/Nyakooo/grok-bot-dock/pull/17)，提交 `17659428` 加 `15dfd4a`（Schema 字段/示例同步修复）；尚待合并。 |
-| PR GitHub Actions | [run 38042295065](https://github.com/Nyakooo/grok-bot-dock/actions/runs/38042295065)；`validate` 通过。GHCR master 发布需在合并后核验。 |
+| PR #17 | [feat: make MCP onboarding client-agnostic](https://github.com/Nyakooo/grok-bot-dock/pull/17) 已于 2026-10-10 squash 合并；master 提交 `5002de3ba988b3a71267a881b81b844cef2c883a`。能力字段/示例 Schema 同步修复在提交 `15dfd4a`。 |
+| PR GitHub Actions | [run 38042346011](https://github.com/Nyakooo/grok-bot-dock/actions/runs/38042346011)；`validate` 通过。 |
+| master GitHub Actions / GHCR | [run 38042389376](https://github.com/Nyakooo/grok-bot-dock/actions/runs/38042389376)；`validate` 与 `publish` 均通过。 |
+| 匿名 GHCR 清单核验 | 未提供凭据请求 Registry API 返回 HTTP 200；`ghcr.io/nyakooo/grok-bot-dock:master` OCI index digest 为 `sha256:a4f653fb21b24e4f54e9c1413a4ce210b9e6e8a73ac46563ff21630f6cc14bcd`，包含 linux/amd64 `sha256:4b7126da03166de9687176d86f24ef15d079d199179041828680f56099cb65fa` 与 linux/arm64 `sha256:85678ea4f6ef44ce7bb334a509657f916b7017f5030dbed6096d3815ff357f30`。 |
+| GHCR Docker pull | 本机 Docker daemon 未运行，未验证实际 Docker pull 或容器启动；匿名 Registry 清单读取已验证。 |
 
 验收结束后移除了本轮独立 Docker 容器与命名卷；Playwright 临时会话目录 `.playwright-cli/` 保留为本机未跟踪用户数据。
