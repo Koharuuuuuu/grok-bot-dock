@@ -129,6 +129,12 @@ export function notificationStatus(supported, permission) {
   return '通知不可用'
 }
 
+export function loginFailureMessage(status) {
+  return status === 401 ? '访问密钥无效，请重试。' : `登录失败 (${status})`
+}
+
+export const sessionExpiredMessage = '登录会话已失效，请重新登录。'
+
 export function refreshesSelectedBot(selected, report) {
   return Boolean(selected && selected.source === report.source && selected.bot_id === report.bot_id)
 }

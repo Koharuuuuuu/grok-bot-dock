@@ -1,7 +1,7 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { renderSanitizedMarkdown } from './markdown'
-import { buildMCPServiceURL, classifyMCPAddress, highlightParts, makeCodexMCPConfig, makeMCPGenericGuide, makeSearchParams, normalizeMCPAddressBase, notificationStatus, readMCPAddressOverride, refreshesSelectedBot, searchSnippet, writeMCPAddressOverride } from './ui-model'
+import { buildMCPServiceURL, classifyMCPAddress, highlightParts, loginFailureMessage, makeCodexMCPConfig, makeMCPGenericGuide, makeSearchParams, normalizeMCPAddressBase, notificationStatus, readMCPAddressOverride, refreshesSelectedBot, searchSnippet, sessionExpiredMessage, writeMCPAddressOverride } from './ui-model'
 import { readImmersivePreference, readReaderFontSize, writeImmersivePreference, writeReaderFontSize } from './reader-preferences'
 import { readThemePreference, writeThemePreference } from './theme-preferences'
 
@@ -140,7 +140,7 @@ async function api(url, options = {}) {
   })
   if (response.status === 401) {
     expireSession()
-    throw new Error('登录会话已失效，请重新登录。')
+    throw new Error(sessionExpiredMessage)
   }
   if (!response.ok) {
     let message = `请求失败 (${response.status})`
@@ -159,7 +159,7 @@ async function login() {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: value }),
     })
-    if (!response.ok) throw new Error(response.status === 401 ? '访问密钥无效，请重试。' : `登录失败 (${response.status})`)
+    if (!response.ok) throw new Error(loginFailureMessage(response.status))
     authenticated.value = true
     try { await loadData() } catch (e) { if (!authenticated.value) throw e; error.value = e.message }
     tokenError.value = ''

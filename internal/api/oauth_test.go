@@ -459,7 +459,7 @@ func TestOAuth2IgnoresRepeatedUnknownParametersAndChallengesFailedBasicAuth(t *t
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, req)
 			var response map[string]string
-			if w.Code != http.StatusUnauthorized || !strings.HasPrefix(w.Header().Get("WWW-Authenticate"), "Basic ") || json.Unmarshal(w.Body.Bytes(), &response) != nil || response["error"] != "invalid_client" {
+			if w.Code != http.StatusUnauthorized || !strings.HasPrefix(w.Header().Get("WWW-Authenticate"), "Basic ") || json.Unmarshal(w.Body.Bytes(), &response) != nil || response["error"] != "invalid_client" || strings.Contains(w.Body.String(), tc.secret) {
 				t.Fatalf("Basic authentication failure must include a Basic challenge: status=%d challenge=%q body=%s", w.Code, w.Header().Get("WWW-Authenticate"), w.Body.String())
 			}
 		})
@@ -484,7 +484,7 @@ func TestOAuth2IgnoresRepeatedUnknownParametersAndChallengesFailedBasicAuth(t *t
 	postRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, postRequest)
-	if w.Code != http.StatusBadRequest || w.Header().Get("WWW-Authenticate") != "" {
+	if w.Code != http.StatusBadRequest || w.Header().Get("WWW-Authenticate") != "" || strings.Contains(w.Body.String(), "wrong") {
 		t.Fatalf("failed client_secret_post must return HTTP 400 without an HTTP auth challenge: status=%d challenge=%q body=%s", w.Code, w.Header().Get("WWW-Authenticate"), w.Body.String())
 	}
 
@@ -518,7 +518,7 @@ func TestOAuthTokenDistinguishesMissingParametersFromUnsupportedOrInvalidValues(
 		{name: "unsupported grant type", form: url.Values{"client_id": {"public-client"}, "grant_type": {"client_credentials"}}, want: "unsupported_grant_type"},
 		{name: "missing code", form: url.Values{"client_id": {"public-client"}, "grant_type": {"authorization_code"}, "resource": {"https://oauth.example/mcp"}, "code_verifier": {validVerifier}}, want: "invalid_request"},
 		{name: "missing verifier", form: url.Values{"client_id": {"public-client"}, "grant_type": {"authorization_code"}, "code": {"missing-code"}, "resource": {"https://oauth.example/mcp"}}, want: "invalid_request"},
-		{name: "invalid verifier", form: url.Values{"client_id": {"public-client"}, "grant_type": {"authorization_code"}, "code": {"missing-code"}, "resource": {"https://oauth.example/mcp"}, "code_verifier": {"short"}}, want: "invalid_grant"},
+		{name: "invalid verifier", form: url.Values{"client_id": {"public-client"}, "grant_type": {"authorization_code"}, "code": {"sensitive-code-marker"}, "resource": {"https://oauth.example/mcp"}, "code_verifier": {"sensitive-verifier-marker"}}, want: "invalid_grant"},
 		{name: "missing resource", form: url.Values{"client_id": {"public-client"}, "grant_type": {"authorization_code"}, "code": {"missing-code"}, "code_verifier": {validVerifier}}, want: "invalid_target"},
 		{name: "wrong resource", form: url.Values{"client_id": {"public-client"}, "grant_type": {"authorization_code"}, "code": {"missing-code"}, "resource": {"https://other.example/mcp"}, "code_verifier": {validVerifier}}, want: "invalid_target"},
 	}
@@ -531,6 +531,13 @@ func TestOAuthTokenDistinguishesMissingParametersFromUnsupportedOrInvalidValues(
 			var response map[string]string
 			if w.Code != http.StatusBadRequest || json.Unmarshal(w.Body.Bytes(), &response) != nil || response["error"] != tc.want {
 				t.Fatalf("status=%d error=%q body=%s; want HTTP 400 %s", w.Code, response["error"], w.Body.String(), tc.want)
+			}
+			for _, values := range tc.form {
+				for _, value := range values {
+					if value != "" && strings.Contains(w.Body.String(), value) {
+						t.Fatalf("token endpoint error echoed submitted value %q: %s", value, w.Body.String())
+					}
+				}
 			}
 		})
 	}
