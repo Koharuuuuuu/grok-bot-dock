@@ -14,7 +14,8 @@
 
 | 客户端 | 接入路径优先级 | 必须核实 | 验收状态 |
 | --- | --- | --- | --- |
-| Grok（指定具体产品形态） | OAuth 预注册优先；按实际支持考虑 CIMD/DCR | 是否能填自定义 MCP URL、Client ID/Secret、Redirect URI、OAuth 发现、工具调用、定时任务是否可用 | **未实测** |
+| Grok.com Custom Connector | 官方文档确认可添加自定义 MCP URL，并要求服务公网可达；其认证文档覆盖 OAuth/API key | 实际套餐/账号入口、OAuth discovery 参数、Client ID/redirect 注册和授权回调、tools/call | **官方能力已确认；真实 OAuth 联调未完成** |
+| Grok CLI | 官方文档确认远程 HTTP MCP；OAuth server 会触发浏览器授权 | 当前 CLI 版本、对该服务的完整 discovery/PKCE/resource/scope/撤销兼容 | **官方能力已确认；真实 OAuth 联调未完成** |
 | Codex CLI / App | 先确保已有 Bearer 不回归，再验证 OAuth（如客户端支持） | 具体版本、远程 Streamable HTTP、凭据设置、tools/list、读写工具 | **P7 已有特定版本 Bearer 验收；P8 OAuth 未实测** |
 | Cursor | 远程 MCP + Bearer/OAuth，按具体版本支持情况选择 | 客户端配置、OAuth 浏览器回调、工具调用、Token 续期 | **未实测** |
 | Claude（具体产品/计划） | 远程 MCP + OAuth | 是否开放自定义远程 MCP、授权回调、工具权限、刷新与撤销 | **未实测** |

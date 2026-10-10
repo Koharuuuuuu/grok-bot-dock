@@ -58,11 +58,15 @@ These are code baseline results only; they are not production or client-compatib
 
 | Client | Evidence | Status |
 | --- | --- | --- |
-| Grok | No authoritative, current product documentation found that confirms custom remote MCP OAuth registration fields, redirect URI, resource handling, or refresh behavior. xAI API documentation is not evidence about a Grok end-user MCP connector. | **Unknown; external account/product verification required** |
+| Grok | The initial search did not find product documentation; this was incomplete. The dated official-doc re-check below confirms custom MCP and OAuth capabilities but not registration/callback/resource details. | **Capability documented; live interoperability requires account test** |
 | Codex | P7 recorded a specific Bearer-mode integration. No P8 OAuth integration has been performed in this audit. | Bearer baseline only; OAuth unverified |
 | Cursor | Official docs describe remote MCP and OAuth in some product surfaces; exact desktop/version configuration and this server's OAuth behavior have not been tested. | Unverified |
 | Claude | Official Anthropic documentation describes remote MCP integrations and OAuth, but no account login or live server authorization was performed. | Unverified |
 | MCP Inspector | No P8 OAuth end-to-end has yet been run. | Pending |
+
+### Grok documentation re-check (2026-10-10)
+
+The historical finding above has been superseded for basic product capability: current official [Grok Connectors documentation](https://docs.x.ai/grok/connectors) documents a custom MCP connector with a public server URL and required authentication; [custom MCP tunneling guidance](https://docs.x.ai/grok/connectors/custom-mcp-tunneling) explicitly mentions OAuth or API-key authentication; [Grok CLI MCP documentation](https://docs.x.ai/build/features/mcp-servers) documents remote HTTP servers and automatic OAuth browser flow. These sources establish that both Grok.com Custom Connector and Grok CLI have relevant MCP/OAuth capability. They do not specify the exact client registration, redirect URI, resource/scope behavior, or prove interoperability with Bolt Dock. Those points still require a real versioned client flow and account.
 
 ## Required deployment decisions before public enablement
 

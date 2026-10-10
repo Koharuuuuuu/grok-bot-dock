@@ -8,7 +8,8 @@
 | --- | --- | --- | --- |
 | Codex CLI | 远程 Streamable HTTP + 环境变量 Bearer；P7 已验收特定 CLI 版本 | P8 OAuth 可按标准尝试 | OAuth 未实测；不是 Codex 专属 MCP |
 | Cursor | 官方文档提到远程 MCP/OAuth；具体 Bearer 配法按版本核实 | OAuth 浏览器授权 | 本地 OAuth 协议未在 Cursor 产品端验证 |
-| Grok | 当前截图客户端要求 OAuth 凭据，尚未完成连通性验证 | 需所有者预注册其 client_id 与精确 redirect URI | 官方能力、secret 要求、resource/scope 参数及 token refresh 均未知；必须实测 |
+| Grok.com Custom Connector | 官方文档描述：添加 Custom MCP URL 并完成所需认证；服务须公网可达 | 按 Grok 实际提供的注册资料配置客户端；不能预先编造 client_id、redirect URI 或 secret 要求 | 官方说明认证可使用 OAuth 或 API key；具体 OAuth discovery、redirect/client 注册、scope/resource 和该服务的授权回调仍待实测 |
+| Grok CLI | 官方文档支持远程 HTTP MCP，OAuth server 首次使用时启动浏览器授权 | 先核实本机 CLI 版本，再从标准发现接入 | 具体 draft-16/MCP 元数据参数及本服务 OAuth 端到端尚未实测 |
 | Claude | 官方资料提及远程 MCP/OAuth；具体产品、计划和版本需验证 | 标准远程 OAuth 连接 | 本地 OAuth 协议未在 Claude 产品端验证 |
 | ChatGPT | 账号/功能入口限制需验证 | 在其实际开放的 MCP 客户端支持范围内接入 | 不承诺普通聊天或 Tasks 可调用 |
 | 通用 MCP Inspector | P7 共享 Bearer 已验收 | OAuth discovery、登录、工具发现与调用 | 不代替真实平台测试 |
@@ -28,6 +29,8 @@
 3. 客户端复制 MCP URL 后触发发现。浏览器跳到 Bolt Dock；管理员登录并明确勾选所需 scope。登录、同意、授权码/PKCE、resource、client 和 redirect URI 由服务校验。CIMD 客户端名称和 redirect URI 来源于经验证的远端 metadata document。
 4. 授权仅发 `reports:read` 和/或 `reports:write`，可用 15 分钟；grant 期限 30 天。没有 refresh token，客户端需再次进行授权流程。
 5. 在工作台停用 client 或撤销单条 grant；已发 token 应立即失效。
+
+**官方资料核验（2026-10-10）：** [Grok Connectors](https://docs.x.ai/grok/connectors) 已说明 Custom MCP connector、公开网络可达性及完成所需认证；[Custom MCP Server Tunneling](https://docs.x.ai/grok/connectors/custom-mcp-tunneling) 明确列出 OAuth/API-key 认证仍由 Grok 完成；[Grok CLI MCP 文档](https://docs.x.ai/build/features/mcp-servers) 说明远程 HTTP、自动 OAuth 浏览器流程和本地凭据存储。以上是产品能力的官方文档证据，**不是 Bolt Dock 的真实兼容验收**。目前仍未从真实 Grok 账号获得 client registration、redirect URI 或授权请求参数，也未执行工具调用。具体 OAuth discovery、resource/scope、客户端注册机制、撤销及账号/套餐入口必须在实际联调时记录，不得臆造。
 
 当前支持 CIMD，但尚未完成真实第三方客户端联调，也未声称通过 CIMD 草案全部符合性验证；DCR 与 refresh token 未实现。若目标客户端必须刷新 Token，或拒绝 service metadata/resource 参数，则本实现不能据此标记兼容；先记录实际客户端请求再扩展。
 

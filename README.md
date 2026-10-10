@@ -102,7 +102,7 @@ url = "https://<你的公开域名>/mcp"
 bearer_token_env_var = "BOLT_DOCK_TOKEN"
 ```
 
-`BOLT_DOCK_TOKEN` 只是该示例在 Codex 运行环境中选择的变量名，不是 MCP 标准字段，也不是服务器必需的环境变量。应在客户端安全设置中将它配置为服务端 `ACCESS_TOKEN` 的值。Codex CLI `0.162.0-alpha.2` 已完成本机及 GHCR 镜像连接测试；此结果不代表 Codex 其他形态或版本均已验证。Claude、Grok 及其他客户端需要分别确认具体产品版本是否支持自定义远程 MCP 与 Bearer 凭据。可参考 [Codex MCP 文档](https://developers.openai.com/codex/mcp) 与 [Streamable HTTP MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk)。
+`BOLT_DOCK_TOKEN` 只是该示例在 Codex 运行环境中选择的变量名，不是 MCP 标准字段，也不是服务器必需的环境变量。应在客户端安全设置中将它配置为服务端 `ACCESS_TOKEN` 的值。Codex CLI `0.162.0-alpha.2` 已完成本机及 GHCR 镜像连接测试；此结果不代表 Codex 其他形态或版本均已验证。xAI 官方文档现已确认 Grok.com 自定义 MCP connector 与 Grok CLI 远程 HTTP/OAuth 能力，但 Bolt Dock 的真实 OAuth 连接仍未验收；Claude、Cursor 等客户端也需分别按具体产品版本实测。可参考 [Codex MCP 文档](https://developers.openai.com/codex/mcp)、[Grok Connectors](https://docs.x.ai/grok/connectors)、[Grok CLI MCP 文档](https://docs.x.ai/build/features/mcp-servers) 与 [Streamable HTTP MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk)。
 
 `publish_report` 示例参数（只在最终报告完成后调用；每次执行的 `external_id` 必须唯一，重试时原样复用）：
 

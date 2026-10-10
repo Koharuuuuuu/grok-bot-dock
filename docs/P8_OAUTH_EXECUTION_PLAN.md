@@ -45,7 +45,7 @@
 - [x] 更新 P8 设计，明确当前系统无普通用户账号，仅存在管理员 ACCESS_TOKEN/浏览器会话，确定“单所有者授权”的 subject 模型。
 
 - [x] 输出 `docs/P8_BASELINE_AUDIT.md`：现有代码调用图、认证边界、SDK/规范版本、数据库 schema 版本、实际部署限制与兼容性风险；核对 OAuth 2.1 draft、MCP 当期授权规范及 RFC 9728/8414/7636/8707/7009 的具体适用要求。
-- [x] 对 Grok 做“需求证据表”：远程 MCP 地址、OAuth 客户端凭据输入项、支持的注册模式（预注册/CIMD/DCR）、精确 redirect URI、scope/resource 传参、是否支持刷新与定时任务；无法确认则标未知并保留人工联调步骤，不阻塞通用标准实现。
+- [x] 对 Grok 做“需求证据表”：2026-10-10 官方文档现已确认 Grok.com Custom MCP、公网 URL、OAuth/API-key 认证以及 Grok CLI 远程 HTTP/浏览器 OAuth；Client registration、redirect URI、scope/resource、DCR/CIMD 和续期细节仍未知，保留真实客户端联调步骤，不编造配置字段。
 - [x] 审计 checkout 的反向代理限制与信任边界；记录实际生产反代配置不可见，避免 Host、X-Forwarded-Proto、路径前缀推断；明确启用所需的公开 HTTPS origin。
 
 ## Phase 1：协议发现与受控客户端注册
@@ -101,7 +101,7 @@
 - [x] 本地 Chromium 覆盖桌面与 390×844 窄视口、浅色/深色/跟随系统；授权同意页可用 Tab/Space 完成 scope 选择并到达允许/拒绝，客户端停用有确认并即时更新列表状态。
 - [ ] 实际手机设备仍需补验；过期/失败提示不得泄露 token 的自动化覆盖继续按 Phase 5 验收。
 - [x] 本地 Chromium 完整遍历 MCP 管理面板的可交互键盘焦点；键盘登记隔离客户端、触发停用确认并核实停用状态，证据见验收报告。实体移动设备仍未验证。
-- [x] 客户端接入说明优先 Grok，但只使用实际验证的回调 URI 和配置字段；若平台要求 OAuth client secret，明确安全发放方式；未知字段不编造。真实平台回调/字段仍标为待外部联调，没有声称已验证。
+- [x] 客户端接入说明优先 Grok，记录官方已证实的自定义 MCP/OAuth 能力；不编造未公开的回调 URI、client registration 字段或 secret 规则。真实平台回调/字段仍标为待外部联调，没有声称已验证。
 
 ## Phase 5：自动化安全回归（所有必须通过）
 
@@ -121,7 +121,7 @@
   - [x] 并发 Token 查验/撤销竞态完成后，后续查验拒绝被撤销 Token；已签发的 in-flight 工具调用不会被主动取消。
   - [x] Refresh rotation 不适用：本期不签发 refresh token。
 - [x] 本地检查嵌入静态资源和容器日志不含临时 token/报告正文标记；HTTP logger 只写 URL path，Store 测试断言 token/secret 仅存摘要。
-- [ ] GitHub CI artifacts/logs 和生产日志需在对应远程工作流/部署运行后检查；本地环境无法证明这些远端产物。
+- [ ] 当前本地未推送 commit 的 GitHub CI 及生产日志需在对应远程工作流/部署运行后检查；已只读核对最新 `master` CI，结果见 `docs/P8_OAUTH_ACCEPTANCE.md`。没有可下载 artifacts，生产日志仍无法检查。
 - [x] 将“真正多用户隔离”明确列为 P8 范围外：本期单所有者，不能将多用户隔离测试标为通过；本次不把多个客户端的存在宣称为多租户数据隔离。
 
 ## Phase 6：交付策略和验收记录
