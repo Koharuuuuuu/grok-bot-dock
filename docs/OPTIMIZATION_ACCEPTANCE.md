@@ -48,5 +48,6 @@
 ## P6 集中修复复验（2026-10-10）
 
 - 本轮以当前 master `a97abba40076a1a876fda30aae56c503c56572b5` 为基线，逐项重验登录、悬浮阅读器、响应式布局、阅读偏好、推送指令、Bot 展示名和品牌。完整根因/修改文件、Go/前端/Docker 命令、真实浏览器尺寸矩阵、截图路径及未验证边界见 [P6 验收报告](./P6_ACCEPTANCE_REPORT.md)。
-- 本地 `go test -race ./... && go vet ./...`、前端 Vitest 7/7 + 构建、`docker build -t bolt-dock:p6 .` 和隔离容器健康检查/SQLite 报告及 display_name 重启持久性通过；报告、Bot 删除 UI 确认通过本地浏览器实测。
-- P6 PR/CI/合并/GHCR 数据待本次交付流程完成后补录。生产 URL/主机未提供，生产部署版本、缓存和数据库未验证；不得将本地验证视作生产验收。未触发 semver tag。
+- 本地 `go test -race ./... && go vet ./...`、前端 Vitest 8/8 + 构建、`docker build -t bolt-dock:p6 .` 和隔离容器健康检查/SQLite 报告及 display_name 重启持久性通过；报告、Bot 删除 UI 确认通过本地浏览器实测。
+- P6 PR [#10](https://github.com/Nyakooo/grok-bot-dock/pull/10) 的 validate run `38029771656` 通过、publish 跳过；合并提交 [`cd89031c617a4ec12b0cf90b773912e336125303`](https://github.com/Nyakooo/grok-bot-dock/commit/cd89031c617a4ec12b0cf90b773912e336125303) 的 master run [`38029816646`](https://github.com/Nyakooo/grok-bot-dock/actions/runs/38029816646) 中 validate/publish 均通过。匿名 Docker 配置拉取 `ghcr.io/nyakooo/grok-bot-dock:master` 的 amd64/arm64 成功，OCI index digest 为 `sha256:a3afc5cb8da33089659d831706debd6560225e10557cee95d1a08f2fabbbda8a`；用该 GHCR 镜像启动隔离容器后 `/healthz` 和报告 API 通过，容器健康且 UID `10001:10001`。
+- 生产 URL/主机未提供，生产部署版本、缓存和数据库未验证；不得将本地或公开镜像结果视作生产验收。未触发 semver tag。
