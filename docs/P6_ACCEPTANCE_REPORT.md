@@ -1,12 +1,14 @@
 # Bolt Dock P6 验收报告
 
 日期：2026-10-10；仓库：`Nyakooo/grok-bot-dock`（Private）；目标分支：`master`。
-验收基线：`a97abba40076a1a876fda30aae56c503c56572b5`（本轮 fetch 后的 `origin/master`）。
-验收环境：隔离本地服务 `127.0.0.1:18766`；Docker 验收容器 `bolt-dock-p6-acceptance`，只挂载 `/tmp/bolt-dock-p6-docker`，未连接或修改生产部署及生产 SQLite 卷。
+验收基线：`a97abba40076a1a876fda30aae56c503c56572b5`（开始修复时 fetch 得到的 `origin/master`）；最终文档基线：master `b8fdea2ab31c1d28ee06875892213cc7ea540693`。
+验收环境：隔离本地服务 `127.0.0.1:18766`；Docker 验收容器 `bolt-dock-p6-acceptance`，以及匿名拉取 GHCR master 后的隔离容器 `bolt-dock-p6-ghcr-check`（端口 `18768`），只挂载 `/tmp` 测试数据，未连接或修改生产部署及生产 SQLite 卷。
 
 ## 验收结论
 
-代码、API、前端、本地真实浏览器、隔离 Docker、PR/master CI 和匿名 GHCR 发布镜像均完成对应验证。线上部署地址/主机没有出现在仓库或当前环境中，故无法确认用户正在访问的生产镜像、缓存版本或生产数据行为；这些线上状态仍明确标记为**未验证**。未执行 semver tag 发布。
+代码、API、前端、本地和 GHCR 发布镜像真实浏览器、隔离 Docker、PR/master CI、匿名多架构 GHCR 拉取及运行均已完成对应验证。补充验证包括 iPhone 15 触摸模拟、关闭并重开持久化浏览器 profile、移动端强制全屏不污染 `immersive:false` 偏好，以及长文档字号调整后阅读位置保持在 `scrollTop=1200`。GitHub master README 已在登录态 Edge 页面实际渲染并截图查看。
+
+P6 仍有明确未验收项：用户生产部署 URL/主机没有提供，无法核查实际部署与缓存版本；semver tag 发布未触发。它们均未标为完成。
 
 ## 验收矩阵
 
@@ -16,11 +18,11 @@
 | P0-02 详情抖动 | 开关详情不改变卡片宽度或滚动位置 | 滚动条补偿与 `scrollbar-gutter: stable` 同时生效会重复计算页面宽度 | 独立悬浮层；移除重复 body padding 补偿；打开/关闭恢复 body 样式及滚动位置 | 真实浏览器视口矩阵比较开关前后主网格宽度 | 1440/1280/768/430/390/375/320px 下网格开关前后宽度差均为 0；320px 当前位置 `scrollY=69` 连续开关 3 次后仍为 69、body overflow 恢复空值；页面宽度 320 | 生产不可达，未验证 | 本地通过；线上未验证 |
 | P0-03 移动布局 | 320–768px 无横向页面溢出、控件遮挡；长表格/代码局部滚动 | 窄屏工具栏与宽 Markdown 内容可能超出视口 | 响应式头部/卡片/全屏阅读器；窄屏控件收缩；表格/代码容器局部滚动 | `npm test`；8/8 | 320/375/390/430/768px 与 1280/1440px 实测；页面宽度等于视口，320px 的宽表格/代码只在内容区横向滚动 | 生产不可达，未验证 | 本地通过；线上未验证 |
 | P0-04 悬浮详情 | 详情覆盖主页面；最大化清晰；可关闭与键盘退出 | `.reader-panel.immersive` 低特异性导致位于模糊遮罩之下，遮罩还会截获点击 | 修复层级为 z-index 70；维持 dialog overlay、关闭按钮、Esc、焦点与背景滚动管理 | `npm test`；Go 前端嵌入构建 | 桌面与移动真实浏览器检查网格不缩窄、阅读正文清晰、工具栏可点击、日期历史可用；实测打开时焦点进入关闭按钮，Esc 关闭成功 | 生产不可达，未验证 | 本地通过；线上未验证 |
-| P0-05 最大化偏好 | 全局跨 Bot/报告、刷新和重新打开沿用；窄屏不污染偏好 | 阅读模式曾可能按单个报告初始化 | 使用版本化 `bolt-dock:reader-preferences:v1` localStorage；强制窄屏全屏不写入桌面偏好 | `npm test`；偏好解析异常/版本回退及存储不可用回退用例 | 两个 Bot 间切换、服务重启后重新登录仍继承；人为写入损坏值后重开回普通模式；桌面/移动尺寸矩阵验证 | 生产不可达，未验证 | 本地通过；线上未验证 |
-| P0-06 Markdown 字号 | 默认 16px，12–24px、步长 1；重置与持久化 | 字号无可见控件及可靠偏好作用域 | 新增独立版本化字号键和缩小/显示/放大/重置控件，仅缩放 Markdown | `npm test`；边界、损坏值、存储不可用和默认回退 | 浏览器实测 12/24px 边界按钮禁用、重置回 16px、异常存储回退 16px；跨 Bot/刷新持久；窄屏没有页面溢出 | 生产不可达，未验证 | 本地通过；线上未验证 |
+| P0-05 最大化偏好 | 全局跨 Bot/报告、刷新和重新打开沿用；窄屏不污染偏好 | 阅读模式曾可能按单个报告初始化 | 使用版本化 `bolt-dock:reader-preferences:v1` localStorage；窄屏全屏由 CSS 强制，不写桌面偏好 | `npm test`；偏好解析异常/版本回退及存储不可用回退用例 | 匿名 GHCR master 镜像：两个 Bot/历史/搜索间切换、刷新、重新登录、持久化 profile 关闭重开；将偏好还原为 false 后在 iPhone 15 宽度 393px 打开 reader，布局全屏 `x=0,width=393,height=852`，存储仍为 `immersive:false` | 生产部署不可达，未验证 | GHCR 浏览器验收通过；线上未验证 |
+| P0-06 Markdown 字号 | 默认 16px，12–24px、步长 1；重置与持久化 | 字号无可见控件及可靠偏好作用域 | 新增独立版本化字号键和缩小/显示/放大/重置控件，仅缩放 Markdown | `npm test`；边界、损坏值、存储不可用和默认回退 | 浏览器实测 12/24px 边界按钮禁用、重置回 16px；匿名 GHCR 镜像持久化 profile 关闭重开保持字号。60 段长文在 `scrollTop=1200` 时从 20px 调至 21px 后，报告未变且 `scrollTop` 仍为 1200；移动端无页面溢出 | 生产部署不可达，未验证 | GHCR 浏览器验收通过；线上未验证 |
 | P0-07 推送指令 | 自动当前 origin；无必填 Bot ID；认证与稳定身份指引正确 | 原交互要求域名/Bot ID，不能满足零配置复制 | origin 默认 `/api/v1/reports`；高级项只覆盖地址/source；服务端 source 空值归 `unknown`，稳定 task id 可确定性派生 bot_id；缺身份返回 400 | `go test -race ./...` 覆盖 `unknown`、跨日稳定身份及缺身份；`npm test` | 320px 真实浏览器预览和复制：不含 `YOUR_DOMAIN`、无必填 Bot ID，说明 localhost 外部不可达并以安全环境变量配置 Token | 生产不可达，未验证 | 本地通过；线上未验证 |
-| P1-08 Bot 改名与删除 | 改展示名不改身份、不被新推送覆盖；报告及 Bot 均可删除 | 原始 bot_name 变化可能覆盖名称；DB 缺用户自定义名称字段 | SQLite `display_name` 无损迁移；浏览器 session 保护 PATCH；卡片、历史、搜索统一展示；保留逐报告/Bot 删除 | `go test -race ./...` 覆盖旧库迁移、持久化、重命名与后续推送；API 权限/输入用例 | 本地 UI 改名后卡片/历史/搜索一致；新 bot_name 推送不覆盖；逐一删除报告和 Bot 的二次确认生效；隔离 Docker 重启后名称仍保留 | 生产不可达，未验证 | 本地通过；线上未验证 |
-| P1-09 Logo/README/favicon | 三模块汇入 Dock 的图标统一且小尺寸清晰，无 404 | 登录/Web/文档资源需要保持一致 | README 92×92；Web、favicon、深浅色 SVG 使用一致 Dock 图形；Go embed 随镜像打包 | `npm run build`；镜像静态资源内嵌 | 本地 `/favicon.svg`、`/brand/bolt-dock.svg`、`/brand/bolt-dock-dark.svg` 均 HTTP 200；真实浏览器截图检查。GitHub README 页面渲染未单独访问验证 | 生产不可达，未验证 | 本地通过；GitHub/线上未验证 |
+| P1-08 Bot 改名与删除 | 改展示名不改身份、不被新推送覆盖；报告及 Bot 均可删除 | 原始 bot_name 变化可能覆盖名称；DB 缺用户自定义名称字段 | SQLite `display_name` 无损迁移；浏览器 session 保护 PATCH；卡片、历史、搜索统一展示；保留逐报告/Bot 删除 | `go test -race ./...` 覆盖旧库迁移、持久化、重命名与后续推送；API 权限/输入用例 | 本地 UI 测过卡片/历史/搜索一致、新 bot_name 不覆盖、报告/Bot 删除确认、隔离 Docker 重启保留；匿名 GHCR 镜像 UI 实测改名预填、取消、保存、恢复默认、手机可用。暂停隔离容器后保存触发 `Failed to fetch` alert；重启后健康端点返回 ok | 生产不可达，未验证 | 本地与 GHCR UI 测试通过；线上未验证 |
+| P1-09 Logo/README/favicon | 三模块汇入 Dock 的图标统一且小尺寸清晰，无 404 | 登录/Web/文档资源需要保持一致 | README 92×92；Web、favicon、深浅色 SVG 使用一致 Dock 图形；Go embed 随镜像打包 | `npm run build`；资源请求 HTTP 200；镜像静态资源内嵌 | 本地 favicon/浅色/深色 SVG HTTP 200，Bolt Dock 页面截图实测；Edge 登录态实际打开私有 GitHub master 仓库，截图查看 README 居中小图标和标题。图像现场查看但未保存为仓库文件 | 用户生产部署不可达，未验证 | README/本地页面实测通过；生产镜像版本未验证 |
 | P1-10 Actions/发布 | PR 只验证；真实运行时代码合并后一次多架构发布；docs-only 不发布 | 旧路径过滤与重复发布需实证核查 | 保留单一 `.github/workflows/ci.yml`；按完整 diff 筛选运行时路径；单次 Buildx multi-arch job | `bash scripts/release-paths.sh --test` 通过；docs 输入 false、Go 输入 true；PR #10 validate 通过（run `38029771656`） | PR publish 按配置跳过；master run `38029816646` 的 validate/publish 均成功且只执行一轮 Buildx；匿名拉取并运行 `master` 镜像，index digest `sha256:a3afc5cb8da33089659d831706debd6560225e10557cee95d1a08f2fabbbda8a`，含 amd64/arm64 | semver tag 未实际触发；生产部署未知 | PR/master/GHCR 验证通过；tag 和生产环境未验证 |
 
 ## P2-11 集成验证
@@ -33,7 +35,7 @@
 | 隔离 Docker 健康/SQLite | `/healthz`、报告 POST/GET、重启、改名后重启读取；仅使用 `/tmp/bolt-dock-p6-docker` | 通过；容器以 `10001:10001` 运行。确认不触碰生产卷 |
 | 已发布 GHCR 镜像 | 无凭据 Docker 配置匿名 pull amd64/arm64；运行镜像并检查 `/healthz` 与报告 API | index `sha256:a3afc5cb8da33089659d831706debd6560225e10557cee95d1a08f2fabbbda8a`；两个平台均 pull 成功；运行 healthy、UID `10001:10001` |
 | 真实浏览器矩阵 | `output/playwright/p6/` | 1440/1280/768/430/390/375/320px；首页、阅读器、长 Markdown、表格、代码、搜索改名、移动端推送指令与对话框截图已保存 |
-| Logo 资源 | 对本地 favicon/浅色/深色 SVG 发 HEAD 请求 | 三项 HTTP 200、`image/svg+xml` |
+| Logo 资源 | 对本地 favicon/浅色/深色 SVG 发 HEAD 请求；打开 GitHub master README 实际渲染页截图检查 | 三项 HTTP 200、`image/svg+xml`；GitHub README 截图现场检查通过，未另存进仓库 |
 | release path | `bash scripts/release-paths.sh --test` 与 docs/source 输入检查 | 通过；文档 false、Go 源码 true |
 | PR / CI / GHCR | [PR #10](https://github.com/Nyakooo/grok-bot-dock/pull/10)；[PR validate run 38029771656](https://github.com/Nyakooo/grok-bot-dock/actions/runs/38029771656)；[master validate + publish run 38029816646](https://github.com/Nyakooo/grok-bot-dock/actions/runs/38029816646) | 两个 run 成功；PR 的 publish 跳过，master 运行一次 Buildx 发布 |
 | 线上部署、缓存、生产 SQLite | 当前环境无生产 URL/主机权限 | 未验证；不得据此声称线上已更新 |
@@ -47,6 +49,9 @@
 - 沉浸与长内容：`reader-immersive-font17.png`、`reader-long-320.png`
 - Bot 改名/搜索：`renamed-reader-mobile.png`、`search-display-name-320.png`、`rename-mobile-320.png`
 - 推送指令：`prompt-mobile-320.png`
+- GHCR master 匿名发布镜像 iPhone 15 触摸模拟：`reader-touch-iphone15.png`
+- GitHub master README：于登录态 Edge 中实际渲染并截图检查图标/标题；截图显示在本轮验收记录中，未作为本地文件提交。
+- Bot 改名请求失败：隔离 GHCR 验收容器暂停时点击保存，UI 显示 `Failed to fetch` alert；容器随后恢复，`/healthz` 返回 `ok`。
 
 初次浏览器回归捕捉到最大化阅读层低于模糊遮罩、320px 工具栏返回文字竖向换行的问题；修复后复测并保留上述最终截图。`reader-immersive-debug.png` 为缺陷复现图，不作为通过证据。
 
@@ -65,11 +70,12 @@
 - master Actions：[run 38029816646](https://github.com/Nyakooo/grok-bot-dock/actions/runs/38029816646)：validate 和 publish 均成功，只有一个多架构 Buildx job
 - 匿名 GHCR manifest API 返回 HTTP 200；amd64 与 arm64 均使用无凭据 Docker 配置实际 pull 成功。`ghcr.io/nyakooo/grok-bot-dock:master` OCI index digest：`sha256:a3afc5cb8da33089659d831706debd6560225e10557cee95d1a08f2fabbbda8a`；amd64 `sha256:1f4b0acf0c3ae8f8264dd60bd39f523d49e21bfd5d9f05ef81b5732459c89a6c`；arm64 `sha256:631662a90e0b2bbcc5fb99f4b715a1283149e19234d33970afcfc711018b3502`
 - 匿名拉取的 GHCR master 镜像运行后 `/healthz` 返回 `ok`，Bearer 报告 API POST/GET 通过，容器 `healthy` 且 UID `10001:10001`。只挂载新的隔离 `/tmp` 数据目录。
+- 文档证据 PR：[PR #11](https://github.com/Nyakooo/grok-bot-dock/pull/11)；PR validate run `38030180859` 成功，master docs-only run `38030238692` 验证通过且 publish 按路径过滤跳过。
 - semver tag Actions：本轮未触发，不能标记已验证
 
 ## 未解决/受环境限制
 
 1. 生产部署 URL、反向代理、线上静态资源缓存和当前运行镜像 digest 未提供，均未验证；需要在可访问的真实部署上复验，不把本地结果当作线上验收。
-2. GitHub README 的远端渲染未单独打开检查；README 源文件尺寸和本地 SVG 服务已核验。
-3. 本轮没有创建 semver tag，因此 tag 发布事件未实际执行。
+2. 本轮没有创建 semver tag，因此 tag 发布事件未实际执行。
+3. GitHub master README 实际渲染与截图已查看，但截图未导出为仓库文件；已有 app 视口截图保存在 `output/playwright/p6/`。
 4. 隔离 Docker 测试数据与浏览器测试数据均为临时验收数据，不属于用户生产数据。
