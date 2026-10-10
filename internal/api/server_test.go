@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -40,6 +41,129 @@ func request(h http.Handler, method, path, body, token string) *httptest.Respons
 func postBody(source, content, external string) string {
 	body, _ := json.Marshal(map[string]any{"source": source, "bot_id": "daily", "bot_name": "Daily", "executed_at": "2026-10-09T20:00:00+08:00", "external_id": external, "content": content})
 	return string(body)
+}
+
+func TestBrowserSessionCookieLoginRefreshAndLogout(t *testing.T) {
+	h, _, _ := testHandler(t, 1<<20)
+	login := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"token":"test-secret"}`))
+	login.Header.Set("Content-Type", "application/json")
+	loginRecorder := httptest.NewRecorder()
+	h.ServeHTTP(loginRecorder, login)
+	if loginRecorder.Code != http.StatusOK {
+		t.Fatalf("login: %d %s", loginRecorder.Code, loginRecorder.Body.String())
+	}
+	cookies := loginRecorder.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("expected one session cookie, got %d", len(cookies))
+	}
+	cookie := cookies[0]
+	if cookie.Name != sessionCookie || !cookie.HttpOnly || cookie.Secure || cookie.SameSite != http.SameSiteLaxMode || cookie.Path != "/" || cookie.MaxAge != 0 || cookie.Expires.Year() != 1 {
+		t.Fatalf("unexpected session cookie attributes: %#v", cookie)
+	}
+
+	sessionReq := httptest.NewRequest(http.MethodGet, "/api/v1/auth/session", nil)
+	sessionReq.AddCookie(cookie)
+	sessionRecorder := httptest.NewRecorder()
+	h.ServeHTTP(sessionRecorder, sessionReq)
+	if sessionRecorder.Code != http.StatusOK || !strings.Contains(sessionRecorder.Body.String(), `"authenticated":true`) {
+		t.Fatalf("session probe did not restore login state: %d %s", sessionRecorder.Code, sessionRecorder.Body.String())
+	}
+	for _, endpoint := range []string{"/api/v1/bots"} {
+		req := httptest.NewRequest(http.MethodGet, endpoint, nil)
+		req.AddCookie(cookie)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("session did not survive page/API request to %s: %d %s", endpoint, w.Code, w.Body.String())
+		}
+	}
+
+	logout := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	logout.AddCookie(cookie)
+	logout.Header.Set("Origin", "http://example.com")
+	logout.Header.Set("Host", "example.com")
+	logoutRecorder := httptest.NewRecorder()
+	h.ServeHTTP(logoutRecorder, logout)
+	if logoutRecorder.Code != http.StatusOK {
+		t.Fatalf("logout: %d %s", logoutRecorder.Code, logoutRecorder.Body.String())
+	}
+	cleared := logoutRecorder.Result().Cookies()
+	if len(cleared) != 1 || cleared[0].MaxAge != -1 || cleared[0].Path != "/" || !cleared[0].HttpOnly {
+		t.Fatalf("session cookie was not cleared with matching attributes: %#v", cleared)
+	}
+	for _, endpoint := range []string{"/api/v1/bots"} {
+		req := httptest.NewRequest(http.MethodGet, endpoint, nil)
+		req.AddCookie(cookie)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("revoked session still accesses %s: %d", endpoint, w.Code)
+		}
+	}
+	loggedOutProbe := httptest.NewRequest(http.MethodGet, "/api/v1/auth/session", nil)
+	loggedOutProbe.AddCookie(cookie)
+	loggedOutStatus := httptest.NewRecorder()
+	h.ServeHTTP(loggedOutStatus, loggedOutProbe)
+	if loggedOutStatus.Code != http.StatusOK || !strings.Contains(loggedOutStatus.Body.String(), `"authenticated":false`) {
+		t.Fatalf("session probe did not report revoked cookie: %d %s", loggedOutStatus.Code, loggedOutStatus.Body.String())
+	}
+	if got := request(h, http.MethodGet, "/api/v1/bots", "", "test-secret"); got.Code != http.StatusOK {
+		t.Fatalf("Bearer API compatibility regressed: %d %s", got.Code, got.Body.String())
+	}
+}
+
+func TestSessionCookieSecureBehindHTTPSProxyAndRejectsForeignOrigin(t *testing.T) {
+	h, _, _ := testHandler(t, 1<<20)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"token":"test-secret"}`))
+	req.Header.Set("X-Forwarded-Proto", "https")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("login: %d %s", w.Code, w.Body.String())
+	}
+	cookie := w.Result().Cookies()[0]
+	if !cookie.Secure {
+		t.Fatalf("HTTPS proxy session cookie is not Secure: %#v", cookie)
+	}
+	logout := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	logout.AddCookie(cookie)
+	logout.Header.Set("Origin", "https://attacker.example")
+	logout.Header.Set("X-Forwarded-Proto", "https")
+	rejected := httptest.NewRecorder()
+	h.ServeHTTP(rejected, logout)
+	if rejected.Code != http.StatusForbidden {
+		t.Fatalf("foreign origin was not rejected: %d %s", rejected.Code, rejected.Body.String())
+	}
+}
+
+func TestExpiredSessionAndInvalidPasswordAreRejected(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "session.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	server := New(db, events.New(), "test-secret", 1<<20, webui.Files)
+	h := server.Handler()
+	badLogin := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"token":"wrong"}`))
+	badLoginRecorder := httptest.NewRecorder()
+	h.ServeHTTP(badLoginRecorder, badLogin)
+	if badLoginRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("invalid access token was accepted: %d", badLoginRecorder.Code)
+	}
+	login := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"token":"test-secret"}`))
+	loginRecorder := httptest.NewRecorder()
+	h.ServeHTTP(loginRecorder, login)
+	cookie := loginRecorder.Result().Cookies()[0]
+	server.sessionMu.Lock()
+	server.sessions[cookie.Value] = time.Now().Add(-time.Second)
+	server.sessionMu.Unlock()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/bots", nil)
+	request.AddCookie(cookie)
+	rejected := httptest.NewRecorder()
+	h.ServeHTTP(rejected, request)
+	if rejected.Code != http.StatusUnauthorized {
+		t.Fatalf("expired session still accesses protected data: %d", rejected.Code)
+	}
 }
 
 func TestReportPushAndReadFlow(t *testing.T) {
@@ -227,6 +351,82 @@ func TestSSEReportsNewReportAndDisconnect(t *testing.T) {
 	case <-readerDone:
 	case <-time.After(time.Second):
 		t.Fatal("SSE reader did not disconnect")
+	}
+}
+
+func TestSSEStopsImmediatelyAfterSessionLogout(t *testing.T) {
+	h, _, _ := testHandler(t, 1<<20)
+	server := httptest.NewServer(h)
+	defer server.Close()
+
+	login, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/auth/login", strings.NewReader(`{"token":"test-secret"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	login.Header.Set("Content-Type", "application/json")
+	loginResponse, err := server.Client().Do(login)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loginResponse.Body.Close()
+	if loginResponse.StatusCode != http.StatusOK {
+		t.Fatalf("login status=%d", loginResponse.StatusCode)
+	}
+	cookie := loginResponse.Cookies()[0]
+
+	streamRequest, err := http.NewRequest(http.MethodGet, server.URL+"/api/v1/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	streamRequest.AddCookie(cookie)
+	stream, err := server.Client().Do(streamRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Body.Close()
+	if stream.StatusCode != http.StatusOK {
+		t.Fatalf("SSE status=%d", stream.StatusCode)
+	}
+	readerDone := make(chan struct{})
+	go func() {
+		defer close(readerDone)
+		_, _ = io.Copy(io.Discard, stream.Body)
+	}()
+
+	logout, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/auth/logout", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logout.AddCookie(cookie)
+	logout.Header.Set("Origin", server.URL)
+	logoutResponse, err := server.Client().Do(logout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logoutResponse.Body.Close()
+	if logoutResponse.StatusCode != http.StatusOK {
+		t.Fatalf("logout status=%d", logoutResponse.StatusCode)
+	}
+
+	push, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/reports", strings.NewReader(postBody("grok", "# after logout", "after-logout")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	push.Header.Set("Authorization", "Bearer test-secret")
+	push.Header.Set("Content-Type", "application/json")
+	pushResponse, err := server.Client().Do(push)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pushResponse.Body.Close()
+	if pushResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("report push status=%d", pushResponse.StatusCode)
+	}
+
+	select {
+	case <-readerDone:
+	case <-time.After(time.Second):
+		t.Fatal("SSE stream remained open after logout")
 	}
 }
 

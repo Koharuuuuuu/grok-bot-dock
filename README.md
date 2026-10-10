@@ -1,5 +1,7 @@
 # Bolt Dock
 
+![Bolt Dock logo](frontend/public/brand/bolt-dock.svg)
+
 Bolt Dock 是自托管的 AI Bot 报告工作台。任意能发起 HTTPS 请求的任务都可以推送 Markdown 报告；报告按来源和 Bot 自动归档，在同一个网页中搜索、阅读和接收实时提醒。产品界面称为 Bolt Dock，GitHub 仓库仍为 `grok-bot-dock`。
 
 ## 能力
@@ -46,13 +48,16 @@ curl -X POST "https://YOUR_DOMAIN/api/v1/reports" \
   }'
 ```
 
-新建返回 HTTP 201；同一 `(source, bot_id, external_id)` 重试返回 HTTP 200 和已有报告 ID。Token 不应写入 AI 提示词或报告正文。服务拒绝没有 `ACCESS_TOKEN` 的启动；阅读 API 和推送 API 均需 Bearer Token。网页登录只在当前页面内存持有 Token；刷新页面后需要重新输入。生产环境应仅经 HTTPS 反向代理公开，并可在代理层增加访问认证和限流。
+新建返回 HTTP 201；同一 `(source, bot_id, external_id)` 重试返回 HTTP 200 和已有报告 ID。Token 不应写入 AI 提示词或报告正文。服务拒绝没有 `ACCESS_TOKEN` 的启动；推送 API 继续使用 Bearer Token。网页登录将密钥一次性提交到 `POST /api/v1/auth/login`，服务端签发 12 小时有效、无持久 `Expires`/`Max-Age` 的 HttpOnly、SameSite=Lax 会话 Cookie；HTTPS（含反向代理的 `X-Forwarded-Proto: https`）下设置 Secure。访问密钥不存进浏览器存储；刷新和同源新标签通过服务端会话恢复，主动退出会撤销会话并清除 Cookie。会话存在服务进程内，重启服务会要求重新登录。浏览器关闭后是否丢弃会话 Cookie 取决于浏览器的会话恢复设置；Web 应用无法可靠侦测窗口或浏览器进程关闭。生产环境应仅经 HTTPS 反向代理公开，并可在代理层增加访问认证和限流。
 
-数据接口（均要求 Bearer Token，`GET /healthz` 除外）：
+数据接口（阅读工作台支持会话 Cookie；外部推送继续使用 Bearer Token；`GET /healthz` 和会话状态探测除外）：
 
 | 接口 | 用途 |
 | --- | --- |
 | `GET /healthz` | 容器健康检查，不需要 Token |
+| `POST /api/v1/auth/login` | 使用 `ACCESS_TOKEN` 创建浏览器会话 |
+| `GET /api/v1/auth/session` | 探测当前浏览器会话，不泄露凭据 |
+| `POST /api/v1/auth/logout` | 立即撤销浏览器会话并清除 Cookie |
 | `GET /api/v1/sources` | 已推送来源及计数 |
 | `GET /api/v1/bots?source=` | Bot 卡片、未读状态和统计 |
 | `GET /api/v1/reports?source=&bot_id=&date=&cursor=` | 报告列表和历史分页 |
@@ -128,7 +133,7 @@ Bolt Dock 自身仍要求 Bearer Token；可在现有反向代理再加一层访
 
 ## GitHub Actions 与 GHCR
 
-`.github/workflows/ci.yml` 在 PR 和 master 更新时运行 Go 测试及前端构建。`docker-publish.yml` 在校验通过后，为 master 发布 `:master`，版本标签 `vX.Y.Z` 发布 `:X.Y.Z` 和 `:latest`。Workflow 仅需要 `contents: read` 和发布 Job 的 `packages: write`，认证使用短期 `GITHUB_TOKEN`。
+`.github/workflows/ci.yml` 是唯一的验证和发布工作流：PR 始终运行 Go 测试、前端测试和构建，发布 Job 不会在 PR 中运行；master push 仍执行一次验证，只有 Go/前端/镜像运行时构建输入变更才发布 `:master`。版本标签 `vX.Y.Z` 发布 `:X.Y.Z` 和 `:latest`，`workflow_dispatch` 可对选定 ref 手动发布或重试。路径判断比较一次 push 的完整 `before..sha` 文件差异，文档和图片证据不发布镜像；重命名/删除也会匹配原路径。发布 Job 依赖验证成功，并用一次 Buildx 操作推送 amd64/arm64 manifest。验证 Job 仅需要 `contents: read`，发布 Job 另需 `packages: write`，认证使用短期 `GITHUB_TOKEN`。发布失败可在 GitHub Actions 中重跑失败 Job；若其后有 docs-only push，可手动 dispatch 失败版本 ref 补发。
 
 GHCR 包的公开可见性由仓库拥有者在 GitHub Packages 页面设置：打开 `grok-bot-dock` 容器包的 **Package settings → Change visibility → Public**。保持源码仓库原有私有设置。修改可见性后，从未登录 Docker 的主机运行 `docker pull ghcr.io/nyakooo/grok-bot-dock:master` 验证匿名访问。
 
