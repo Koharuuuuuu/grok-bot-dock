@@ -173,6 +173,6 @@ GHCR 首次发布及后续多架构修复均已验收：PR #1–#3 已合并至 
 > 本轮执行和实测记录见 [P6 验收报告](./P6_ACCEPTANCE_REPORT.md)。本地 Go/Vue、真实浏览器、隔离 Docker 与 SQLite 持久性检查已通过；PR/Actions/GHCR 结果在合并后补录。生产部署 URL 未提供，生产版本与数据仍标记未验证。
 
 
-## P7 MCP 原生接入（2026-10-10，实施与本地验收中）
+## P7 MCP 原生接入（2026-10-10，已合并并完成镜像验收）
 
-> [P7 MCP 技术设计与执行验收计划](./P7_MCP_EXECUTION_PLAN.md) 是本阶段唯一权威清单。已在 `/mcp` 实现无状态 Streamable HTTP、`publish_report` 与 `search_reports`，共享 REST 校验、幂等、SSE、SQLite 和 FTS5；更新了 README、技术设计及反向代理接入说明；完成 Go/Vue、真实浏览器和隔离 Docker 基础验收。实际 Codex 客户端连接、远程第二客户端、GitHub Actions/GHCR master 发布与生产部署仍按 [P7 验收报告](./P7_MCP_ACCEPTANCE.md)逐项验证，未经验证不标记完成。
+> [P7 MCP 技术设计与执行验收计划](./P7_MCP_EXECUTION_PLAN.md) 是本阶段唯一权威清单。`/mcp` 提供无状态 Streamable HTTP、`publish_report` 与 `search_reports`，共用 REST 校验、幂等、限流、SSE、SQLite 和 FTS5；README、技术设计及反向代理说明已更新。PR #13 已合并到 master；PR/master Actions、GHCR master 多架构发布、匿名 manifest/blob 拉取、Codex CLI 和 MCP Inspector 客户端验收均已记录在 [P7 验收报告](./P7_MCP_ACCEPTANCE.md)。P6 全量设备矩阵及生产部署未验证，继续保留为未完成项。

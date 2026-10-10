@@ -191,7 +191,7 @@ location = /mcp {
 
 `.github/workflows/ci.yml` 是唯一的验证和发布工作流：PR 始终运行 Go 测试、前端测试和构建，发布 Job 不会在 PR 中运行；master push 仍执行一次验证，只有 Go/前端/镜像运行时构建输入变更才发布 `:master`。版本标签 `vX.Y.Z` 发布 `:X.Y.Z` 和 `:latest`，`workflow_dispatch` 可对选定 ref 手动发布或重试。路径判断比较一次 push 的完整 `before..sha` 文件差异，文档和图片证据不发布镜像；重命名/删除也会匹配原路径。发布 Job 依赖验证成功，并用一次 Buildx 操作推送 amd64/arm64 manifest。验证 Job 仅需要 `contents: read`，发布 Job 另需 `packages: write`，认证使用短期 `GITHUB_TOKEN`。发布失败可在 GitHub Actions 中重跑失败 Job；若其后有 docs-only push，可手动 dispatch 失败版本 ref 补发。
 
-GHCR 包的公开可见性由仓库拥有者在 GitHub Packages 页面设置：打开 `grok-bot-dock` 容器包的 **Package settings → Change visibility → Public**。保持源码仓库原有私有设置。修改可见性后，从未登录 Docker 的主机运行 `docker pull ghcr.io/nyakooo/grok-bot-dock:master` 验证匿名访问。
+GHCR 包的公开可见性由仓库拥有者在 GitHub Packages 页面设置：打开 `grok-bot-dock` 容器包的 **Package settings → Change visibility → Public**。保持源码仓库原有私有设置。2026-10-10 已对 `ghcr.io/nyakooo/grok-bot-dock:master` 完成匿名多架构 manifest/blob 读取及 arm64 拉取验证；当前 digest 和发布记录见 [P7 验收报告](docs/P7_MCP_ACCEPTANCE.md)。
 
 ## 测试
 

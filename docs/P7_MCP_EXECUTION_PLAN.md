@@ -1,6 +1,6 @@
 # P7 · MCP 原生接入：技术设计与 Codex 执行清单
 
-> 状态：**代码实现与本地验收已进行；远程 Codex 客户端、GitHub Actions/GHCR 和生产环境仍未验收**。逐项结果见 [P7 验收报告](./P7_MCP_ACCEPTANCE.md)。仓库：`Nyakooo/grok-bot-dock`，默认分支 `master`。P7 在 P6 已修复功能基础上增量实现，不能回退 P6。产品当前界面名称为 Bolt Dock（后续品牌更名不属于本任务）。日期：2026-10-10。
+> 状态：**P7 实现、PR 合并、PR/master Actions、GHCR 多架构匿名拉取、本机 Codex 与 MCP Inspector 验收已完成；P6 全量设备矩阵和生产部署未验证**。逐项结果见 [P7 验收报告](./P7_MCP_ACCEPTANCE.md)。仓库：`Nyakooo/grok-bot-dock`，默认分支 `master`。P7 在 P6 已修复功能基础上增量实现，不能回退 P6。产品当前界面名称为 Bolt Dock（后续品牌更名不属于本任务）。日期：2026-10-10。
 
 ## 1. 目标、边界与产品价值
 
@@ -58,8 +58,8 @@
 ## 8. 部署与使用文档
 
 - [x] README 写明 MCP 地址、Streamable HTTP、Bearer 环境变量、HTTPS/反向代理和 REST 差异。
-- [x] 用真实 Codex CLI `0.162.0-alpha.2` 在隔离本地服务上验证工具发现、发布和检索；接入配置步骤与安全变量名已写入 README。
-- [ ] 第二个 MCP 客户端尚未实测；验收报告明确注明，不宣称多客户端兼容。
+- [x] 用真实 Codex CLI `0.162.0-alpha.2` 在隔离本地服务及匿名拉取的 GHCR master arm64 镜像上验证工具发现、发布和检索；接入配置步骤与安全变量名已写入 README。
+- [x] 用独立 MCP Inspector CLI 在匿名拉取的 GHCR master 镜像上验证工具发现和 `search_reports`；Schema portability 检查 0 errors、13 warnings，报告注明不据此宣称兼容所有客户端。
 - [x] README 提供正式报告发布 JSON 和中文搜索示例，不含实际 Token；说明 MCP 不保证定时调用、定时推送沿用 REST。
 - [x] 已更新技术设计、执行路线图、README 反向代理说明；Compose 单容器、镜像路径和 `/data` 不变。
 - [x] 已说明共享密钥公网暴露影响；本期未增加 `MCP_ENABLED` 开关，MCP 路由受现有 `ACCESS_TOKEN` 保护。
@@ -72,9 +72,9 @@
 - [x] D. REST 与 MCP 双向检索通过，含中文、日期、来源、同名 Bot 隔离及游标分页。
 - [x] E. 工具校验、空结果/空查询、请求体限制、limit、并发、客户端取消、非法 JSON-RPC 和日志字段边界有测试。
 - [x] F. `make test`、`make build`、Docker 构建、容器 `/healthz`、SQLite 重启持久化通过；资源实测数据与是否套用 Compose 限额见验收报告。
-- [x] G. 真实 Codex CLI 完成工具发现、publish_report、search_reports；第二客户端仍未验证并在报告中注明。
-- [ ] H. P6 全量核心回归及远程 GHCR 发布流程尚未本轮全部复验；已做的真实浏览器/API子项见验收报告。
-- [x] I. `docs/P7_MCP_ACCEPTANCE.md` 已创建，按证据记录实现、命令、客户端与部署限制；CI、GHCR digest 和生产项保持未验收，直到拿到真实结果。
+- [x] G. 真实 Codex CLI 对本机服务及发布后的 GHCR master 镜像完成工具发现、publish_report、search_reports；MCP Inspector CLI 完成第二客户端工具发现与搜索。
+- [ ] H. P6 全量核心回归和完整设备矩阵未全部复验；PR/master Actions、GHCR master 发布与匿名 amd64/arm64 manifest/blob 拉取已验证，其他 P6 浏览器/API子项见验收报告。
+- [x] I. `docs/P7_MCP_ACCEPTANCE.md` 已创建并在合并/发布后更新，按证据记录实现、命令、PR、Actions、匿名 GHCR digest、客户端与部署限制；生产项保持未验收。
 
 ## 10. 推荐执行顺序与提交策略
 
