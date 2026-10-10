@@ -3,6 +3,7 @@
 Updated: 2026-10-10
 Base SHA: `4023848d7878bc94038eaf2588bc410c51364dad`
 Working branch: `feature/p8-mcp-oauth`
+Local implementation commit: `cb48a70d8bb4f3254dc3c96963812b87e2b3afe5`
 
 Latest `origin/master` check: `4023848d7878bc94038eaf2588bc410c51364dad` (2026-10-10); branch is based on current remote master.
 
