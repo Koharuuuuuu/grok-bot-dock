@@ -31,6 +31,8 @@
 
 当前不支持 CIMD、DCR 或 refresh token。若目标客户端不能使用静态预注册信息、必须刷新 Token，或拒绝 service metadata/resource 参数，则本实现不能据此标记兼容；先记录实际客户端请求再扩展。
 
+机密客户端可在 OAuth 管理页轮换 Client Secret。新 Secret 只在轮换响应中返回一次，数据库仅保存 SHA-256 摘要；公开客户端不能轮换 Secret。轮换只替换客户端认证凭据，不会重签或自动撤销已签发 access token；已有 Token 仍按各自 TTL、grant 撤销和客户端停用规则生效。客户端 Secret 与 `ACCESS_TOKEN` 相互独立。
+
 **必须实测** OAuth Protected Resource Metadata → AS Discovery → 预注册 Client ID → PKCE/授权 → token → `tools/list` → 工具调用 → 授权撤销，以及失败/过期/无权场景。OAuth 支持与定时无人值守是两件事，不能因为 MCP 接入就宣称“每小时自动推送”。
 
 ## 凭据与用户提示

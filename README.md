@@ -124,7 +124,9 @@ bearer_token_env_var = "BOLT_DOCK_TOKEN"
 Legacy MCP Bearer 仍使用共享 `ACCESS_TOKEN`；OAuth 另行按 P8 配置启用，二者并存且不互相转换。两种模式都属于单所有者服务，不提供多用户隔离。反向代理如将服务暴露到公网，应配置 HTTPS 和代理侧限流。MCP 能让客户端发现工具，不保证 Agent 只在最终报告时调用，也不提供定时触发保证；定时推送继续使用 REST API。Codex/其他客户端的具体版本兼容性以真实客户端连接测试为准；P7 历史验收见 [docs/P7_MCP_ACCEPTANCE.md](docs/P7_MCP_ACCEPTANCE.md)，P8 实测范围见 [docs/P8_OAUTH_ACCEPTANCE.md](docs/P8_OAUTH_ACCEPTANCE.md)。
 
 
-## P8 MCP OAuth 2.1 安全配置
+## P8 MCP OAuth 2.1 安全配置（受限实现）
+
+此处的“OAuth 2.1”表示采用其安全基线的授权码 + PKCE S256 profile，不代表完整实现或通过全部 OAuth 2.1 规范符合性验证；当前 draft 状态与 P8 验收缺项见 [验收记录](docs/P8_OAUTH_ACCEPTANCE.md)。
 
 P8 本地功能分支为 `/mcp` 增加可选 OAuth Authorization Code + PKCE S256；原共享 Bearer 和 REST API 保持兼容。该代码尚未发布到 master 或 GHCR，OAuth 默认关闭。启用前配置 `OAUTH_ENABLED=true` 与 `PUBLIC_BASE_URL=https://<canonical-public-host>`；该值必须是固定 HTTPS origin，不支持 URL 子路径，不能由请求 `Host` 或 `X-Forwarded-*` 推导。仅 `localhost` / loopback 可用 HTTP 做本地隔离测试。OAuth 启用而 URL 缺失或不合规则会拒绝启动。
 

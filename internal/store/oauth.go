@@ -9,12 +9,13 @@ import (
 )
 
 type OAuthClient struct {
-	ID         string   `json:"client_id"`
-	Name       string   `json:"client_name"`
-	Redirects  []string `json:"redirect_uris"`
-	SecretHash string   `json:"-"`
-	CreatedAt  string   `json:"created_at"`
-	DisabledAt string   `json:"disabled_at,omitempty"`
+	ID           string   `json:"client_id"`
+	Name         string   `json:"client_name"`
+	Redirects    []string `json:"redirect_uris"`
+	Confidential bool     `json:"confidential"`
+	SecretHash   string   `json:"-"`
+	CreatedAt    string   `json:"created_at"`
+	DisabledAt   string   `json:"disabled_at,omitempty"`
 }
 
 type OAuthCode struct {
@@ -89,7 +90,7 @@ func (s *Store) OAuthClient(ctx context.Context, id string) (OAuthClient, error)
 }
 
 func (s *Store) OAuthClients(ctx context.Context) ([]OAuthClient, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT client_id,name,redirect_uris_json,created_at,disabled_at FROM oauth_clients ORDER BY created_at DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT client_id,name,redirect_uris_json,client_secret_hash,created_at,disabled_at FROM oauth_clients ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -98,15 +99,48 @@ func (s *Store) OAuthClients(ctx context.Context) ([]OAuthClient, error) {
 	for rows.Next() {
 		var c OAuthClient
 		var redirects string
-		if err := rows.Scan(&c.ID, &c.Name, &redirects, &c.CreatedAt, &c.DisabledAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &redirects, &c.SecretHash, &c.CreatedAt, &c.DisabledAt); err != nil {
 			return nil, err
 		}
+		c.Confidential = c.SecretHash != ""
+		c.SecretHash = ""
 		if err := json.Unmarshal([]byte(redirects), &c.Redirects); err != nil {
 			return nil, err
 		}
 		clients = append(clients, c)
 	}
 	return clients, rows.Err()
+}
+
+func (s *Store) RotateOAuthClientSecret(ctx context.Context, id, secretHash string) error {
+	if secretHash == "" {
+		return errors.New("empty OAuth client secret hash")
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE oauth_clients SET client_secret_hash=? WHERE client_id=? AND client_secret_hash<>'' AND disabled_at=''`, secretHash, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		var exists int
+		var secretHash string
+		var disabledAt string
+		err = s.db.QueryRowContext(ctx, `SELECT 1,client_secret_hash,disabled_at FROM oauth_clients WHERE client_id=?`, id).Scan(&exists, &secretHash, &disabledAt)
+		if err != nil {
+			return err
+		}
+		if disabledAt != "" {
+			return ErrOAuthDisabled
+		}
+		if secretHash == "" {
+			return ErrOAuthPublicClient
+		}
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (s *Store) DisableOAuthClient(ctx context.Context, id string) error {
@@ -286,3 +320,4 @@ func (s *Store) OAuthAudit(ctx context.Context, eventType, clientID, result stri
 }
 
 var ErrOAuthDisabled = errors.New("oauth client disabled")
+var ErrOAuthPublicClient = errors.New("public OAuth client has no client secret")

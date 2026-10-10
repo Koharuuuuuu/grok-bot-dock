@@ -57,8 +57,8 @@
 - [x] 手动预注册可信 OAuth Client，回调 URI 精确比对、client type/secret 存储保护；提供客户端信息展示与注册撤销流程。
 - [ ] 确认 CIMD 的处理与第三方实际支持；如需 DCR，先安全评估并增加保护策略，禁止无限开放写入。
 
-- [ ] 定义并测试 OAuth 授权服务器与资源服务器的**精确 URI 规则**：issuer、resource identifier、well-known 路径插入、redirect URI、trailing slash、URL 编码和 HTTPS；客户端使用标准发现而非硬编码私有端点。
-- [ ] Client ID 及 Client Secret 的发放、展示、轮换、禁用分开设计；公开客户端不可强制要求保密的 secret，机密客户端应验证 secret；client secret 不可等同 ACCESS_TOKEN。
+- [x] 定义并测试 OAuth 授权服务器与资源服务器的**精确 URI 规则**：issuer、resource identifier、well-known 路径插入、redirect URI、trailing slash、URL 编码和 HTTPS；客户端使用标准发现而非硬编码私有端点。
+- [x] Client ID 及 Client Secret 的发放、展示、轮换、禁用分开设计；公开客户端不可强制要求保密的 secret，机密客户端应验证 secret；client secret 不可等同 ACCESS_TOKEN。
 - [ ] CIMD 的 client_id URL 与元数据内容/域名绑定、redirect URI 匹配、缓存和重新验证策略须遵循当期规范；DCR 必须先通过滥用防护评审再开放，不得把任意外部 URL 当成可信元数据源。
 
 ## Phase 2：数据库 + 授权码与 Token
@@ -74,7 +74,7 @@
 - [x] 授权码交换在 SQLite 事务中原子消费；并发双重兑换只能成功一次，错误 PKCE 不得导致可用授权码被不当消耗（按规范与安全策略确定），拒绝授权不得生成 token。
 - [x] Access token 生命周期、15 分钟 TTL、撤销传播、重启后持久性和授权时清理已记录并测试；本期不提供 refresh token。
 - [x] 客户端禁用会立即使相关授权及 access token 无效；覆盖索引与事务测试。
-- [ ] 迁移只新增 OAuth 结构，验证旧数据 count、FTS、Bot 身份、幂等索引不变；记录升级前备份及兼容式回滚方案，禁止自动恢复生产数据库。
+- [x] 迁移只新增 OAuth 结构，验证旧数据 count、FTS、Bot 身份、幂等索引不变；记录升级前备份及兼容式回滚方案，禁止自动恢复生产数据库。
 
 ## Phase 3：双认证与细粒度工具权限
 
@@ -86,7 +86,7 @@
 
 - [ ] 形成按端点/工具的权限矩阵：Legacy ACCESS_TOKEN、OAuth read、OAuth write、OAuth read+write、浏览器 Cookie、匿名请求，逐项测试 200/401/403/工具错误的规范语义；不得出现 OAuth token 被 REST 管理接口接受的路径。
 - [x] 明确 MCP `tools/list` 可见性与调用权限策略，确保工具描述不会误导客户端；**真正权限在服务端 tools/call 时强制校验**，不可只靠隐藏按钮或工具描述。
-- [ ] 检查 token confusion、authorization code 注入、重放、scope 升级、resource/audience 不匹配、登录会话固定及 SSRF，形成独立威胁清单。
+- [x] 检查 token confusion、authorization code 注入、重放、scope 升级、resource/audience 不匹配、登录会话固定及 SSRF，形成独立威胁清单。剩余撤销/调用竞态和部署边界列入威胁清单。
 
 ## Phase 4：前端及客户端体验
 
@@ -96,7 +96,7 @@
 - [ ] 仅测试环境或经过允许的外部客户端真实验证 Grok 与 Claude 的 OAuth 连接。Cookie/session 不可被 AI Client 复用。
 - [ ] 验证 Codex CLI 既有 Bearer 配置和其他 P7 Inspector 场景。
 
-- [ ] 授权页必须显著展示：客户端名称、准确 redirect 域名、请求的 read/write 权限、读权限可访问**整个单所有者报告库**、写权限可声明 source/bot_id；明确允许/拒绝，不默认勾选或自动授权。
+- [x] 授权页必须显著展示：客户端名称、准确 redirect 域名、请求的 read/write 权限、读权限可访问**整个单所有者报告库**、写权限可声明 source/bot_id；明确允许/拒绝，不默认勾选或自动授权。
 - [ ] 授权页与已连接应用管理在手机/桌面、深浅主题、键盘操作下实测；撤销前确认、撤销后状态即时更新，过期/失败提示不泄露 token。
 - [x] 客户端接入说明优先 Grok，但只使用实际验证的回调 URI 和配置字段；若平台要求 OAuth client secret，明确安全发放方式；未知字段不编造。真实平台回调/字段仍标为待外部联调，没有声称已验证。
 
@@ -107,12 +107,16 @@
 - [x] Access Token 过期/撤销、客户端撤销、只读尝试写入、只写尝试读取、OAuth token 不能调用 REST。
 - [x] 若提供 refresh：不适用，本期不签发 refresh token。
 - [x] 如接入 CIMD/DCR：不适用，本期未实现 CIMD/DCR，不读取外部 client metadata，也未开放匿名注册。
-- [ ] 新旧认证并存、报告重复 external_id、中文搜索/游标、FTS、SSE、网页登录/注销、所有已有 Go/Vue 测试。
+- [x] 新旧认证并存、报告重复 external_id、中文搜索/游标、FTS、SSE、网页登录/注销、所有已有 Go/Vue 测试。
 - [ ] SQLite schema 从旧版本升级、重复迁移、容器重启、备份恢复演练；不丢历史报告/Bot。
-- [ ] `make test`、`make build`、Docker 构建与健康检查、镜像内运行 smoke test、资源实测。
+- [x] `make test`、`make build`、Docker 构建与健康检查、镜像内运行 smoke test、资源实测。
 
 - [x] 增加独立 OAuth 协议测试客户端（不是 Codex 专属），完成 discovery→authorize→consent→token→tools/list→publish/search→revoke 全链路，使用本地测试数据库，不依赖真实第三方账户。
 - [ ] 测试断电/重启、SQLite busy/锁竞争、并发兑换同一 code、并发 refresh 轮换、撤销与调用竞争；记录事务一致性和错误语义。
+  - [x] 容器重启后确认持久卷中的报告仍可读取；实际断电未模拟。
+  - [x] 外部 SQLite writer lock 阻塞写入、释放锁后写入恢复；并发双重兑换仅成功一次。
+  - [x] 并发 Token 查验/撤销竞态完成后，后续查验拒绝被撤销 Token；已签发的 in-flight 工具调用不会被主动取消。
+  - [x] Refresh rotation 不适用：本期不签发 refresh token。
 - [ ] 验证 Token/Client Secret 不会出现在前端静态资源、URL 查询日志、重定向泄露、错误栈、CI artifacts 或数据库明文字段中；必要时扫描提交内容。
 - [x] 将“真正多用户隔离”明确列为 P8 范围外：本期单所有者，不能将多用户隔离测试标为通过；本次不把多个客户端的存在宣称为多租户数据隔离。
 

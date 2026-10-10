@@ -74,6 +74,20 @@ func ValidatePublicBaseURL(raw string) bool {
 	return u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1")
 }
 
+func validOAuthRedirectURI(raw string) bool {
+	if raw == "" || raw != strings.TrimSpace(raw) {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || !u.IsAbs() || u.Opaque != "" || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
+		return false
+	}
+	if u.Scheme == "https" {
+		return true
+	}
+	return u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1")
+}
+
 func randomOAuthValue(bytes int) (string, error) {
 	b := make([]byte, bytes)
 	if _, err := rand.Read(b); err != nil {
@@ -178,7 +192,7 @@ func (s *Server) renderOAuthLogin(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.WriteString(w, `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Bolt Dock 授权登录</title><body style="font:16px system-ui;max-width:38rem;margin:4rem auto;padding:1rem"><h1>登录 Bolt Dock</h1><p>输入服务管理员访问密钥以审核 MCP 客户端授权请求。密钥只发送到当前服务。</p><form id="f"><label>管理员访问密钥<br><input id="t" type="password" autocomplete="current-password" required style="font:inherit;width:100%;padding:.6rem"></label><p><button style="font:inherit;padding:.6rem">登录并继续</button></p><p id="e" role="alert"></p></form><script>document.querySelector('#f').addEventListener('submit',async e=>{e.preventDefault();const x=document.querySelector('#e');try{const r=await fetch('/api/v1/auth/login',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:document.querySelector('#t').value})});if(!r.ok)throw Error(r.status===401?'访问密钥无效':'登录失败');location.reload()}catch(err){x.textContent=err.message}})</script></body></html>`)
 }
 
-var oauthConsentTemplate = template.Must(template.New("consent").Parse(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>授权 MCP 客户端</title><body style="font:16px system-ui;max-width:42rem;margin:4rem auto;padding:1rem"><h1>授权 MCP 客户端</h1><p><strong>{{.Name}}</strong>（{{.ClientID}}）请求连接 Bolt Dock。</p><p>回调地址：<code>{{.Redirect}}</code></p><p>资源：<code>{{.Resource}}</code></p><p>读取权限可搜索整个单所有者报告库；写入权限可发布报告并声明 source / bot_id。</p><form method="post" action="/oauth/consent"><input type="hidden" name="csrf" value="{{.CSRF}}"><label><input type="checkbox" name="scope" value="reports:read"> 读取报告（reports:read）</label><br><label><input type="checkbox" name="scope" value="reports:write"> 发布报告（reports:write）</label><p><button name="decision" value="approve">允许</button> <button name="decision" value="deny">拒绝</button></p></form></body></html>`))
+var oauthConsentTemplate = template.Must(template.New("consent").Parse(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>授权 MCP 客户端</title><body style="font:16px system-ui;max-width:42rem;margin:4rem auto;padding:1rem"><h1>授权 MCP 客户端</h1><p><strong>{{.Name}}</strong>（{{.ClientID}}）请求连接 Bolt Dock。</p><p>回调地址：<code>{{.Redirect}}</code></p><p>资源：<code>{{.Resource}}</code></p><p>读取权限可搜索整个单所有者报告库；写入权限可发布报告并声明 source / bot_id。</p><form method="post" action="/oauth/consent"><input type="hidden" name="csrf" value="{{.CSRF}}">{{if .Read}}<label><input type="checkbox" name="scope" value="reports:read"> 读取报告（reports:read）</label><br>{{end}}{{if .Write}}<label><input type="checkbox" name="scope" value="reports:write"> 发布报告（reports:write）</label>{{end}}<p><button name="decision" value="approve">允许</button> <button name="decision" value="deny">拒绝</button></p></form></body></html>`))
 
 func (s *Server) oauthConsent(w http.ResponseWriter, r *http.Request) {
 	if !s.validOAuthConfig() {
@@ -505,6 +519,7 @@ func (s *Server) oauthBearer(r *http.Request) (oauthPrincipal, bool) {
 }
 
 func (s *Server) registerOAuthClient(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	if !s.oauth.Enabled {
 		writeError(w, 404, "not_found", "OAuth is disabled")
 		return
@@ -522,8 +537,7 @@ func (s *Server) registerOAuthClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, raw := range in.RedirectURIs {
-		u, err := url.Parse(raw)
-		if err != nil || u.Scheme == "" || u.Host == "" || u.User != nil || u.Fragment != "" || (u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1"))) {
+		if !validOAuthRedirectURI(raw) {
 			writeError(w, 400, "invalid_redirect_uri", "redirect URIs must be HTTPS, except loopback clients")
 			return
 		}
@@ -552,6 +566,32 @@ func (s *Server) registerOAuthClient(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 201, map[string]any{"client_id": id, "client_secret": secret, "client_secret_once": in.Confidential})
 }
 
+func (s *Server) rotateOAuthClientSecret(w http.ResponseWriter, r *http.Request, id string) {
+	w.Header().Set("Cache-Control", "no-store")
+	if !s.oauth.Enabled {
+		writeError(w, 404, "not_found", "OAuth is disabled")
+		return
+	}
+	secret, err := randomOAuthValue(32)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if err = s.store.RotateOAuthClientSecret(r.Context(), id, oauthHash(secret)); err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			writeError(w, 404, "not_found", "client not found")
+		case errors.Is(err, store.ErrOAuthPublicClient), errors.Is(err, store.ErrOAuthDisabled):
+			writeError(w, 409, "invalid_client_state", err.Error())
+		default:
+			serverError(w, err)
+		}
+		return
+	}
+	_ = s.store.OAuthAudit(r.Context(), "client_secret_rotated", id, "success")
+	writeJSON(w, http.StatusOK, map[string]any{"client_id": id, "client_secret": secret, "client_secret_once": true})
+}
+
 func (s *Server) ownerOAuthAPI(w http.ResponseWriter, r *http.Request) {
 	if id, _ := r.Context().Value(sessionContextKey{}).(string); id == "" {
 		writeError(w, 403, "session_required", "OAuth management requires a browser session")
@@ -567,6 +607,13 @@ func (s *Server) ownerOAuthAPI(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"items": items})
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/oauth/clients":
 		s.registerOAuthClient(w, r)
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/rotate-secret") && strings.HasPrefix(r.URL.Path, "/api/v1/oauth/clients/"):
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/oauth/clients/"), "/rotate-secret")
+		if id == "" || strings.Contains(id, "/") {
+			writeError(w, 404, "not_found", "client not found")
+			return
+		}
+		s.rotateOAuthClientSecret(w, r, id)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/oauth/grants":
 		items, err := s.store.OAuthGrants(r.Context())
 		if err != nil {

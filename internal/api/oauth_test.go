@@ -25,11 +25,51 @@ func TestValidatePublicBaseURL(t *testing.T) {
 		value string
 		want  bool
 	}{
-		{"https://dock.example", true}, {"http://localhost:18765", true}, {"http://127.0.0.1:18765", true},
-		{"http://dock.example", false}, {"https://dock.example/path", false}, {"https://user@dock.example", false}, {"https://dock.example?issuer=x", false}, {"", false},
+		{"https://dock.example", true}, {"https://dock.example/", true}, {"http://localhost:18765", true}, {"http://127.0.0.1:18765", true}, {"http://[::1]:18765", true},
+		{"http://dock.example", false}, {"http://[::2]", false}, {"https://dock.example/path", false}, {"https://user@dock.example", false}, {"https://dock.example?issuer=x", false}, {"https://dock.example#fragment", false}, {"//dock.example", false}, {"", false},
 	} {
 		if got := ValidatePublicBaseURL(tc.value); got != tc.want {
 			t.Errorf("ValidatePublicBaseURL(%q)=%v want %v", tc.value, got, tc.want)
+		}
+	}
+}
+
+func TestOAuthRedirectURIValidationAndExactMatching(t *testing.T) {
+	for _, tc := range []struct {
+		uri  string
+		want bool
+	}{
+		{"https://client.example/callback", true},
+		{"https://client.example/callback/", true},
+		{"https://client.example/callback?tenant=a%2Fb", true},
+		{"https://client.example/callback/%2F", true},
+		{"http://localhost:3000/callback", true},
+		{"http://[::1]:3000/callback", true},
+		{"http://client.example/callback", false},
+		{"https://user@client.example/callback", false},
+		{"https://client.example/callback#fragment", false},
+		{"https:opaque-callback", false},
+		{" https://client.example/callback", false},
+		{"https://client.example:bad/callback", false},
+		{"", false},
+	} {
+		t.Run(tc.uri, func(t *testing.T) {
+			if got := validOAuthRedirectURI(tc.uri); got != tc.want {
+				t.Errorf("validOAuthRedirectURI(%q)=%v want %v", tc.uri, got, tc.want)
+			}
+		})
+	}
+	registered := "https://client.example/callback/%2F?tenant=a%2Fb"
+	if !containsExact([]string{registered}, registered) {
+		t.Fatal("registered redirect URI did not exactly match itself")
+	}
+	for _, variant := range []string{
+		"https://client.example/callback/%2f?tenant=a%2Fb",
+		"https://client.example/callback/%2F?tenant=a/b",
+		"https://client.example/callback/%2F/?tenant=a%2Fb",
+	} {
+		if containsExact([]string{registered}, variant) {
+			t.Errorf("redirect URI was normalized instead of exact-matched: %q", variant)
 		}
 	}
 }
@@ -133,6 +173,168 @@ func TestOAuthTokenHandlerRateLimitsByPeerAndClient(t *testing.T) {
 	}
 }
 
+func TestOAuthOwnerCanRotateConfidentialClientSecretOnce(t *testing.T) {
+	db, err := store.Open(t.TempDir() + "/oauth-rotate.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.RegisterOAuthClient(context.Background(), "confidential-client", "Confidential", []string{"https://client.example/callback"}, oauthHash("old-secret")); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RegisterOAuthClient(context.Background(), "public-client", "Public", []string{"https://public.example/callback"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	h := NewWithOAuth(db, events.New(), "owner-secret", 1<<20, webui.Files, OAuthConfig{Enabled: true, PublicBaseURL: "https://oauth.example"}).Handler()
+	login := request(h, http.MethodPost, "/api/v1/auth/login", `{"token":"owner-secret"}`, "")
+	if login.Code != http.StatusOK {
+		t.Fatalf("owner login status=%d body=%s", login.Code, login.Body.String())
+	}
+	cookie := login.Result().Cookies()[0]
+	registration := httptest.NewRequest(http.MethodPost, "/api/v1/oauth/clients", strings.NewReader(`{"name":"New confidential","redirect_uris":["https://new-client.example/callback"],"confidential":true}`))
+	registration.Header.Set("Content-Type", "application/json")
+	registration.Header.Set("Origin", "http://example.com")
+	registration.AddCookie(cookie)
+	registered := httptest.NewRecorder()
+	h.ServeHTTP(registered, registration)
+	if registered.Code != http.StatusCreated || registered.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("register response status=%d cache-control=%q body=%s", registered.Code, registered.Header().Get("Cache-Control"), registered.Body.String())
+	}
+	rotate := httptest.NewRequest(http.MethodPost, "/api/v1/oauth/clients/confidential-client/rotate-secret", nil)
+	rotate.AddCookie(cookie)
+	rotate.Header.Set("Origin", "http://example.com")
+	rotated := httptest.NewRecorder()
+	h.ServeHTTP(rotated, rotate)
+	if rotated.Code != http.StatusOK || rotated.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("rotate status=%d cache-control=%q body=%s", rotated.Code, rotated.Header().Get("Cache-Control"), rotated.Body.String())
+	}
+	var response struct {
+		ClientID   string `json:"client_id"`
+		Secret     string `json:"client_secret"`
+		SecretOnce bool   `json:"client_secret_once"`
+	}
+	if err := json.Unmarshal(rotated.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.ClientID != "confidential-client" || response.Secret == "" || !response.SecretOnce {
+		t.Fatalf("rotation response did not return a one-time secret: %#v", response)
+	}
+	client, err := db.OAuthClient(context.Background(), response.ClientID)
+	if err != nil || client.SecretHash != oauthHash(response.Secret) || client.SecretHash == response.Secret {
+		t.Fatalf("rotated credential was not stored as a hash: hash=%q err=%v", client.SecretHash, err)
+	}
+	list := httptest.NewRequest(http.MethodGet, "/api/v1/oauth/clients", nil)
+	list.AddCookie(cookie)
+	listed := httptest.NewRecorder()
+	h.ServeHTTP(listed, list)
+	if listed.Code != http.StatusOK || strings.Contains(listed.Body.String(), response.Secret) || strings.Contains(listed.Body.String(), client.SecretHash) {
+		t.Fatalf("client list leaked secret material: status=%d body=%s", listed.Code, listed.Body.String())
+	}
+	public := httptest.NewRequest(http.MethodPost, "/api/v1/oauth/clients/public-client/rotate-secret", nil)
+	public.AddCookie(cookie)
+	public.Header.Set("Origin", "http://example.com")
+	publicResponse := httptest.NewRecorder()
+	h.ServeHTTP(publicResponse, public)
+	if publicResponse.Code != http.StatusConflict {
+		t.Fatalf("public client rotation status=%d want=409 body=%s", publicResponse.Code, publicResponse.Body.String())
+	}
+}
+
+func TestOAuthPrincipalMatrixDoesNotCrossIntoREST(t *testing.T) {
+	db, err := store.Open(t.TempDir() + "/oauth-matrix.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, _, err := db.CreateReport(context.Background(), store.ReportInput{Source: "matrix", BotID: "bot", BotName: "Bot", ExecutedAt: time.Now().UTC(), Content: "matrix report"}); err != nil {
+		t.Fatal(err)
+	}
+	const base = "https://oauth.example"
+	if err := db.RegisterOAuthClient(context.Background(), "matrix-client", "Matrix", []string{"https://client.example/cb"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.CreateOAuthCode(context.Background(), "matrix-code", store.OAuthCode{ClientID: "matrix-client", RedirectURI: "https://client.example/cb", Challenge: "challenge", Resource: base + "/mcp", Scopes: []string{oauthReadScope}, ExpiresAt: time.Now().Add(time.Minute)}, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExchangeOAuthCode(context.Background(), "matrix-code", store.OAuthCodeBinding{ClientID: "matrix-client", RedirectURI: "https://client.example/cb", Resource: base + "/mcp"}, oauthHash("matrix-oauth-token"), time.Now().Add(15*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	h := NewWithOAuth(db, events.New(), "owner-secret", 1<<20, webui.Files, OAuthConfig{Enabled: true, PublicBaseURL: base}).Handler()
+	login := request(h, http.MethodPost, "/api/v1/auth/login", `{"token":"owner-secret"}`, "")
+	if login.Code != http.StatusOK {
+		t.Fatalf("owner login: status=%d body=%s", login.Code, login.Body.String())
+	}
+	cookie := login.Result().Cookies()[0]
+	cases := []struct {
+		name   string
+		bearer string
+		cookie *http.Cookie
+		want   int
+	}{
+		{name: "anonymous", want: http.StatusUnauthorized},
+		{name: "browser cookie", cookie: cookie, want: http.StatusOK},
+		{name: "legacy bearer", bearer: "owner-secret", want: http.StatusOK},
+		{name: "OAuth bearer cannot access REST", bearer: "matrix-oauth-token", want: http.StatusUnauthorized},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/reports", nil)
+			if tc.bearer != "" {
+				req.Header.Set("Authorization", "Bearer "+tc.bearer)
+			}
+			if tc.cookie != nil {
+				req.AddCookie(tc.cookie)
+			}
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+			if w.Code != tc.want {
+				t.Fatalf("GET /api/v1/reports status=%d want=%d body=%s", w.Code, tc.want, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestOwnerLoginDoesNotAdoptPreexistingSessionIdentifier(t *testing.T) {
+	db, err := store.Open(t.TempDir() + "/session-fixation.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	h := NewWithOAuth(db, events.New(), "owner-secret", 1<<20, webui.Files, OAuthConfig{Enabled: true, PublicBaseURL: "https://oauth.example"}).Handler()
+	loginRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"token":"owner-secret"}`))
+	loginRequest.AddCookie(&http.Cookie{Name: sessionCookie, Value: "attacker-chosen-session"})
+	loginResponse := httptest.NewRecorder()
+	h.ServeHTTP(loginResponse, loginRequest)
+	if loginResponse.Code != http.StatusOK {
+		t.Fatalf("login status=%d body=%s", loginResponse.Code, loginResponse.Body.String())
+	}
+	issued := loginResponse.Result().Cookies()[0]
+	if issued.Value == "" || issued.Value == "attacker-chosen-session" {
+		t.Fatalf("login reused preexisting session identifier: %#v", issued)
+	}
+	for _, tc := range []struct {
+		name          string
+		cookie        string
+		authenticated bool
+	}{
+		{name: "preexisting identifier", cookie: "attacker-chosen-session", authenticated: false},
+		{name: "newly issued identifier", cookie: issued.Value, authenticated: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/session", nil)
+			req.AddCookie(&http.Cookie{Name: sessionCookie, Value: tc.cookie})
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+			var body struct {
+				Authenticated bool `json:"authenticated"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || body.Authenticated != tc.authenticated {
+				t.Fatalf("session status=%d body=%s err=%v", w.Code, w.Body.String(), err)
+			}
+		})
+	}
+}
+
 func TestOAuthDiscoveryPKCEScopesAndRevocation(t *testing.T) {
 	db, err := store.Open(t.TempDir() + "/oauth.db")
 	if err != nil {
@@ -202,6 +404,17 @@ func TestOAuthDiscoveryPKCEScopesAndRevocation(t *testing.T) {
 	h.ServeHTTP(page, get)
 	if page.Code != 200 {
 		t.Fatalf("authorize page: %d %s", page.Code, page.Body.String())
+	}
+	for _, visible := range []string{"Test Client", "client-test", redirect, base + "/mcp", "reports:read", "整个单所有者报告库", "source / bot_id", "允许", "拒绝"} {
+		if !strings.Contains(page.Body.String(), visible) {
+			t.Errorf("consent page omitted required visible detail %q", visible)
+		}
+	}
+	if strings.Contains(page.Body.String(), `name="scope" value="reports:write"`) {
+		t.Fatal("read-only consent page displayed an unrequested write scope")
+	}
+	if strings.Contains(page.Body.String(), `name="scope" value="reports:read" checked`) || strings.Contains(page.Body.String(), `name="scope" value="reports:write" checked`) {
+		t.Fatal("consent scope was checked by default")
 	}
 	csrf := extractOAuthCSRF(t, page.Body.String())
 	badOrigin := httptest.NewRequest("POST", "/oauth/consent", strings.NewReader(url.Values{"csrf": {csrf}, "decision": {"approve"}, "scope": {oauthReadScope}}.Encode()))
@@ -357,6 +570,9 @@ func TestOAuthWriteOnlyScopeCanPublishButCannotSearch(t *testing.T) {
 	h.ServeHTTP(page, authorize)
 	if page.Code != http.StatusOK {
 		t.Fatalf("authorize page: %d %s", page.Code, page.Body.String())
+	}
+	if !strings.Contains(page.Body.String(), `name="scope" value="reports:write"`) || strings.Contains(page.Body.String(), `name="scope" value="reports:read"`) {
+		t.Fatalf("write-only consent page did not display only the requested scope: %s", page.Body.String())
 	}
 	consentForm := url.Values{"csrf": {extractOAuthCSRF(t, page.Body.String())}, "decision": {"approve"}, "scope": {oauthWriteScope}}
 	consent := httptest.NewRequest(http.MethodPost, "/oauth/consent", strings.NewReader(consentForm.Encode()))

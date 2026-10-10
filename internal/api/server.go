@@ -255,7 +255,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 			"transport": "Streamable HTTP",
 			"authentication": func() string {
 				if s.oauth.Enabled {
-					return "OAuth 2.1 Authorization Code + PKCE S256; legacy Bearer remains supported"
+					return "OAuth Authorization Code + PKCE S256 profile (limited OAuth 2.1 security baseline); legacy Bearer remains supported"
 				}
 				return "Authorization: Bearer <ACCESS_TOKEN>"
 			}(),
