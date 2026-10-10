@@ -13,6 +13,10 @@
 
 读取 `README.md`、`docs/TECHNICAL_DESIGN.md`、`docs/P7_MCP_EXECUTION_PLAN.md`、`docs/P7_MCP_ACCEPTANCE.md` 和全部 P8 文档，从 `master` 的最新提交开始。你是主 Agent，允许在不冲突的设计/测试/前端子任务中使用副 Agent；核心认证和数据库迁移由主 Agent 统一审查整合。**先审计真实代码再定设计，不准按文档假定不存在的表和用户体系**。持续推进到验收报告完成；凡需生产密钥、外部平台登录或生产部署的任务标记 blocked，不要伪造通过。
 
+## 主流 AI Agent 兼容性（新增强制目标）
+
+> 执行前必须阅读 [P8 主流 AI Agent MCP 兼容性矩阵](./P8_MCP_CLIENT_COMPATIBILITY_MATRIX.md)。产品目标是让 Bot Dock 作为**独立通用 MCP Server**尽可能兼容 Grok、Codex、Cursor、Claude 等支持自定义远程 MCP 的客户端；不是 Codex 专用服务。标准协议通过与真实客户端联调通过必须分别验收。优先 Grok，随后 Codex、Cursor、Claude；不得因第三方平台能力限制虚报兼容。真实账号/授权受阻时记录 BLOCKED 并继续独立测试。
+
 ## P8 范围和放行标准
 
 **必须**：MCP OAuth 发现、规范登录/Consent、Authorization Code + PKCE S256、受控 Client 预注册、资源绑定、最小 scope、Token 过期和撤销、旧 Bearer 兼容、单用户授权管理 UI、SQLite 可逆发布方案、安全与回归测试、第三方连接操作手册。
