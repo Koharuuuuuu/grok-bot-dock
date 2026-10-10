@@ -121,7 +121,7 @@ bearer_token_env_var = "BOLT_DOCK_TOKEN"
 
 `search_reports` 中文检索示例：`{"query":"本周部署验收","source":"codex","from":"2026-10-01","to":"2026-10-10","limit":10}`。检索最多返回 20 条元数据和摘要，完整 Markdown 不会放进工具结果；可用返回的游标读取下一页。
 
-Legacy MCP Bearer 仍使用共享 `ACCESS_TOKEN`；OAuth 另行按 P8 配置启用，二者并存且不互相转换。两种模式都属于单所有者服务，不提供多用户隔离。反向代理如将服务暴露到公网，应配置 HTTPS 和代理侧限流。MCP 能让客户端发现工具，不保证 Agent 只在最终报告时调用，也不提供定时触发保证；定时推送继续使用 REST API。Codex/其他客户端的具体版本兼容性以真实客户端连接测试为准；P7 历史验收见 [docs/P7_MCP_ACCEPTANCE.md](docs/P7_MCP_ACCEPTANCE.md)，P8 实测范围见 [docs/P8_OAUTH_ACCEPTANCE.md](docs/P8_OAUTH_ACCEPTANCE.md)。
+Legacy MCP Bearer 仍使用共享 `ACCESS_TOKEN`；OAuth 另行按 P8 配置启用，二者并存且不互相转换。保留该共享凭据是 P7 兼容例外：MCP Authorization profile 要求访问令牌专用于受保护资源，因此此服务不宣称完整符合该 profile。两种模式都属于单所有者服务，不提供多用户隔离。反向代理如将服务暴露到公网，应配置 HTTPS 和代理侧限流。MCP 能让客户端发现工具，不保证 Agent 只在最终报告时调用，也不提供定时触发保证；定时推送继续使用 REST API。Codex/其他客户端的具体版本兼容性以真实客户端连接测试为准；P7 历史验收见 [docs/P7_MCP_ACCEPTANCE.md](docs/P7_MCP_ACCEPTANCE.md)，P8 实测范围见 [docs/P8_OAUTH_ACCEPTANCE.md](docs/P8_OAUTH_ACCEPTANCE.md)。
 
 
 ## P8 MCP OAuth 2.1 安全配置（受限实现）

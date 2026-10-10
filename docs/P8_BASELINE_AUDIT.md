@@ -34,8 +34,12 @@ ACCESS_TOKEN ── POST /api/v1/auth/login ──> in-memory 12h HttpOnly sessi
 
 ## SDK and protocol findings
 
+### Protocol version re-check (2026-10-10)
+
+The baseline below records the version reviewed at the start of P8. The current stable MCP authorization specification is now `2026-07-28`; current OAuth 2.1 is IETF draft-16 and remains a work in progress. Implementation review added coverage for OAuth 2.1's omitted `redirect_uri` cases and unique-parameter/client-authentication rules. P7 shared `ACCESS_TOKEN` acceptance on `/mcp` is intentionally retained for compatibility; because the MCP authorization profile requires resource-specific OAuth access tokens, this is an explicit exception and full MCP authorization conformance is not claimed. See the [acceptance record](./P8_OAUTH_ACCEPTANCE.md) for test evidence and limits.
+
 - P7 pins `github.com/modelcontextprotocol/go-sdk v1.8.0`. Its `auth` package provides bearer-token resource-server middleware and Protected Resource Metadata helpers; `oauthex` provides metadata/client registration types. The SDK does not expose a complete local authorization-server implementation with owner consent, durable grant/code/token storage, revocation, and lifecycle management. P8 therefore needs a small application-owned AS around SQLite, while continuing to use the SDK MCP transport/tools.
-- Target stable MCP authorization profile: `2025-11-25`. It requires OAuth-based discovery, a protected-resource metadata pointer, resource indicators on authorization and token requests, and exact resource binding. RFC 9728 defines resource metadata, RFC 8414 AS metadata, RFC 7636 PKCE, RFC 8707 resource indicators, and RFC 7009 revocation.
+- At the original audit date, the stable MCP authorization profile was `2025-11-25`; this historical baseline required OAuth-based discovery, a protected-resource metadata pointer, resource indicators on authorization and token requests, and exact resource binding. The current `2026-07-28` baseline is recorded above and linked below. RFC 9728 defines resource metadata, RFC 8414 AS metadata, RFC 7636 PKCE, RFC 8707 resource indicators, and RFC 7009 revocation.
 - OAuth 2.1 remains an IETF Internet-Draft as of this audit, not a published RFC. The code should describe its actual security profile (Authorization Code + PKCE S256, no implicit/password grants) without claiming a published OAuth 2.1 RFC.
 - The newer MCP draft deprecates open Dynamic Client Registration in favor of Client ID Metadata Documents and includes RFC 9207 authorization-response issuer mix-up defenses. P8's stable-profile implementation should not enable arbitrary registration or fetch arbitrary client metadata URLs without a separate SSRF/metadata review. Use owner-controlled pre-registration first.
 
@@ -69,7 +73,7 @@ These are code baseline results only; they are not production or client-compatib
 
 ## References
 
-- [MCP Authorization, stable 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)
+- [MCP Authorization, current 2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization)
 - [RFC 9728: OAuth 2.0 Protected Resource Metadata](https://www.rfc-editor.org/rfc/rfc9728)
 - [RFC 8414: OAuth 2.0 Authorization Server Metadata](https://www.rfc-editor.org/rfc/rfc8414)
 - [RFC 7636: PKCE](https://www.rfc-editor.org/rfc/rfc7636)

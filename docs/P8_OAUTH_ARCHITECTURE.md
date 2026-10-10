@@ -1,6 +1,6 @@
 # P8 · OAuth 2.1 MCP 授权升级：架构与安全规范
 
-> 状态：**P8 受限 OAuth profile 与 CIMD 现已在本地功能分支实现，默认关闭，尚未发布或真实客户端验收**（2026-10-10）。这不是完整 OAuth 2.1 符合性声明。本文描述代码目标与安全边界；不能据此宣称生产或第三方客户端已启用。
+> 状态：**P8 受限 OAuth profile 与 CIMD 现已在本地功能分支实现，默认关闭，尚未发布或真实客户端验收**（2026-10-10）。当前 MCP Authorization 基线为 2026-07-28，OAuth 2.1 仍是 draft-16 Internet-Draft。这不是完整 OAuth 2.1 或 MCP Authorization 符合性声明；共享 legacy `ACCESS_TOKEN` 被保留为明确的 P7 兼容例外。
 >
 > 目标仓库：`Nyakooo/grok-bot-dock`（私有）；默认分支 `master`。关联 [执行清单](./P8_OAUTH_EXECUTION_PLAN.md)、[迁移/回滚](./P8_OAUTH_MIGRATION.md)、[客户端接入](./P8_OAUTH_CLIENTS.md)。
 
@@ -35,8 +35,8 @@ Bolt Dock 同时实现 OAuth **Authorization Server (AS)** 和 MCP **Protected R
 
 - `GET /.well-known/oauth-protected-resource`：给出 `resource`（规范化、稳定的 MCP 公网资源 URI）与 `authorization_servers`；若 MCP URL 含路径，按 RFC 9728 的路径插入规则同时支持所需发现地址，**不能只写一个假定路径**。
 - `GET /.well-known/oauth-authorization-server`：Issuer/authorization/token/revocation/registration 能力、`response_types_supported`、`code_challenge_methods_supported:["S256"]`、`scopes_supported` 等。Issuer 与生产公网 URL 必须一致；禁止信任请求的任意 Host/X-Forwarded-* 来生成发行者。
-- `GET /oauth/authorize`：支持 `response_type=code`、`client_id`、`redirect_uri`、`code_challenge`、`code_challenge_method=S256`、`scope`、`resource`、`state`。校验客户端、精确回调匹配、授权用户会话和资源；不可无界“自动同意”。
-- `POST /oauth/token`：`authorization_code` 与可选 `refresh_token` grant；校验 PKCE、绑定的 redirect URI/client/resource；授权码一次性事务消费；返回 `access_token`、`token_type=Bearer`、`expires_in`、scope，按策略返回 refresh token。OAuth 错误采用标准格式且不暴露敏感内容。
+- `GET /oauth/authorize`：支持 `response_type=code`、`client_id`、可选 `redirect_uri`、`code_challenge`、`code_challenge_method=S256`、`scope`、`resource`、`state`。若客户端恰有一个已注册回调，可省略 `redirect_uri` 并由服务端推断；多个回调时必须提供精确匹配项。授权码仍绑定最终确定的 URI。
+- `POST /oauth/token`：`authorization_code` 与可选 `refresh_token` grant；校验 PKCE、绑定的 client/resource；若请求带 `redirect_uri` 必须与授权码绑定值完全相同；授权码一次性事务消费；返回 `access_token`、`token_type=Bearer`、`expires_in`、scope，按策略返回 refresh token。OAuth 错误采用标准格式且不暴露敏感内容。
 - `POST /oauth/revoke`：按 RFC 7009 及客户端身份/持有权处理，撤销 refresh/access token；对授权链传播失效。
 - `GET/POST /oauth/consent`（实际 UI 路由可调整）：明确显示客户端身份、读写权限和账户；拒绝/取消有规范回调；服务器必须防 CSRF。
 - **客户端注册优先级：** 1) 受控预注册（可提供 Client ID，必要时 confidential secret）；2) **Client ID Metadata Documents (CIMD)**，已实现严格 HTTPS、元数据获取 SSRF/redirect/大小/超时防护及精确 redirect URI 核验，并仅在明确同意后持久化 client；3) DCR 暂不实现，须有真实客户端需求且完成滥用防护评审后再考虑。客户端的 credential 输入框并不意味着一定需要 secret，必须按真实平台流程判断。禁止匿名开放注册造成数据库膨胀。
@@ -44,7 +44,7 @@ Bolt Dock 同时实现 OAuth **Authorization Server (AS)** 和 MCP **Protected R
 - 401 MCP 响应：`WWW-Authenticate: Bearer resource_metadata="https://…/.well-known/oauth-protected-resource", scope="reports:read"`（真实 scope 视资源/调用而定）；不能破坏 SDK 的 MCP 协议错误语义。缺/无效凭据 401；有效但权限不足 403，遵循 OAuth/MCP 规范。
 
 官方参考：
-- MCP Authorization: https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization
+- MCP Authorization, current baseline 2026-07-28: https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization
 - OAuth 2.1 active Internet-Draft (draft-ietf-oauth-v2-1-16; work in progress): https://datatracker.ietf.org/doc/draft-ietf-oauth-v2-1/
 - OAuth Client ID Metadata Document active Internet-Draft (draft-ietf-oauth-client-id-metadata-document-02; work in progress): https://datatracker.ietf.org/doc/draft-ietf-oauth-client-id-metadata-document/
 - RFC 9728 protected resource metadata: https://www.rfc-editor.org/rfc/rfc9728
@@ -58,7 +58,7 @@ Bolt Dock 同时实现 OAuth **Authorization Server (AS)** 和 MCP **Protected R
 
 ## 4. 凭据模型与双认证隔离
 
-- Legacy `ACCESS_TOKEN`：原 `/mcp` 与 `POST /api/v1/reports` 继续接受，按现有常量时间比较及权限行为运行；只适合拥有者受信任客户端。
+- Legacy `ACCESS_TOKEN`：原 `/mcp` 与 `POST /api/v1/reports` 继续接受，按现有常量时间比较及权限行为运行；只适合拥有者受信任客户端。MCP OAuth authorization profile 要求 MCP access token 专用于该 protected resource；继续在 `/mcp` 接受共享 legacy token 是明确的兼容例外，因此不宣称完整 MCP profile 符合性。
 - OAuth token：独立高熵随机不透明值；持久层只保存不可逆安全摘要/随机盐视设计；过期、授权撤销、scope、issuer、resource/audience、client_id、owner subject 均在**每次 MCP 请求及实际工具调用**验证。密钥前缀命名空间区分，两类 token 不得互认，不接受 Cookie 作为 MCP Bearer。
 - 推荐 scope：`reports:read` 对应 `search_reports`；`reports:write` 对应 `publish_report`。暂不提供 `reports:manage`、`bots:read` 或 `offline_access`，除非有真实工具/API 需求；refresh grant 是否提供应由客户端兼容性决定，且需明确 consent/限期/轮换。
 - **租户边界**：Bolt Dock 当前是单所有者共享报告库。授权允许读时即可能查询所有来源；发布时可能设置 `source`/`bot_id`。将这点写在授权页，不能宣称 OAuth 已自动按来源或 Bot 隔离。若需细粒度来源或 Bot 写入限制，单独设计并纳入授权/存储校验，不能依赖客户端诚实自报的 `source`。

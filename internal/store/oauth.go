@@ -289,7 +289,9 @@ func (s *Store) ExchangeOAuthCode(ctx context.Context, codeHash string, binding 
 	defer tx.Rollback()
 	var grantID int64
 	var scopesJSON string
-	err = tx.QueryRowContext(ctx, `SELECT c.grant_id,c.scopes_json FROM oauth_authorization_codes c JOIN oauth_grants g ON g.id=c.grant_id JOIN oauth_clients cl ON cl.client_id=c.client_id WHERE c.code_hash=? AND c.client_id=? AND c.redirect_uri=? AND c.resource=? AND c.consumed_at='' AND c.expires_at>? AND g.revoked_at='' AND cl.disabled_at=''`, codeHash, binding.ClientID, binding.RedirectURI, binding.Resource, time.Now().UTC().Format(timestampFormat)).Scan(&grantID, &scopesJSON)
+	// OAuth 2.1 token requests may omit redirect_uri. When supplied, it must
+	// still match the URI bound to the authorization code.
+	err = tx.QueryRowContext(ctx, `SELECT c.grant_id,c.scopes_json FROM oauth_authorization_codes c JOIN oauth_grants g ON g.id=c.grant_id JOIN oauth_clients cl ON cl.client_id=c.client_id WHERE c.code_hash=? AND c.client_id=? AND (?='' OR c.redirect_uri=?) AND c.resource=? AND c.consumed_at='' AND c.expires_at>? AND g.revoked_at='' AND cl.disabled_at=''`, codeHash, binding.ClientID, binding.RedirectURI, binding.RedirectURI, binding.Resource, time.Now().UTC().Format(timestampFormat)).Scan(&grantID, &scopesJSON)
 	if err != nil {
 		return nil, err
 	}
@@ -321,7 +323,7 @@ func (s *Store) ExchangeOAuthCode(ctx context.Context, codeHash string, binding 
 
 func (s *Store) CheckOAuthCode(ctx context.Context, codeHash string, binding OAuthCodeBinding, challenge string) bool {
 	var found string
-	err := s.db.QueryRowContext(ctx, `SELECT c.pkce_challenge FROM oauth_authorization_codes c JOIN oauth_grants g ON g.id=c.grant_id JOIN oauth_clients cl ON cl.client_id=c.client_id WHERE c.code_hash=? AND c.client_id=? AND c.redirect_uri=? AND c.resource=? AND c.consumed_at='' AND c.expires_at>? AND g.revoked_at='' AND cl.disabled_at=''`, codeHash, binding.ClientID, binding.RedirectURI, binding.Resource, time.Now().UTC().Format(timestampFormat)).Scan(&found)
+	err := s.db.QueryRowContext(ctx, `SELECT c.pkce_challenge FROM oauth_authorization_codes c JOIN oauth_grants g ON g.id=c.grant_id JOIN oauth_clients cl ON cl.client_id=c.client_id WHERE c.code_hash=? AND c.client_id=? AND (?='' OR c.redirect_uri=?) AND c.resource=? AND c.consumed_at='' AND c.expires_at>? AND g.revoked_at='' AND cl.disabled_at=''`, codeHash, binding.ClientID, binding.RedirectURI, binding.RedirectURI, binding.Resource, time.Now().UTC().Format(timestampFormat)).Scan(&found)
 	return err == nil && found == challenge
 }
 

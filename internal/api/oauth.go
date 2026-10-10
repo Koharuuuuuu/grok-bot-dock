@@ -128,7 +128,11 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	q := r.URL.Query()
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil || hasRepeatedOAuthParams(q) {
+		oauthError(w, r, "invalid_request", "authorization parameters must be valid and appear no more than once")
+		return
+	}
 	clientID := q.Get("client_id")
 	if allowed, wait := s.allowRate("oauth-authorize-ip:"+oauthPeerIP(r), 30, time.Now()); !allowed {
 		w.Header().Set("Retry-After", fmt.Sprintf("%d", max(1, int(wait.Seconds()))))
@@ -137,11 +141,23 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 	}
 	client, err := s.resolveOAuthAuthorizationClient(r.Context(), clientID)
 	redirect := q.Get("redirect_uri")
-	if err != nil || client.DisabledAt != "" || !containsExact(client.Redirects, redirect) {
+	if err != nil || client.DisabledAt != "" {
 		oauthError(w, r, "invalid_request", "invalid client or redirect_uri")
 		return
 	}
-	if q.Get("response_type") != "code" || q.Get("code_challenge_method") != "S256" || !validChallenge(q.Get("code_challenge")) || len(q.Get("state")) > 512 {
+	if !q.Has("redirect_uri") && len(client.Redirects) == 1 {
+		redirect = client.Redirects[0]
+	}
+	if !containsExact(client.Redirects, redirect) {
+		oauthError(w, r, "invalid_request", "invalid client or redirect_uri")
+		return
+	}
+	if len(q.Get("state")) > 512 {
+		// Do not reflect an oversized client-controlled state value in Location.
+		oauthError(w, r, "invalid_request", "state exceeds the maximum length")
+		return
+	}
+	if q.Get("response_type") != "code" || q.Get("code_challenge_method") != "S256" || !validChallenge(q.Get("code_challenge")) {
 		s.oauthRedirectError(w, redirect, q.Get("state"), "invalid_request")
 		return
 	}
@@ -299,6 +315,10 @@ func (s *Server) oauthToken(w http.ResponseWriter, r *http.Request) {
 		oauthJSONError(w, 400, "invalid_request")
 		return
 	}
+	if hasOAuthClientAuthConflict(r) {
+		oauthJSONError(w, 400, "invalid_request")
+		return
+	}
 	clientID, secret := oauthClientCredentials(r)
 	if allowed, wait := s.allowRate("oauth-token-ip:"+oauthPeerIP(r), 120, time.Now()); !allowed {
 		w.Header().Set("Retry-After", fmt.Sprintf("%d", max(1, int(wait.Seconds()))))
@@ -358,6 +378,10 @@ func (s *Server) oauthRevoke(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	if err := parseOAuthForm(w, r); err != nil {
+		oauthJSONError(w, 400, "invalid_request")
+		return
+	}
+	if hasOAuthClientAuthConflict(r) {
 		oauthJSONError(w, 400, "invalid_request")
 		return
 	}
@@ -446,7 +470,27 @@ func parseOAuthForm(w http.ResponseWriter, r *http.Request) error {
 		return errors.New("OAuth form content type required")
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
-	return r.ParseForm()
+	if err := r.ParseForm(); err != nil {
+		return err
+	}
+	if hasRepeatedOAuthParams(r.Form) {
+		return errors.New("OAuth parameters must not appear more than once")
+	}
+	return nil
+}
+
+func hasRepeatedOAuthParams(values url.Values) bool {
+	for _, items := range values {
+		if len(items) > 1 {
+			return true
+		}
+	}
+	return false
+}
+
+func hasOAuthClientAuthConflict(r *http.Request) bool {
+	_, _, usesBasic := r.BasicAuth()
+	return usesBasic && (r.Form.Has("client_id") || r.Form.Has("client_secret"))
 }
 func (s *Server) oauthRedirectError(w http.ResponseWriter, redirect, state, code string) {
 	params := map[string]string{"error": code, "iss": s.oauthBase()}

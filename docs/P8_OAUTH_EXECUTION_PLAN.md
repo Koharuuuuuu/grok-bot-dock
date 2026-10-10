@@ -1,6 +1,6 @@
 # P8 · OAuth 2.1 MCP 升级：Codex 严格执行计划与 TODO
 
-> 状态（2026-10-10）：**P8 本地分支已实现受限 OAuth 授权配置；CIMD 支持及隔离测试现已加入，仍未达到完整 OAuth 2.1 符合性验收。生产部署与真实第三方 OAuth 联调仍待外部验收。** 当前证据和边界见 [验收记录](./P8_OAUTH_ACCEPTANCE.md)。实现尚未推送、创建 PR 或合并。目标：为已上线 P7 Streamable HTTP MCP 增加独立 OAuth 授权，完整保留共享 Bearer、REST、SQLite 报告数据和前端工作台。关联 [设计](./P8_OAUTH_ARCHITECTURE.md)、[迁移](./P8_OAUTH_MIGRATION.md)、[客户端](./P8_OAUTH_CLIENTS.md)。**每项验证前不得打勾**。
+> 状态（2026-10-10）：**P8 本地分支已实现受限 OAuth 授权配置；CIMD 与 OAuth 2.1 draft-16 互通/歧义参数修复已加入隔离测试，仍未达到完整 OAuth 2.1 符合性验收。生产部署与真实第三方 OAuth 联调仍待外部验收。** 共享 `ACCESS_TOKEN` 继续被 `/mcp` 接受是明确的 P7 兼容例外，因此不宣称符合 MCP Authorization 全部要求。当前证据和边界见 [验收记录](./P8_OAUTH_ACCEPTANCE.md)。实现尚未推送、创建 PR 或合并。目标：为已上线 P7 Streamable HTTP MCP 增加独立 OAuth 授权，保留旧 Bearer、REST、SQLite 报告数据和前端工作台。关联 [设计](./P8_OAUTH_ARCHITECTURE.md)、[迁移](./P8_OAUTH_MIGRATION.md)、[客户端](./P8_OAUTH_CLIENTS.md)。**每项验证前不得打勾**。
 
 ## 执行授权边界（优先于本文其他交付措辞）
 
@@ -65,13 +65,14 @@
 
 - [x] 编写 additive schema-version 迁移：OAuth clients/grants/codes/access tokens/audit（按需 refresh）；索引/UTC/哈希存储。
 - [x] 登录后授权页面显示真实 client、scope、资源以及当前是全库读/写的安全边界，支持明确允许/拒绝。
-- [x] 授权端严格校验 response_type、registered redirect_uri、code_challenge_method=S256、scope、resource、登录状态与 anti-CSRF。
+- [x] 授权端严格校验 response_type、registered redirect_uri（唯一注册回调允许省略并推断；多回调必须精确选择）、code_challenge_method=S256、scope、resource、登录状态与 anti-CSRF。
 - [x] 授权码短有效期、原子一次使用；Token endpoint 校验 PKCE、client/redirect/resource 绑定并返回标准错误。
 - [x] 不透明 access token 足够随机，只保存摘要，短生命周期，可撤销；本期不提供 refresh token。
 - [x] 建立审计/限流/过期清理，日志/报错绝不输出凭据及报告全文。
 
 - [x] 明确浏览器授权安全模型：OAuth 客户端负责 state/回调关联校验；Bolt Dock 负责自身登录会话、授权同意操作的 CSRF 防护、精确 redirect URI 及 PKCE 校验；不得把客户端 state 校验错误地当作服务端可替代的 CSRF 防护。
 - [x] 授权码交换在 SQLite 事务中原子消费；并发双重兑换只能成功一次，错误 PKCE 不得导致可用授权码被不当消耗（按规范与安全策略确定），拒绝授权不得生成 token。
+- [x] OAuth 2.1 draft-16 边界审计：唯一回调下授权及 Token 请求省略 `redirect_uri` 可用；若 Token 请求提供则仍精确比对授权码绑定值；重复参数和同时使用多种客户端认证方法拒绝；超长 state 不反射。
 - [x] Access token 生命周期、15 分钟 TTL、撤销传播、重启后持久性和授权时清理已记录并测试；本期不提供 refresh token。
 - [x] 客户端禁用会立即使相关授权及 access token 无效；覆盖索引与事务测试。
 - [x] 迁移只新增 OAuth 结构，验证旧数据 count、FTS、Bot 身份、幂等索引不变；记录升级前备份及兼容式回滚方案，禁止自动恢复生产数据库。

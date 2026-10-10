@@ -263,6 +263,158 @@ func TestOAuthAuthorizationRejectsUnknownClientRedirectAndPKCE(t *testing.T) {
 	}
 }
 
+func TestOAuthTokenAcceptsOmittedTokenRequestRedirectURI(t *testing.T) {
+	db, err := store.Open(t.TempDir() + "/oauth-token-optional-redirect.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	const base = "https://oauth.example"
+	const clientID = "public-client"
+	const redirect = "http://127.0.0.1:4781/callback"
+	const verifier = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG"
+	if err := db.RegisterOAuthClient(context.Background(), clientID, "Public client", []string{redirect}, ""); err != nil {
+		t.Fatal(err)
+	}
+	challengeSum := sha256.Sum256([]byte(verifier))
+	challenge := base64.RawURLEncoding.EncodeToString(challengeSum[:])
+	if _, err := db.CreateOAuthCode(context.Background(), oauthHash("optional-redirect-code"), store.OAuthCode{
+		ClientID: clientID, RedirectURI: redirect, Challenge: challenge, Resource: base + "/mcp",
+		Scopes: []string{oauthReadScope}, ExpiresAt: time.Now().Add(time.Minute),
+	}, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	h := NewWithOAuth(db, events.New(), "owner-secret", 1<<20, webui.Files, OAuthConfig{Enabled: true, PublicBaseURL: base}).Handler()
+	form := url.Values{
+		"grant_type": {"authorization_code"}, "client_id": {clientID}, "code": {"optional-redirect-code"},
+		"resource": {base + "/mcp"}, "code_verifier": {verifier},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	var response struct {
+		AccessToken string `json:"access_token"`
+		TokenType   string `json:"token_type"`
+		Scope       string `json:"scope"`
+	}
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &response) != nil || response.AccessToken == "" || response.TokenType != "Bearer" || response.Scope != oauthReadScope {
+		t.Fatalf("OAuth 2.1 token exchange without redirect_uri failed: status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestOAuthAuthorizeAllowsOmittedSingleRedirectAndRejectsAmbiguousOrOversizedState(t *testing.T) {
+	db, err := store.Open(t.TempDir() + "/oauth.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	const base = "https://oauth.example"
+	if err := db.RegisterOAuthClient(context.Background(), "single", "Single", []string{"https://client.example/callback"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RegisterOAuthClient(context.Background(), "multiple", "Multiple", []string{"https://client.example/a", "https://client.example/b"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	h := NewWithOAuth(db, events.New(), "owner-secret", 1<<20, webui.Files, OAuthConfig{Enabled: true, PublicBaseURL: base}).Handler()
+	login := request(h, http.MethodPost, "/api/v1/auth/login", `{"token":"owner-secret"}`, "")
+	if login.Code != http.StatusOK {
+		t.Fatalf("owner login: %d %s", login.Code, login.Body.String())
+	}
+	cookie := login.Result().Cookies()[0]
+	sum := sha256.Sum256([]byte(strings.Repeat("v", 43)))
+	baseQuery := url.Values{"response_type": {"code"}, "client_id": {"single"}, "code_challenge_method": {"S256"}, "code_challenge": {base64.RawURLEncoding.EncodeToString(sum[:])}, "resource": {base + "/mcp"}, "scope": {oauthReadScope}, "state": {"safe-state"}}
+	query := baseQuery.Encode()
+	req := httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+query, nil)
+	req.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "https://client.example/callback") {
+		t.Fatalf("single registered redirect should be inferred: status=%d body=%s", w.Code, w.Body.String())
+	}
+	explicitEmpty := url.Values{}
+	for key, values := range baseQuery {
+		explicitEmpty[key] = append([]string(nil), values...)
+	}
+	explicitEmpty["redirect_uri"] = []string{""}
+	req = httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+explicitEmpty.Encode(), nil)
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest || w.Header().Get("Location") != "" {
+		t.Fatalf("explicit empty redirect_uri must not be treated as omitted: status=%d location=%q", w.Code, w.Header().Get("Location"))
+	}
+
+	ambiguous := url.Values{}
+	for key, values := range baseQuery {
+		ambiguous[key] = append([]string(nil), values...)
+	}
+	ambiguous.Set("client_id", "multiple")
+	req = httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+ambiguous.Encode(), nil)
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest || w.Header().Get("Location") != "" {
+		t.Fatalf("ambiguous omitted redirect must fail locally: status=%d location=%q", w.Code, w.Header().Get("Location"))
+	}
+
+	oversized := url.Values{}
+	for key, values := range baseQuery {
+		oversized[key] = append([]string(nil), values...)
+	}
+	oversized.Set("state", strings.Repeat("x", 513))
+	req = httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+oversized.Encode(), nil)
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest || w.Header().Get("Location") != "" || strings.Contains(w.Body.String(), strings.Repeat("x", 32)) {
+		t.Fatalf("oversized state must not be reflected: status=%d location=%q body=%s", w.Code, w.Header().Get("Location"), w.Body.String())
+	}
+}
+
+func TestOAuthEndpointsRejectRepeatedParametersAndMixedClientAuthentication(t *testing.T) {
+	db, err := store.Open(t.TempDir() + "/oauth-ambiguous-params.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.RegisterOAuthClient(context.Background(), "public-client", "Public", []string{"https://client.example/callback"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RegisterOAuthClient(context.Background(), "confidential-client", "Confidential", []string{"https://client.example/callback"}, oauthHash("client-secret")); err != nil {
+		t.Fatal(err)
+	}
+	h := NewWithOAuth(db, events.New(), "owner-secret", 1<<20, webui.Files, OAuthConfig{Enabled: true, PublicBaseURL: "https://oauth.example"}).Handler()
+	assertInvalidRequest := func(name string, req *http.Request) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		var response map[string]string
+		if w.Code != http.StatusBadRequest || json.Unmarshal(w.Body.Bytes(), &response) != nil || response["error"] != "invalid_request" {
+			t.Errorf("%s response status=%d body=%s; want HTTP 400 invalid_request", name, w.Code, w.Body.String())
+		}
+	}
+	formRequest := func(path string, form url.Values) *http.Request {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		return req
+	}
+	assertInvalidRequest("duplicate authorization client_id", httptest.NewRequest(http.MethodGet, "/oauth/authorize?client_id=public-client&client_id=public-client", nil))
+	assertInvalidRequest("duplicate token code", formRequest("/oauth/token", url.Values{
+		"grant_type": {"authorization_code"}, "client_id": {"public-client"}, "code": {"one", "two"},
+		"resource": {"https://oauth.example/mcp"}, "code_verifier": {strings.Repeat("v", 43)},
+	}))
+	conflictingToken := formRequest("/oauth/token", url.Values{"client_id": {"confidential-client"}, "client_secret": {"client-secret"}, "grant_type": {"authorization_code"}})
+	conflictingToken.SetBasicAuth("confidential-client", "client-secret")
+	assertInvalidRequest("token basic and post authentication", conflictingToken)
+	assertInvalidRequest("duplicate revoke token", formRequest("/oauth/revoke", url.Values{
+		"client_id": {"public-client"}, "token": {"one", "two"},
+	}))
+	conflictingRevoke := formRequest("/oauth/revoke", url.Values{"client_id": {"confidential-client"}, "client_secret": {"client-secret"}, "token": {"opaque-token"}})
+	conflictingRevoke.SetBasicAuth("confidential-client", "client-secret")
+	assertInvalidRequest("revoke basic and post authentication", conflictingRevoke)
+}
+
 func TestOAuthTokenHandlerRateLimitsByPeerAndClient(t *testing.T) {
 	db, err := store.Open(t.TempDir() + "/oauth-rate.db")
 	if err != nil {
@@ -761,7 +913,7 @@ func TestOAuthDiscoveryPKCEScopesAndRevocation(t *testing.T) {
 	sum := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
 	redirect := "http://127.0.0.1/callback"
-	query := url.Values{"response_type": {"code"}, "client_id": {"client-test"}, "redirect_uri": {redirect}, "code_challenge_method": {"S256"}, "code_challenge": {challenge}, "resource": {base + "/mcp"}, "scope": {oauthReadScope}, "state": {"s-test"}}
+	query := url.Values{"response_type": {"code"}, "client_id": {"client-test"}, "code_challenge_method": {"S256"}, "code_challenge": {challenge}, "resource": {base + "/mcp"}, "scope": {oauthReadScope}, "state": {"s-test"}}
 	get := httptest.NewRequest("GET", "/oauth/authorize?"+query.Encode(), nil)
 	get.AddCookie(cookie)
 	page := httptest.NewRecorder()
@@ -836,7 +988,7 @@ func TestOAuthDiscoveryPKCEScopesAndRevocation(t *testing.T) {
 	if badRedirect.Code != http.StatusBadRequest {
 		t.Fatalf("wrong redirect_uri status=%d body=%s", badRedirect.Code, badRedirect.Body.String())
 	}
-	ok := exchange(verifier, base+"/mcp", redirect)
+	ok := exchange(verifier, base+"/mcp", "")
 	if ok.Code != 200 {
 		t.Fatalf("token exchange: %d %s", ok.Code, ok.Body.String())
 	}
