@@ -1,6 +1,6 @@
-# Bolt Dock
-
-![Bolt Dock logo](frontend/public/brand/bolt-dock.svg)
+<p align="center"><img src="frontend/public/brand/bolt-dock.svg" width="92" height="92" alt="Bolt Dock Logo"></p>
+<h1 align="center">Bolt Dock</h1>
+<p align="center">一个轻量、自托管的 AI 报告聚合工作台</p>
 
 Bolt Dock 是自托管的 AI Bot 报告工作台。任意能发起 HTTPS 请求的任务都可以推送 Markdown 报告；报告按来源和 Bot 自动归档，在同一个网页中搜索、阅读和接收实时提醒。产品界面称为 Bolt Dock，GitHub 仓库仍为 `grok-bot-dock`。
 
