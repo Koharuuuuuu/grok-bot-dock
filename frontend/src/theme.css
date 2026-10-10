@@ -25,6 +25,8 @@
 :root[data-theme="dark"] .mcp-access-modal .modal-heading{background:#202722}
 :root[data-theme="dark"] .mcp-access-modal .modal-heading h2{color:#edf1e9}
 :root[data-theme="dark"] .mcp-service-url,:root[data-theme="dark"] .mcp-tool-list li,:root[data-theme="dark"] .mcp-client-example{border-color:#39433b}
+:root[data-theme="dark"] .oauth-client-form,:root[data-theme="dark"] .oauth-managed-list li,:root[data-theme="dark"] .oauth-created-client{background:#272f29;border-color:#39433b;color:#d5ded3}
+:root[data-theme="dark"] .oauth-client-form input,:root[data-theme="dark"] .oauth-client-form textarea{background:#202722;border-color:#39433b;color:#edf1e9}
 :root[data-theme="dark"] .mcp-service-url code,:root[data-theme="dark"] .mcp-client-config{color:#d0dcc7}
 :root[data-theme="dark"] .mcp-tool-example code{background:#1b211d;color:#d0dcc7}
 :root[data-theme="dark"] .mcp-connection-steps,:root[data-theme="dark"] .mcp-troubleshooting ul{color:#aab4a8}

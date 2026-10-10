@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/Nyakooo/grok-bot-dock/internal/api"
 	"github.com/Nyakooo/grok-bot-dock/internal/events"
@@ -36,7 +37,13 @@ func main() {
 		}
 		max = n
 	}
-	srv := api.New(db, events.New(), token, max, webui.Files)
+	oauthEnabled := strings.EqualFold(strings.TrimSpace(os.Getenv("OAUTH_ENABLED")), "true")
+	oauthBase := strings.TrimSpace(os.Getenv("PUBLIC_BASE_URL"))
+	oauthConfig := api.OAuthConfig{Enabled: oauthEnabled, PublicBaseURL: oauthBase}
+	if !api.ValidateOAuthConfig(oauthConfig) {
+		log.Fatal("when OAUTH_ENABLED=true, PUBLIC_BASE_URL must be a canonical HTTPS origin (HTTP is allowed only on localhost)")
+	}
+	srv := api.NewWithOAuth(db, events.New(), token, max, webui.Files, oauthConfig)
 	addr := "0.0.0.0:" + port
 	log.Printf("Bolt Dock listening on %s", addr)
 	log.Fatal(http.ListenAndServe(addr, srv.Handler()))

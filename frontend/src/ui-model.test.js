@@ -60,6 +60,14 @@ describe('Bolt Dock interface helpers', () => {
     expect(guide).not.toContain('ACCESS_TOKEN=')
   })
 
+  it('describes OAuth capabilities without suggesting an administrator secret', () => {
+    const guide = makeMCPGenericGuide('https://reports.example.com/mcp', [], true)
+    expect(guide).toContain('PKCE S256')
+    expect(guide).toContain('reports:read / reports:write')
+    expect(guide).toContain('无 refresh token')
+    expect(guide).not.toContain('Authorization: Bearer <由服务管理员安全提供>')
+  })
+
   it('keeps the Codex-specific environment variable inside its optional example only', () => {
     const example = makeCodexMCPConfig('https://reports.example.com/mcp')
     expect(example).toContain('url = "https://reports.example.com/mcp"')

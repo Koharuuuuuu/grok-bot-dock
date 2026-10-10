@@ -1,6 +1,6 @@
 # P8 · OAuth 2.1 MCP 升级：Codex 严格执行计划与 TODO
 
-> 状态：**规划已优化，尚未实现**。目标：为已上线 P7 Streamable HTTP MCP 增加独立 OAuth 授权，完整保留共享 Bearer、REST、SQLite 报告数据和前端工作台。关联 [设计](./P8_OAUTH_ARCHITECTURE.md)、[迁移](./P8_OAUTH_MIGRATION.md)、[客户端](./P8_OAUTH_CLIENTS.md)。执行时同步更新这些文档和本清单，**每项验证前不得打勾**。
+> 状态（2026-10-10）：**P8 已在本地分支实现；隔离协议、API/UI、回归及容器验收通过；生产部署与真实第三方 OAuth 联调仍阻塞/待外部验收。** 当前证据和边界见 [验收记录](./P8_OAUTH_ACCEPTANCE.md)。实现尚未推送、创建 PR 或合并。目标：为已上线 P7 Streamable HTTP MCP 增加独立 OAuth 授权，完整保留共享 Bearer、REST、SQLite 报告数据和前端工作台。关联 [设计](./P8_OAUTH_ARCHITECTURE.md)、[迁移](./P8_OAUTH_MIGRATION.md)、[客户端](./P8_OAUTH_CLIENTS.md)。**每项验证前不得打勾**。
 
 ## 执行授权边界（优先于本文其他交付措辞）
 
@@ -37,24 +37,24 @@
 
 ## Phase 0：审计与冻结基线（禁止跳过）
 
-- [ ] 检查 `internal/api` 的 Bearer、Origin、Cookie/CSRF、MCP 路由、SDK handler 和 shared service boundary。
-- [ ] 检查 `internal/store` schema/migrations、SQLite 连接/事务/备份、SSE、报告来源与身份模型。
-- [ ] 检查 `frontend` 现有“推送指令”和“MCP 接入”弹窗与设置风格。
-- [ ] 记录 `go.mod` SDK v1.8.0 能否实现必要 OAuth 流程；确认 MCP 当期授权规范以及必要升级/升级回归。
-- [ ] 基线：`go test ./...`、`cd frontend && npm ci && npm test && npm run build`；记 SHA 与可复现实测输出。
-- [ ] 更新 P8 设计，明确当前系统无普通用户账号，仅存在管理员 ACCESS_TOKEN/浏览器会话，确定“单所有者授权”的 subject 模型。
+- [x] 检查 `internal/api` 的 Bearer、Origin、Cookie/CSRF、MCP 路由、SDK handler 和 shared service boundary。
+- [x] 检查 `internal/store` schema/migrations、SQLite 连接/事务/备份、SSE、报告来源与身份模型。
+- [x] 检查 `frontend` 现有“推送指令”和“MCP 接入”弹窗与设置风格。
+- [x] 记录 `go.mod` SDK v1.8.0 能否实现必要 OAuth 流程；确认 MCP 当期授权规范以及必要升级/升级回归。
+- [x] 基线：`go test ./...`、`cd frontend && npm ci && npm test && npm run build`；记 SHA 与可复现实测输出。
+- [x] 更新 P8 设计，明确当前系统无普通用户账号，仅存在管理员 ACCESS_TOKEN/浏览器会话，确定“单所有者授权”的 subject 模型。
 
-- [ ] 输出 `docs/P8_BASELINE_AUDIT.md`：现有代码调用图、认证边界、SDK/规范版本、数据库 schema 版本、实际部署限制与兼容性风险；核对 OAuth 2.1 draft、MCP 当期授权规范及 RFC 9728/8414/7636/8707/7009 的具体适用要求。
-- [ ] 对 Grok 做“需求证据表”：远程 MCP 地址、OAuth 客户端凭据输入项、支持的注册模式（预注册/CIMD/DCR）、精确 redirect URI、scope/resource 传参、是否支持刷新与定时任务；无法确认则标未知并保留人工联调步骤，不阻塞通用标准实现。
-- [ ] 审计现有反向代理能否正确转发 well-known、/oauth/*、/mcp 及 WWW-Authenticate，避免 Host、X-Forwarded-Proto、路径前缀伪造；明确部署所需的公开 HTTPS origin。
+- [x] 输出 `docs/P8_BASELINE_AUDIT.md`：现有代码调用图、认证边界、SDK/规范版本、数据库 schema 版本、实际部署限制与兼容性风险；核对 OAuth 2.1 draft、MCP 当期授权规范及 RFC 9728/8414/7636/8707/7009 的具体适用要求。
+- [x] 对 Grok 做“需求证据表”：远程 MCP 地址、OAuth 客户端凭据输入项、支持的注册模式（预注册/CIMD/DCR）、精确 redirect URI、scope/resource 传参、是否支持刷新与定时任务；无法确认则标未知并保留人工联调步骤，不阻塞通用标准实现。
+- [x] 审计 checkout 的反向代理限制与信任边界；记录实际生产反代配置不可见，避免 Host、X-Forwarded-Proto、路径前缀推断；明确启用所需的公开 HTTPS origin。
 
 ## Phase 1：协议发现与受控客户端注册
 
 - [ ] 明确稳定 `PUBLIC_BASE_URL` / issuer / MCP resource 配置和受信任反代规则，不由任意 Host 推断。
-- [ ] Protected Resource Metadata：符合 RFC 9728 的路径发现（含路径型资源的规则），正确 HTTPS 资源标识/AS 列表。
-- [ ] AS Metadata：符合 RFC 8414 的 issuer、authorize/token/revoke 等字段，宣告 PKCE S256。
-- [ ] 401 `WWW-Authenticate` 按 MCP OAuth 标准携带 resource metadata 指引；现有 MCP 处理器及旧 Bearer 不回归。
-- [ ] 手动预注册可信 OAuth Client，回调 URI 精确比对、client type/secret 存储保护；提供客户端信息展示与注册撤销流程。
+- [x] Protected Resource Metadata：符合 RFC 9728 的路径发现（含路径型资源的规则），正确 HTTPS 资源标识/AS 列表。
+- [x] AS Metadata：符合 RFC 8414 的 issuer、authorize/token/revoke 等字段，宣告 PKCE S256。
+- [x] 401 `WWW-Authenticate` 按 MCP OAuth 标准携带 resource metadata 指引；现有 MCP 处理器及旧 Bearer 不回归。
+- [x] 手动预注册可信 OAuth Client，回调 URI 精确比对、client type/secret 存储保护；提供客户端信息展示与注册撤销流程。
 - [ ] 确认 CIMD 的处理与第三方实际支持；如需 DCR，先安全评估并增加保护策略，禁止无限开放写入。
 
 - [ ] 定义并测试 OAuth 授权服务器与资源服务器的**精确 URI 规则**：issuer、resource identifier、well-known 路径插入、redirect URI、trailing slash、URL 编码和 HTTPS；客户端使用标准发现而非硬编码私有端点。
@@ -63,65 +63,65 @@
 
 ## Phase 2：数据库 + 授权码与 Token
 
-- [ ] 编写 additive schema-version 迁移：OAuth clients/grants/codes/access tokens/audit（按需 refresh）；索引/UTC/哈希存储。
-- [ ] 登录后授权页面显示真实 client、scope、资源以及当前是全库读/写的安全边界，支持明确允许/拒绝。
-- [ ] 授权端严格校验 response_type、registered redirect_uri、code_challenge_method=S256、scope、resource、登录状态与 anti-CSRF。
-- [ ] 授权码短有效期、原子一次使用；Token endpoint 校验 PKCE、client/redirect/resource 绑定并返回标准错误。
-- [ ] 不透明 access token 足够随机，只保存摘要，短生命周期，可撤销；如支持 refresh，必须 rotation+family 重放检测。
-- [ ] 建立审计/限流/过期清理，日志/报错绝不输出凭据及报告全文。
+- [x] 编写 additive schema-version 迁移：OAuth clients/grants/codes/access tokens/audit（按需 refresh）；索引/UTC/哈希存储。
+- [x] 登录后授权页面显示真实 client、scope、资源以及当前是全库读/写的安全边界，支持明确允许/拒绝。
+- [x] 授权端严格校验 response_type、registered redirect_uri、code_challenge_method=S256、scope、resource、登录状态与 anti-CSRF。
+- [x] 授权码短有效期、原子一次使用；Token endpoint 校验 PKCE、client/redirect/resource 绑定并返回标准错误。
+- [x] 不透明 access token 足够随机，只保存摘要，短生命周期，可撤销；本期不提供 refresh token。
+- [x] 建立审计/限流/过期清理，日志/报错绝不输出凭据及报告全文。
 
-- [ ] 明确浏览器授权安全模型：OAuth 客户端负责 state/回调关联校验；Bolt Dock 负责自身登录会话、授权同意操作的 CSRF 防护、精确 redirect URI 及 PKCE 校验；不得把客户端 state 校验错误地当作服务端可替代的 CSRF 防护。
-- [ ] 授权码交换在 SQLite 事务中原子消费；并发双重兑换只能成功一次，错误 PKCE 不得导致可用授权码被不当消耗（按规范与安全策略确定），拒绝授权不得生成 token。
-- [ ] Access/refresh token 生命周期列出 TTL、撤销传播、重启后持久性、清理时机和并发冲突；如果客户端需要 refresh token，则必须安全轮换与重放检测，禁止无限期无约束凭据。
-- [ ] 客户端和授权记录在删除/禁用后应立即使相关 access/refresh token 无效；索引与事务测试确保小内存 SQLite 部署稳定。
+- [x] 明确浏览器授权安全模型：OAuth 客户端负责 state/回调关联校验；Bolt Dock 负责自身登录会话、授权同意操作的 CSRF 防护、精确 redirect URI 及 PKCE 校验；不得把客户端 state 校验错误地当作服务端可替代的 CSRF 防护。
+- [x] 授权码交换在 SQLite 事务中原子消费；并发双重兑换只能成功一次，错误 PKCE 不得导致可用授权码被不当消耗（按规范与安全策略确定），拒绝授权不得生成 token。
+- [x] Access token 生命周期、15 分钟 TTL、撤销传播、重启后持久性和授权时清理已记录并测试；本期不提供 refresh token。
+- [x] 客户端禁用会立即使相关授权及 access token 无效；覆盖索引与事务测试。
 - [ ] 迁移只新增 OAuth 结构，验证旧数据 count、FTS、Bot 身份、幂等索引不变；记录升级前备份及兼容式回滚方案，禁止自动恢复生产数据库。
 
 ## Phase 3：双认证与细粒度工具权限
 
-- [ ] `/mcp` 接受原 Legacy Bearer 或新 OAuth access token，二者独立验证/不会相互升级权限；Cookie 始终无效。
-- [ ] 形成明确 Principal/Scope/Resource context；`search_reports` 要求 `reports:read`；`publish_report` 要求 `reports:write`。
-- [ ] OAuth Token 只能调用 MCP 工具，不得绕过 REST 写入、浏览器管理、删除 API；旧 REST 不改行为。
-- [ ] source/bot identity、stable_task_id、external_id 幂等、SQLite/FTS/SSE 共用原服务，无复刻写入/检索业务。
-- [ ] 401/403/工具权限错误一致；MCP SDK 的初始化和 tools/list 协议兼容。
+- [x] `/mcp` 接受原 Legacy Bearer 或新 OAuth access token，二者独立验证/不会相互升级权限；Cookie 始终无效。
+- [x] 形成明确 Principal/Scope/Resource context；`search_reports` 要求 `reports:read`；`publish_report` 要求 `reports:write`。
+- [x] OAuth Token 只能调用 MCP 工具，不得绕过 REST 写入、浏览器管理、删除 API；旧 REST 不改行为。
+- [x] source/bot identity、stable_task_id、external_id 幂等、SQLite/FTS/SSE 共用原服务，无复刻写入/检索业务。
+- [x] 401/403/工具权限错误一致；MCP SDK 的初始化和 tools/list 协议兼容。
 
 - [ ] 形成按端点/工具的权限矩阵：Legacy ACCESS_TOKEN、OAuth read、OAuth write、OAuth read+write、浏览器 Cookie、匿名请求，逐项测试 200/401/403/工具错误的规范语义；不得出现 OAuth token 被 REST 管理接口接受的路径。
-- [ ] 明确 MCP `tools/list` 可见性与调用权限策略，确保工具描述不会误导客户端；**真正权限在服务端 tools/call 时强制校验**，不可只靠隐藏按钮或工具描述。
+- [x] 明确 MCP `tools/list` 可见性与调用权限策略，确保工具描述不会误导客户端；**真正权限在服务端 tools/call 时强制校验**，不可只靠隐藏按钮或工具描述。
 - [ ] 检查 token confusion、authorization code 注入、重放、scope 升级、resource/audience 不匹配、登录会话固定及 SSRF，形成独立威胁清单。
 
 ## Phase 4：前端及客户端体验
 
-- [ ] 沿用 Vue 工作台 UI 增加授权确认、已连接客户端/授权记录、按客户端撤销、错误/取消/过期交互。
-- [ ] “MCP 接入”面板展示准确双认证能力，OAuth 未启用时不得出现可用的 OAuth 接入指导。
-- [ ] README、TECHNICAL_DESIGN、客户端/安全/迁移文档与实际接口同步，不覆盖 P7 已验收说明。
+- [x] 沿用 Vue 工作台 UI 增加授权确认、已连接客户端/授权记录、按客户端撤销、错误/取消/过期交互。
+- [x] “MCP 接入”面板展示准确双认证能力，OAuth 未启用时不得出现可用的 OAuth 接入指导。
+- [x] README、TECHNICAL_DESIGN、客户端/安全/迁移文档与实际接口同步，不覆盖 P7 已验收说明。
 - [ ] 仅测试环境或经过允许的外部客户端真实验证 Grok 与 Claude 的 OAuth 连接。Cookie/session 不可被 AI Client 复用。
 - [ ] 验证 Codex CLI 既有 Bearer 配置和其他 P7 Inspector 场景。
 
 - [ ] 授权页必须显著展示：客户端名称、准确 redirect 域名、请求的 read/write 权限、读权限可访问**整个单所有者报告库**、写权限可声明 source/bot_id；明确允许/拒绝，不默认勾选或自动授权。
 - [ ] 授权页与已连接应用管理在手机/桌面、深浅主题、键盘操作下实测；撤销前确认、撤销后状态即时更新，过期/失败提示不泄露 token。
-- [ ] 客户端接入说明优先 Grok，但只使用实际验证的回调 URI 和配置字段；若平台要求 OAuth client secret，明确安全发放方式；未知字段不编造。
+- [x] 客户端接入说明优先 Grok，但只使用实际验证的回调 URI 和配置字段；若平台要求 OAuth client secret，明确安全发放方式；未知字段不编造。真实平台回调/字段仍标为待外部联调，没有声称已验证。
 
 ## Phase 5：自动化安全回归（所有必须通过）
 
 - [ ] Discovery 正常/坏 Host/代理头污染/HTTPS 假冒；跨源 Origin 和 CSRF；scope/resource/issuer 错误。
-- [ ] PKCE 空/错误/plain 禁止、错误 redirect_uri、code 过期/重放、无效 client、用户拒绝。
-- [ ] Access Token 过期/撤销、客户端撤销、只读尝试写入、只写尝试读取、OAuth token 不能调用 REST。
-- [ ] 若提供 refresh：轮换后旧 token 重放导致 family 撤销；并发消费一致性。
-- [ ] 如接入 CIMD/DCR：SSRF、redirect 限制、超时/大小/速率/恶意 metadata、匿名注册泛滥防护。
+- [x] PKCE 空/错误/plain 禁止、错误 redirect_uri、code 过期/重放、无效 client、用户拒绝。
+- [x] Access Token 过期/撤销、客户端撤销、只读尝试写入、只写尝试读取、OAuth token 不能调用 REST。
+- [x] 若提供 refresh：不适用，本期不签发 refresh token。
+- [x] 如接入 CIMD/DCR：不适用，本期未实现 CIMD/DCR，不读取外部 client metadata，也未开放匿名注册。
 - [ ] 新旧认证并存、报告重复 external_id、中文搜索/游标、FTS、SSE、网页登录/注销、所有已有 Go/Vue 测试。
 - [ ] SQLite schema 从旧版本升级、重复迁移、容器重启、备份恢复演练；不丢历史报告/Bot。
 - [ ] `make test`、`make build`、Docker 构建与健康检查、镜像内运行 smoke test、资源实测。
 
-- [ ] 增加独立 OAuth 协议测试客户端（不是 Codex 专属），完成 discovery→authorize→consent→token→tools/list→publish/search→revoke 全链路，使用本地测试数据库，不依赖真实第三方账户。
+- [x] 增加独立 OAuth 协议测试客户端（不是 Codex 专属），完成 discovery→authorize→consent→token→tools/list→publish/search→revoke 全链路，使用本地测试数据库，不依赖真实第三方账户。
 - [ ] 测试断电/重启、SQLite busy/锁竞争、并发兑换同一 code、并发 refresh 轮换、撤销与调用竞争；记录事务一致性和错误语义。
 - [ ] 验证 Token/Client Secret 不会出现在前端静态资源、URL 查询日志、重定向泄露、错误栈、CI artifacts 或数据库明文字段中；必要时扫描提交内容。
-- [ ] 将“真正多用户隔离”明确列为 P8 范围外：本期单所有者，不能将多用户隔离测试标为通过；可测试多个 OAuth 客户端彼此的凭据/授权独立性，但它不等于多租户数据隔离。
+- [x] 将“真正多用户隔离”明确列为 P8 范围外：本期单所有者，不能将多用户隔离测试标为通过；本次不把多个客户端的存在宣称为多租户数据隔离。
 
 ## Phase 6：交付策略和验收记录
 
 - [ ] 按仓库 PR 保护策略准备本地分阶段提交与 CI 验证方案；**未经用户明确授权，不得推送远程提交、创建 PR 或合并**。获授权后执行相应远程步骤；不得以 docs-only push 误当作 GHCR 新版本已发布。
-- [ ] 默认 OAuth 功能关闭；不开启生产 OAuth/不触碰真实生产 DB，除非用户明确授权。
-- [ ] 更新 `docs/P8_OAUTH_ACCEPTANCE.md`：逐项日期、提交 SHA、测试命令/结果、真实客户端版本、阻塞、部署风险、回滚演练。
-- [ ] 文档 README 仅宣称已经完成且验证的功能；未验证项必须明确标记。
+- [x] 默认 OAuth 功能关闭；未开启生产 OAuth/未触碰真实生产 DB。
+- [x] 更新 `docs/P8_OAUTH_ACCEPTANCE.md`：记录日期、基线 SHA、测试命令/结果、客户端阻塞、部署风险和隔离备份恢复演练；当前本地提交 SHA 将在提交后补记。
+- [x] 文档 README 仅宣称已经完成且验证的功能；未验证项明确标记。
 - [ ] 结束时报告变更清单、迁移说明、权限与安全矩阵、Legacy 回归、客户端接入步骤、已知限制和下一步生产发布手册。
 
 ## 统一停止/决策策略

@@ -49,6 +49,14 @@ const mcpAddressError = ref('')
 const mcpCopyStatus = ref('')
 const mcpCopyFallback = ref(false)
 const mcpFallbackText = ref('')
+const oauthClients = ref([])
+const oauthGrants = ref([])
+const oauthClientName = ref('')
+const oauthRedirectURI = ref('')
+const oauthConfidential = ref(false)
+const oauthCreatedClient = ref(null)
+const oauthManagementError = ref('')
+const oauthManagementBusy = ref(false)
 const mcpDialog = ref(null)
 const mcpCloseButton = ref(null)
 const pushTemplate = ref({ endpoint: '', source: '' })
@@ -60,7 +68,7 @@ const mcpServiceURL = computed(() => {
 })
 const mcpAddressScope = computed(() => classifyMCPAddress(mcpServiceURL.value))
 const mcpCodexExample = computed(() => makeCodexMCPConfig(mcpServiceURL.value || buildMCPServiceURL(window.location.origin)))
-const mcpGenericGuide = computed(() => makeMCPGenericGuide(mcpServiceURL.value, mcpCapabilities.value?.tools || []))
+const mcpGenericGuide = computed(() => makeMCPGenericGuide(mcpServiceURL.value, mcpCapabilities.value?.tools || [], mcpCapabilities.value?.oauth_enabled === true))
 const renameTarget = ref(null)
 const renameValue = ref('')
 const renameError = ref('')
@@ -321,8 +329,43 @@ async function openMCPAccess() {
   mcpCapabilitiesLoading.value = true
   try {
     mcpCapabilities.value = await api('/api/v1/mcp/capabilities')
+    oauthCreatedClient.value = null
+    oauthManagementError.value = ''
+    if (mcpCapabilities.value.oauth_enabled) await loadOAuthManagement()
   } catch (e) { mcpCapabilitiesError.value = e.message || '无法读取当前服务的 MCP 能力清单。' }
   finally { mcpCapabilitiesLoading.value = false }
+}
+async function loadOAuthManagement() {
+  const [clients, grants] = await Promise.all([api('/api/v1/oauth/clients'), api('/api/v1/oauth/grants')])
+  oauthClients.value = clients.items || []
+  oauthGrants.value = grants.items || []
+}
+async function createOAuthClient() {
+  if (!oauthClientName.value.trim() || !oauthRedirectURI.value.trim() || oauthManagementBusy.value) return
+  oauthManagementBusy.value = true
+  oauthManagementError.value = ''
+  try {
+    oauthCreatedClient.value = await api('/api/v1/oauth/clients', { method: 'POST', body: JSON.stringify({
+      name: oauthClientName.value.trim(), redirect_uris: oauthRedirectURI.value.split(/\s+/).filter(Boolean), confidential: oauthConfidential.value,
+    }) })
+    oauthClientName.value = ''; oauthRedirectURI.value = ''; oauthConfidential.value = false
+    await loadOAuthManagement()
+  } catch (e) { oauthManagementError.value = e.message }
+  finally { oauthManagementBusy.value = false }
+}
+async function disableOAuthClient(client) {
+  if (!window.confirm(`停用 ${client.client_name}？相关授权和 Token 会立即失效。`)) return
+  try { await api(`/api/v1/oauth/clients/${encodeURIComponent(client.client_id)}`, { method: 'DELETE' }); await loadOAuthManagement() }
+  catch (e) { oauthManagementError.value = e.message }
+}
+async function revokeOAuthGrant(grant) {
+  if (!window.confirm(`撤销 ${grant.client_name} 的这条授权？现有 Token 会立即失效。`)) return
+  try { await api(`/api/v1/oauth/grants/${grant.id}`, { method: 'DELETE' }); await loadOAuthManagement() }
+  catch (e) { oauthManagementError.value = e.message }
+}
+function copyOAuthClientSecret() {
+  if (!oauthCreatedClient.value?.client_secret) return
+  copyMCPText(oauthCreatedClient.value.client_secret, 'Client Secret 已复制；此处不再显示第二次。')
 }
 function saveMCPAddress() {
   try {
@@ -655,7 +698,7 @@ function trapReaderFocus(event) {
           <div class="mcp-service-url"><div><span class="mcp-field-label">MCP 服务地址</span><code :title="mcpServiceURL">{{ mcpServiceURL || '请填写有效的 HTTPS 服务地址' }}</code></div><button class="primary-button" :disabled="!mcpServiceURL" @click="copyMCPServiceURL">复制服务地址</button></div>
           <p v-if="mcpAddressScope === 'invalid'" class="mcp-capability-error" role="alert">当前 MCP 服务地址无效，请输入有效地址后保存。</p>
           <p v-else-if="mcpAddressScope === 'local'" class="mcp-local-warning" role="note">此地址指向本机或私有网络，只适用于能够访问该网络的客户端；远程 Agent 无法通过公网访问。请配置可达的 HTTPS 反向代理地址。</p>
-          <p v-else-if="mcpCapabilities" class="mcp-field-help">认证方式：<code>{{ mcpCapabilities.authentication }}</code>。页面不会读取或复制密钥，也不显示在线状态；地址能否从目标客户端访问取决于网络和反向代理配置。</p>
+          <p v-else-if="mcpCapabilities" class="mcp-field-help">认证方式：<code>{{ mcpCapabilities.authentication }}</code>。页面不会读取管理员密钥，也不显示在线状态；地址能否从目标客户端访问取决于网络和反向代理配置。</p>
         </section>
 
         <section class="mcp-access-section" aria-labelledby="mcp-tools-heading">
@@ -673,16 +716,34 @@ function trapReaderFocus(event) {
           <p class="mcp-field-help">Agent 能发现并调用工具不代表它会自动推送；这取决于具体客户端、权限和任务设置。</p>
         </section>
 
+        <section v-if="mcpCapabilities?.oauth_enabled" class="mcp-access-section" aria-labelledby="oauth-owner-heading">
+          <div class="mcp-section-heading"><h3 id="oauth-owner-heading">OAuth 客户端与授权</h3><span class="mcp-protocol-badge">PKCE · 独立凭据</span></div>
+          <p class="mcp-field-help">只向可信客户端登记精确回调地址。Client Secret 仅在创建时显示一次；OAuth 默认无刷新令牌，Token 有效期 15 分钟，授权最长 30 天。</p>
+          <form class="oauth-client-form" @submit.prevent="createOAuthClient">
+            <label>客户端名称<input v-model="oauthClientName" maxlength="120" required autocomplete="off"></label>
+            <label>精确回调 URI（每行一个）<textarea v-model="oauthRedirectURI" required rows="2" spellcheck="false" placeholder="https://client.example/oauth/callback"></textarea></label>
+            <label class="oauth-checkbox"><input v-model="oauthConfidential" type="checkbox"> 此客户端可安全保存 Client Secret（机密客户端）</label>
+            <button class="secondary-button" :disabled="oauthManagementBusy">登记客户端</button>
+          </form>
+          <p v-if="oauthManagementError" class="form-error" role="alert">{{ oauthManagementError }}</p>
+          <div v-if="oauthCreatedClient" class="oauth-created-client" role="status"><strong>客户端已登记：{{ oauthCreatedClient.client_id }}</strong><p v-if="oauthCreatedClient.client_secret">Client Secret（只显示本次）：<code>{{ oauthCreatedClient.client_secret }}</code> <button class="secondary-button" @click="copyOAuthClientSecret">复制 Secret</button></p><p v-else>此客户端为公开客户端，不签发 Client Secret。</p></div>
+          <ul v-if="oauthClients.length" class="oauth-managed-list"><li v-for="client in oauthClients" :key="client.client_id"><div><strong>{{ client.client_name }}</strong><code>{{ client.client_id }}</code><small>{{ client.redirect_uris.join(' · ') }}</small><small v-if="client.disabled_at">已停用</small></div><button v-if="!client.disabled_at" class="text-button" @click="disableOAuthClient(client)">停用</button></li></ul>
+          <h4>已授权记录</h4>
+          <ul v-if="oauthGrants.length" class="oauth-managed-list"><li v-for="grant in oauthGrants" :key="grant.id"><div><strong>{{ grant.client_name }} <small>授权 #{{ grant.id }}</small></strong><small>{{ grant.scopes.join(' · ') }} · {{ grant.resource }}</small><small>{{ grant.revoked_at ? '已撤销' : `有效期至 ${grant.expires_at}` }}</small></div><button v-if="!grant.revoked_at" class="text-button" @click="revokeOAuthGrant(grant)">撤销</button></li></ul>
+          <p v-else class="mcp-field-help">目前没有 OAuth 授权记录。</p>
+        </section>
+
         <section class="mcp-access-section mcp-security-note" aria-labelledby="mcp-security-heading">
           <h3 id="mcp-security-heading">认证与安全边界</h3>
-          <p>当前访问模式：{{ mcpCapabilities?.access_model || '由本服务管理员配置；没有工具能力清单时，请先更新服务端。' }}。服务复用管理员设置的 <code>ACCESS_TOKEN</code> 作为共享 Bearer 密钥，仅适合服务所有者本人或受信任的单用户客户端。持有该密钥的 MCP 客户端可发布并检索报告；不要把密钥发给不受信任的人或写入剪贴板。</p>
-          <p><code>ACCESS_TOKEN</code> 是服务器配置；本服务不签发独立 Agent Token，不提供按客户端授权、撤销或多租户隔离。</p>
+          <p v-if="mcpCapabilities?.oauth_enabled">OAuth 使用独立的不透明 Bearer Token 和按客户端授权；旧 <code>ACCESS_TOKEN</code> 仍兼容。OAuth 的读取权限覆盖整个单所有者报告库，写入权限可声明 source / bot_id；这不是多租户隔离。管理员共享密钥不会作为 OAuth 凭据发放。</p>
+          <p v-else>当前访问模式：{{ mcpCapabilities?.access_model || '由本服务管理员配置；没有工具能力清单时，请先更新服务端。' }}。服务复用管理员设置的 <code>ACCESS_TOKEN</code> 作为共享 Bearer 密钥，仅适合服务所有者本人或受信任的单用户客户端。持有该密钥的 MCP 客户端可发布并检索报告；不要把密钥发给不受信任的人或写入剪贴板。</p>
+          <p v-if="!mcpCapabilities?.oauth_enabled"><code>ACCESS_TOKEN</code> 是服务器配置；本实例未启用 OAuth 独立授权。</p>
         </section>
 
         <section class="mcp-access-section mcp-copy-section" aria-labelledby="mcp-copy-heading">
           <div class="mcp-section-heading"><h3 id="mcp-copy-heading">通用接入说明</h3><button class="secondary-button" :disabled="!mcpCapabilities" @click="copyMCPGenericGuide">复制通用说明</button></div>
-          <p class="mcp-field-help">MCP 协议没有统一的客户端配置文件格式。请在支持自定义远程 MCP 的客户端中填写上方 URL，并在它的安全凭据设置中录入 Bearer Token。</p>
-          <ol class="mcp-connection-steps"><li>复制上方 MCP 服务 URL。</li><li>在支持远程 MCP 的客户端中填写 URL，并在客户端安全凭据设置中配置管理员提供的 Bearer Token。</li><li>允许客户端调用 <code>publish_report</code>；发布后在 Bot Dock 工作台查看报告。</li></ol>
+          <p class="mcp-field-help">MCP 协议没有统一的客户端配置文件格式。OAuth 已启用时，优先让客户端从服务元数据启动 OAuth 授权；旧 Bearer 可继续供可信客户端使用。</p>
+          <ol class="mcp-connection-steps"><li>复制上方 MCP 服务 URL。</li><li v-if="mcpCapabilities?.oauth_enabled">在支持远程 MCP OAuth 的客户端中启动授权，登录 Bolt Dock 并选择所需权限。</li><li v-else>在支持远程 MCP 的客户端中填写 URL，并在客户端安全凭据设置中配置管理员提供的 Bearer Token。</li><li>允许客户端调用所需工具；发布后在 Bot Dock 工作台查看报告。</li></ol>
           <details class="mcp-client-example">
             <summary>可选客户端示例：Codex CLI</summary>
             <p>Codex CLI 0.162.0-alpha.2 已完成连接和工具调用测试。示例使用本地环境变量名 <code>BOLT_DOCK_TOKEN</code>，它只是本示例自行选择的名称，不是 MCP 标准字段，也不是服务器必需的环境变量。请在启动 Codex CLI 的环境中安全设置为服务端 ACCESS_TOKEN 的值。</p>

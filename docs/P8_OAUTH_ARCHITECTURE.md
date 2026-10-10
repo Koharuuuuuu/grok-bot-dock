@@ -1,6 +1,6 @@
 # P8 · OAuth 2.1 MCP 授权升级：架构与安全规范
 
-> 状态：**设计待实施**（2026-10-10）。现有 P7 `/mcp` 仍仅使用共享 `ACCESS_TOKEN` Bearer 认证。本文不得作为已上线能力说明。
+> 状态：**P8 代码已在本地功能分支实现，默认关闭，尚未发布或真实客户端验收**（2026-10-10）。本文描述代码目标与安全边界；不能据此宣称生产或第三方客户端已启用。
 >
 > 目标仓库：`Nyakooo/grok-bot-dock`（私有）；默认分支 `master`。关联 [执行清单](./P8_OAUTH_EXECUTION_PLAN.md)、[迁移/回滚](./P8_OAUTH_MIGRATION.md)、[客户端接入](./P8_OAUTH_CLIENTS.md)。
 

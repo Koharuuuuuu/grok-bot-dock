@@ -1,15 +1,15 @@
 # P8 · 第三方 MCP 客户端接入与兼容性
 
-> **待实施/待实测。** 现在 Bolt Dock 只有 `Authorization: Bearer <ACCESS_TOKEN>` 的远程 Streamable HTTP MCP，**不是** OAuth 服务。完成 P8 并启用后，才能使用这里的 OAuth 连接流程。
+> **OAuth 服务已在本地 P8 分支实现为 opt-in；默认关闭且尚未发布到 master/GHCR。** 协议自动化测试不能证明 Grok、Codex、Cursor、Claude 的真实客户端连接；各产品 OAuth 仍需按具体版本联调。
 
 ## 两种模式：谁用哪一种？
 
 | 客户端/场景 | 当前可用模式 | P8 目标 | 注意事项 |
 | --- | --- | --- | --- |
-| Codex CLI | 远程 Streamable HTTP + 环境变量 Bearer；P7 已验收特定 CLI 版本 | 旧模式继续工作；可选 OAuth | 不是 Codex 专属 MCP |
-| Cursor | 客户端支持配置远程 MCP；具体 Bearer 配法按客户端当前版本核实 | OAuth 浏览器授权 | 不把平台登录等同于第三方 MCP 授权 |
-| Grok | 当前截图客户端要求 OAuth 凭据，尚未完成连通性验证 | OAuth 预注册 + 真实授权测试 | 不确定是否支持 CIMD/DCR、定时执行 MCP；必须实测 |
-| Claude | 客户端/计划/版本需验证 | 标准远程 OAuth 连接 | 不承诺任意版本可用 |
+| Codex CLI | 远程 Streamable HTTP + 环境变量 Bearer；P7 已验收特定 CLI 版本 | P8 OAuth 可按标准尝试 | OAuth 未实测；不是 Codex 专属 MCP |
+| Cursor | 官方文档提到远程 MCP/OAuth；具体 Bearer 配法按版本核实 | OAuth 浏览器授权 | 本地 OAuth 协议未在 Cursor 产品端验证 |
+| Grok | 当前截图客户端要求 OAuth 凭据，尚未完成连通性验证 | 需所有者预注册其 client_id 与精确 redirect URI | 官方能力、secret 要求、resource/scope 参数及 token refresh 均未知；必须实测 |
+| Claude | 官方资料提及远程 MCP/OAuth；具体产品、计划和版本需验证 | 标准远程 OAuth 连接 | 本地 OAuth 协议未在 Claude 产品端验证 |
 | ChatGPT | 账号/功能入口限制需验证 | 在其实际开放的 MCP 客户端支持范围内接入 | 不承诺普通聊天或 Tasks 可调用 |
 | 通用 MCP Inspector | P7 共享 Bearer 已验收 | OAuth discovery、登录、工具发现与调用 | 不代替真实平台测试 |
 
@@ -21,13 +21,15 @@
 - Codex CLI 可参考 README 的 `bearer_token_env_var` 示例（本地环境变量名 `BOLT_DOCK_TOKEN`）。
 - 管理员共享 Bearer 可读取所有历史并发布任意来源；不适合公开分发。
 
-## OAuth（实现并启用后）
+## OAuth（当前代码已实现；需版本包含 P8 且管理员启用）
 
-1. 复制 MCP HTTPS URL，客户端读取受保护资源元数据与授权服务器元数据。
-2. 依据客户端支持方式：**预注册**，或者 CIMD；必要时安全受控地启用 DCR。对于 Grok 的“输入 OAuth 应用注册凭证”，先核查其究竟需要 client ID、client secret、redirect URI 哪些字段，不要编造预设值或回调 URI。
-3. 浏览器跳转 Bolt Dock 授权页面；由已有管理员会话认证所有者；核对展示的客户端身份、资源、`reports:read` / `reports:write` 权限并主动批准或拒绝。
-4. 客户端取得单独 OAuth Token 后连接 `/mcp`，调用 `search_reports` / `publish_report`。读权限不能写，写权限不能读。
-5. 在 Bolt Dock 已授权应用页面撤销该客户端；重试时旧 Token 应被拒绝。
+1. 仅在反向代理和 canonical `PUBLIC_BASE_URL` 已验证后，将 `OAUTH_ENABLED=true` 并配置 `PUBLIC_BASE_URL=https://<origin>`。当前不支持服务 URL 子路径。
+2. 工作台 MCP 接入页为可信 client 登记名称和平台提供的**精确** redirect URI；平台要求 confidential secret 时选择 confidential client，并立即将创建时返回的 secret 安全录入平台。管理员 `ACCESS_TOKEN` 不能替代它。
+3. 客户端复制 MCP URL 后触发发现。浏览器跳到 Bolt Dock；管理员登录并明确勾选所需 scope。登录、同意、授权码/PKCE、resource、client 和 redirect URI 由服务校验。
+4. 授权仅发 `reports:read` 和/或 `reports:write`，可用 15 分钟；grant 期限 30 天。没有 refresh token，客户端需再次进行授权流程。
+5. 在工作台停用 client 或撤销单条 grant；已发 token 应立即失效。
+
+当前不支持 CIMD、DCR 或 refresh token。若目标客户端不能使用静态预注册信息、必须刷新 Token，或拒绝 service metadata/resource 参数，则本实现不能据此标记兼容；先记录实际客户端请求再扩展。
 
 **必须实测** OAuth Protected Resource Metadata → AS Discovery → 预注册 Client ID → PKCE/授权 → token → `tools/list` → 工具调用 → 授权撤销，以及失败/过期/无权场景。OAuth 支持与定时无人值守是两件事，不能因为 MCP 接入就宣称“每小时自动推送”。
 

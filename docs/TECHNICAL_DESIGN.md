@@ -59,7 +59,7 @@ UI：无左侧导航；顶部品牌 Bolt Dock、默认跨来源全局搜索、�
 
 当前 Compose 将 HTTP 端口仅绑定到宿主机 `127.0.0.1`，容器限制为 2 CPU、1600 MiB；应通过同机 HTTPS 反向代理提供公网入口。网页登录用服务端内存会话和 HttpOnly Cookie 恢复刷新状态；进程重启会撤销所有浏览器会话。
 
-## 11. P7 远程 MCP
+## 11. P7 远程 MCP（历史基线）
 
 MCP 通过现有 Go mux 的精确路径 `/mcp` 提供 Streamable HTTP，继续使用单 Go 服务、Vue 静态资源和 SQLite。协议层采用官方 [`github.com/modelcontextprotocol/go-sdk`](https://github.com/modelcontextprotocol/go-sdk) 固定版本 `v1.8.0`；其模块要求 Go `1.25.0`，与本仓库 `go.mod` 一致。SDK 支持 MCP `2026-07-28` 和多个旧版协议。锁定版本按贡献代码归属采用 Apache-2.0 或 MIT 许可，详见依赖 LICENSE。P7 使用 SDK 的无状态传输，不自行实现 JSON-RPC、SSE 或会话协议；SDK 限制 MCP 请求体不超过服务 `MAX_REQUEST_BYTES` 配置，默认 1 MiB。
 
@@ -72,3 +72,13 @@ MCP 是独立服务，不依赖 Codex 或特定客户端进程。它仅接受常
 `search_reports.query` 映射 REST 的 `q`，其余 `source`、`bot_id`、`from`、`to`、`limit`、`cursor` 直接复用 `Store.Search` 的 FTS5、筛选与稳定游标；日期为含首尾 `YYYY-MM-DD`，默认 limit 为 10、最大 20。MCP 搜索结果只投影报告 ID、来源、Bot ID/展示名、标题、摘要、执行时间和标签，不返回完整 Markdown；空结果为 `items: []`。过滤、FTS 查询和分页继续由现有存储层负责，不创建第二套 SQL 检索逻辑。
 
 客户端需支持自定义远程 MCP、Streamable HTTP 和 Bearer 凭据，并将服务端 `ACCESS_TOKEN` 存在自身安全凭据配置中。README 的可选 Codex CLI 示例使用 `BOLT_DOCK_TOKEN` 作为该客户端本地环境变量名；它不是 MCP 标准字段或服务器必需变量。具体产品版本、托管执行环境网络可达性及生产反向代理仍需针对实际部署逐项验证；SDK 集成测试通过不代表所有客户端兼容。
+
+## 12. P8 可选 OAuth MCP
+
+P8 在 P7 `/mcp` 上可选启用 OAuth Authorization Code + PKCE S256。`OAUTH_ENABLED` 默认为 false；开启后要求 `PUBLIC_BASE_URL` 是固定 HTTPS origin（本地隔离测试可用 loopback HTTP），不接受路径、查询参数或从请求 Host/转发头推导。部署前仍需核对实际反向代理转发路径和 `WWW-Authenticate`。
+
+授权服务器端点：`GET /.well-known/oauth-protected-resource/mcp`、`GET /.well-known/oauth-authorization-server`、`GET /oauth/authorize`、`POST /oauth/consent`、`POST /oauth/token`、`POST /oauth/revoke`。授权管理 API 使用网页登录会话：`GET/POST /api/v1/oauth/clients`、`DELETE /api/v1/oauth/clients/{client_id}`、`GET /api/v1/oauth/grants`、`DELETE /api/v1/oauth/grants/{grant_id}`。公开客户端可不设 secret；机密客户端使用只展示一次的随机 secret，SQLite 仅保存 SHA-256 摘要。只支持所有者手工预注册的回调 URI，精确字符串匹配；HTTP redirect 仅允许 localhost/loopback。
+
+授权码绑定 client、redirect URI、PKCE S256 challenge、resource、scope，5 分钟过期且事务一次性兑换。Access token 是随机不透明值，摘要存储、15 分钟过期；每个 MCP 请求检查 token、grant、client 状态及 resource。授权有效期 30 天；撤销 grant/client 即时撤销现存 access token。`reports:read` 只允许 `search_reports`，`reports:write` 只允许 `publish_report`，MCP HTTP 层对缺 scope 的调用返回 403；OAuth token 不通过 REST Bearer 鉴权。未实现 refresh token、CIMD、DCR、JWKS。
+
+SQLite schema v2 只新增 `oauth_clients`、`oauth_grants`、`oauth_authorization_codes`、`oauth_access_tokens`、`oauth_audit_events`；启动迁移不依赖 feature flag，关闭功能不删除表。持久授权主体固定为单所有者 `owner`；读 scope 可访问整个报告库，写 scope 可声明 source/Bot 标识，不构成多租户或来源隔离。生产启用、实际 TLS/反代、数据库备份、镜像发布与 Grok/Claude/Cursor OAuth 联调不在本地代码验收范围内，状态见 P8 验收报告。

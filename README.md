@@ -121,25 +121,18 @@ bearer_token_env_var = "BOLT_DOCK_TOKEN"
 
 `search_reports` 中文检索示例：`{"query":"本周部署验收","source":"codex","from":"2026-10-01","to":"2026-10-10","limit":10}`。检索最多返回 20 条元数据和摘要，完整 Markdown 不会放进工具结果；可用返回的游标读取下一页。
 
-MCP 使用当前单用户共享 Bearer `ACCESS_TOKEN`，不是 OAuth，也不提供多用户隔离；任何持有该 Token 的客户端可发布及读取历史。反向代理如将服务暴露到公网，应限制访问、配置 HTTPS 和代理侧限流。MCP 能让客户端发现工具，不保证 Agent 只在最终报告时调用，也不提供定时触发保证；定时推送继续使用 REST API。Codex/其他客户端的具体版本兼容性以真实客户端连接测试为准；P7 验收状态和未验证项见 [docs/P7_MCP_ACCEPTANCE.md](docs/P7_MCP_ACCEPTANCE.md)。
+Legacy MCP Bearer 仍使用共享 `ACCESS_TOKEN`；OAuth 另行按 P8 配置启用，二者并存且不互相转换。两种模式都属于单所有者服务，不提供多用户隔离。反向代理如将服务暴露到公网，应配置 HTTPS 和代理侧限流。MCP 能让客户端发现工具，不保证 Agent 只在最终报告时调用，也不提供定时触发保证；定时推送继续使用 REST API。Codex/其他客户端的具体版本兼容性以真实客户端连接测试为准；P7 历史验收见 [docs/P7_MCP_ACCEPTANCE.md](docs/P7_MCP_ACCEPTANCE.md)，P8 实测范围见 [docs/P8_OAUTH_ACCEPTANCE.md](docs/P8_OAUTH_ACCEPTANCE.md)。
 
 
-## P8 规划：MCP OAuth 2.1 双认证升级（尚未实现）
+## P8 MCP OAuth 2.1 安全配置
 
-> **状态：设计与 Codex TODO 已提交，当前 master 服务仍只提供共享 `ACCESS_TOKEN` Bearer MCP 认证。** 请勿把 Grok、Claude、Cursor 的 OAuth 接入当作已经可用；启用生产前必须完成实现、测试、授权与迁移验证。
+P8 本地功能分支为 `/mcp` 增加可选 OAuth Authorization Code + PKCE S256；原共享 Bearer 和 REST API 保持兼容。该代码尚未发布到 master 或 GHCR，OAuth 默认关闭。启用前配置 `OAUTH_ENABLED=true` 与 `PUBLIC_BASE_URL=https://<canonical-public-host>`；该值必须是固定 HTTPS origin，不支持 URL 子路径，不能由请求 `Host` 或 `X-Forwarded-*` 推导。仅 `localhost` / loopback 可用 HTTP 做本地隔离测试。OAuth 启用而 URL 缺失或不合规则会拒绝启动。
 
-Bolt Dock 将在不改变现有 `/mcp` Streamable HTTP、`publish_report` / `search_reports`、`POST /api/v1/reports`、`stable_task_id` / `external_id`、SQLite 历史报告和 GHCR 单容器部署的前提下，**新增** OAuth 2.1 授权码 + PKCE S256。现有 Codex CLI / 私有脚本继续使用 Legacy Bearer Token；经用户确认授权的第三方 MCP 客户端使用独立、可过期/撤销、具 `reports:read` 或 `reports:write` 权限的 OAuth Token。管理员 `ACCESS_TOKEN` **不能**作为 OAuth Client Secret 或分享给第三方平台。
+服务支持资源元数据 `/.well-known/oauth-protected-resource/mcp`、AS 元数据 `/.well-known/oauth-authorization-server`、授权/同意、Token、撤销端点。管理员在工作台「MCP 接入」中登记客户端名称和精确回调 URI；可选签发一次性展示的 confidential client secret。授权码有效 5 分钟，PKCE 必须为 S256；access token 为不透明随机值，数据库仅存 SHA-256 摘要，有效 15 分钟；授权最长 30 天，可按授权或客户端撤销。权限为 `reports:read`（仅 `search_reports`）与 `reports:write`（仅 `publish_report`），有效但缺少工具 scope 的请求返回 403。OAuth token 不可访问 REST API。尚不支持 refresh token、CIMD 或匿名 DCR；需要这些行为的客户端暂不兼容，应先完成客户端实测和安全评估。
 
-现有网页登录只是管理员密钥换取内存 Cookie 的单所有者机制，**并无普通用户注册/多租户体系**。P8 第一阶段为单所有者 OAuth 授权，不声称不同用户、来源或 Bot 的数据隔离；授权读意味着可检索该所有者的现有报告库。Grok 等外部客户端的实际注册方式、OAuth 弹窗字段、工具可调用性及定时任务能力均需真实联调，不能仅凭协议推断。
+OAuth 使用增量 SQLite v2 迁移，不修改既有报告/Bot/FTS 表；禁用 OAuth 不删授权表。公开启用前须验证实际反向代理原样转发 well-known、`/oauth/*`、`/mcp` 与 `WWW-Authenticate`，并完成数据库备份。**未在真实 Grok、Codex OAuth、Cursor 或 Claude 平台完成授权与工具调用实测；协议测试通过不等于这些客户端已验收。** 服务仍是单所有者模型；`reports:read` 可检索全库，写入者可声明 source/Bot 身份，不构成租户隔离。
 
-实施入口：
-
-- [P8 技术架构与 OAuth 安全规范](docs/P8_OAUTH_ARCHITECTURE.md)
-- [P8 数据迁移、兼容与回滚](docs/P8_OAUTH_MIGRATION.md)
-- [P8 Grok / Claude / Cursor / Codex 客户端接入](docs/P8_OAUTH_CLIENTS.md)
-- [P8 Codex 严格执行 TODO](docs/P8_OAUTH_EXECUTION_PLAN.md)
-
-**交给 Codex：** 从 `master` 拉取最新文档，优先执行 [P8 执行计划 Phase 0](docs/P8_OAUTH_EXECUTION_PLAN.md)，逐阶段实施并在隔离环境验收。未经批准不得修改生产凭据、运行生产数据库迁移或部署镜像。
+接入及验收文档：[P8 架构](docs/P8_OAUTH_ARCHITECTURE.md)、[迁移与回滚](docs/P8_OAUTH_MIGRATION.md)、[客户端说明](docs/P8_OAUTH_CLIENTS.md)、[执行计划](docs/P8_OAUTH_EXECUTION_PLAN.md)、[基线审计](docs/P8_BASELINE_AUDIT.md)、[验收记录](docs/P8_OAUTH_ACCEPTANCE.md)。
 
 ## Docker 部署（拉取 GHCR 镜像）
 

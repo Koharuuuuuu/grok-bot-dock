@@ -1,19 +1,20 @@
 # P8 · OAuth 存储迁移、运行兼容和回滚
 
-> 状态：设计待实施；不得改变已存在 P7 报告与 Bot 数据。数据库为 SQLite WAL、数据卷 `/data`；现有网页管理认证基于单管理员 ACCESS_TOKEN + 内存 session。
+> 状态：实现已加入本地分支，尚未发布；不得改变已存在 P7 报告与 Bot 数据。数据库为 SQLite WAL、数据卷 `/data`；网页管理认证基于单管理员 ACCESS_TOKEN + 内存 session。
 
-## 数据模型建议（不是已存在表）
+## 已实现数据模型
 
-Codex Phase 0 必须读取 `internal/store` 当前 schema/version/迁移机制，再按真实结构编写迁移，不准复制下面字段并假设数据库已存在 user_id。
+基线 schema 为 v1，P8 启动时在事务中幂等创建 v2。当前迁移实际只新增下表，不改写旧报告/Bot/FTS 结构；SQLite 外键与 WAL 单连接策略保持不变。
 
 | 建议表 | 最少字段 / 索引 | 约束 |
 | --- | --- | --- |
-| `oauth_clients` | `client_id` unique，`name`，`redirect_uris_json`，`registration_type`，`status`，`created_at` | metadata document URI/更新时间/可信状态可扩展；client_secret 只保存摘要 |
-| `oauth_grants` | `id`，`owner_subject`，`client_id`，`resource`，`scopes_json`，`revoked_at` | 本期 owner subject 固定由既有单管理员会话认证推导，未来多用户另迁移 |
-| `oauth_authorization_codes` | `code_hash` unique，`grant_id`，`client_id`，`redirect_uri`，`pkce_challenge`，`resource`，`expires_at`，`consumed_at` | 事务保证同一 code 只消费一次 |
-| `oauth_access_tokens` | `token_hash` unique，`grant_id`，`client_id`，`resource`，`scopes_json`，`expires_at`，`revoked_at` | 随机不透明 token；按到期/授权/客户端索引 |
-| `oauth_refresh_tokens`（按需） | `token_hash` unique，`family_id`，`grant_id`，`rotated_at`，`revoked_at`，`expires_at` | 重放即撤销 token family，轮换事务化 |
-| `oauth_audit_events` | `id`，`timestamp`，`event_type`，`client_id`，`result`，`subject_ref` | 禁止存 token、code、报告正文、Cookie、完整敏感请求 |
+| `oauth_clients` | `client_id` primary key，`name`，`redirect_uris_json`，`client_secret_hash`，`created_at`，`disabled_at` | 秘密只保存 SHA-256 摘要；禁用不删除历史记录 |
+| `oauth_grants` | `id`，`owner_subject`，`client_id`，`resource`，`scopes_json`，`created_at`，`expires_at`，`revoked_at` | 固定 `owner` subject；撤销和过期由每次 token 验证强制执行 |
+| `oauth_authorization_codes` | `code_hash`，`grant_id`，`client_id`，`redirect_uri`，`pkce_challenge`，`resource`，`scopes_json`，`expires_at`，`consumed_at` | 不透明 code 只存 SHA-256 摘要；兑换事务一次性消费 |
+| `oauth_access_tokens` | `token_hash`，`grant_id`，`client_id`，`resource`，`scopes_json`，`expires_at`，`revoked_at` | 不透明 token 只存 SHA-256 摘要；每个 MCP 请求查库 |
+| `oauth_audit_events` | `id`，`event_at`，`event_type`，`client_id`，`result`，`subject_ref` | 不存 token、secret、code、Cookie 或报告正文；授权时清理 90 天前审计 |
+
+尚未建 refresh-token 表，因为当前未发放 refresh token；客户端如要求刷新暂标不兼容，需基于实测再设计 rotation/family replay 防护。Access token TTL 为 15 分钟，授权 grant 最长 30 天，授权码 TTL 为 5 分钟；过期 grant/token 在校验时拒绝，后续授权创建时清理过期 code/token/grant 和 90 天前审计。CIMD 与 DCR 未实现，也无外部 URL 获取路径。
 
 建议使用单独的 schema version migration 和幂等索引；所有 timestamp 使用 UTC；设置紧凑的数据保留和清理周期，确保不增加轻量服务器资源压力。授权管理页只暴露可撤销 metadata，client secret 永不可二次显示。若项目选 JWT，需要明确解释撤销设计与为何优于不透明 token；不得两套方案混搭。
 
@@ -31,8 +32,8 @@ Codex Phase 0 必须读取 `internal/store` 当前 schema/version/迁移机制�
 
 - **准备**：记录 `master` 基线 SHA/当前数据库 schema、容器 digest 和部署配置；先 `go test ./...`、`npm test`/build 建立回归基线。密钥不打印。
 - **备份**：生产停写/停服后，备份 `/data/bolt-dock.db`（同时检查 WAL/SHM 一致性），备份加密并校验；勿使用 `docker compose down -v`。
-- **前向迁移**：采用向后兼容的 **additive only** DDL，事务中执行，写 schema version；多次启动可识别已执行迁移；旧报告及索引验证 count/checksum/抽样检索一致。
-- **启用**：OAuth 默认为关闭；确保 `PUBLIC_BASE_URL`（实际变量名由 Phase 0 决定）符合可信 HTTPS 域名；反向代理仅信任配置好的主机/转发代理；冒烟测试发现与授权流程。
+- **前向迁移**：实现为 `internal/store/store.go` 调用的事务式 additive v2 DDL；多次启动通过 `IF NOT EXISTS` 和 schema version 识别，不会对 P7 表执行 UPDATE/DELETE。自动化测试关闭/重新打开临时数据库，确认 v2、历史报告和 token 持久性。
+- **启用**：OAuth 默认为关闭；`OAUTH_ENABLED=true` 时必须设置 `PUBLIC_BASE_URL` 为固定 HTTPS origin（仅 loopback 测试可 HTTP）；代理公网转发和备份仍需部署者验证。
 - **灰度**：先隔离测试客户端与专用报告或本地测试实例做联调；需要真实 Grok OAuth 时仅进行不修改生产报告的握手/工具发现验证，写入工具必须经用户认可。
 - **上线**：启用 OAuth 之前配置速率限制、监控和撤销入口；完成正式生产变更审批。
 
@@ -46,4 +47,4 @@ Codex Phase 0 必须读取 `internal/store` 当前 schema/version/迁移机制�
 
 ## 验收证据
 
-产出：实际 SQL/Go migration 文件、schema 版本前后记录、测试数据库迁移和重复运行日志、旧行为回归结果、测试隔离证明、备份恢复演练、无明文凭据检查及最终 Go/Vue 构建与 GHCR 状态。未经验证的生产事项明确标注“未验收”。
+本地证据：`internal/store/oauth_test.go` 验证空 v1 数据库前向迁移后关闭/重开、隔离闭库文件备份恢复、保留历史报告、schema v2 记录、OAuth token 持久/过期拒绝和客户端停用即时失效；`internal/api/oauth_test.go` 验证本地 SQLite 授权/token 生命周期。命令与实际输出见 [P8 验收记录](./P8_OAUTH_ACCEPTANCE.md)。未执行生产数据库备份/恢复、公开反向代理验证、GHCR 发布或生产回滚；这些保持“未验收”，不得把本地演练外推成部署证明。
