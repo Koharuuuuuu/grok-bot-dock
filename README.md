@@ -128,7 +128,7 @@ Legacy MCP Bearer 仍使用共享 `ACCESS_TOKEN`；OAuth 另行按 P8 配置启�
 
 此处的“OAuth 2.1”表示采用其安全基线的授权码 + PKCE S256 profile，不代表完整实现或通过全部 OAuth 2.1 规范符合性验证；当前 draft 状态与 P8 验收缺项见 [验收记录](docs/P8_OAUTH_ACCEPTANCE.md)。
 
-P8 本地功能分支为 `/mcp` 增加可选 OAuth Authorization Code + PKCE S256；原共享 Bearer 和 REST API 保持兼容。该代码尚未发布到 master 或 GHCR，OAuth 默认关闭。启用前配置 `OAUTH_ENABLED=true` 与 `PUBLIC_BASE_URL=https://<canonical-public-host>`；该值必须是固定 HTTPS origin，不支持 URL 子路径，不能由请求 `Host` 或 `X-Forwarded-*` 推导。仅 `localhost` / loopback 可用 HTTP 做本地隔离测试。OAuth 启用而 URL 缺失或不合规则会拒绝启动。
+P8 已合入 `master` 并发布到 GHCR（2026-10-11）；镜像包含可选 OAuth Authorization Code + PKCE S256，原共享 Bearer 和 REST API 保持兼容。OAuth 默认关闭。启用前配置 `OAUTH_ENABLED=true` 与 `PUBLIC_BASE_URL=https://<canonical-public-host>`；该值必须是固定 HTTPS origin，不支持 URL 子路径，不能由请求 `Host` 或 `X-Forwarded-*` 推导。仅 `localhost` / loopback 可用 HTTP 做本地隔离测试。OAuth 启用而 URL 缺失或不合规则会拒绝启动。首次先在测试/灰度环境部署并核对反向代理和数据库备份；真实 Grok/Claude 等客户端尚未验收，不能据此宣称客户端兼容。
 
 服务支持资源元数据 `/.well-known/oauth-protected-resource/mcp`、AS 元数据 `/.well-known/oauth-authorization-server`、授权/同意、Token、撤销端点。管理员在工作台「MCP 接入」中登记客户端名称和精确回调 URI；可选签发一次性展示的 confidential client secret。授权码有效 5 分钟，PKCE 必须为 S256；access token 为不透明随机值，数据库仅存 SHA-256 摘要，有效 15 分钟；授权最长 30 天，可按授权或客户端撤销。权限为 `reports:read`（仅 `search_reports`）与 `reports:write`（仅 `publish_report`），有效但缺少工具 scope 的请求返回 403。OAuth token 不可访问 REST API。除手动预注册外，授权端支持通过 CIMD 发现公开客户端元数据，并在所有者明确同意后持久化；CIMD 元数据仅从经过 SSRF 防护的 HTTPS URL 获取。匿名 DCR 和 refresh token 未实现。
 
