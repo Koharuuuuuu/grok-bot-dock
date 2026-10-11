@@ -51,9 +51,9 @@ The service listens on `http://localhost:18765` by default and stores data under
 Send a JSON report to `POST /api/v1/reports` with `Authorization: Bearer $ACCESS_TOKEN`. At minimum, provide an RFC3339 `executed_at` timestamp and non-empty Markdown `content`. Stable source and bot identity lets Bolt Dock group reports consistently; retries with the same `(source, bot_id, external_id)` are idempotent.
 
 ```sh
-curl -X POST "https://YOUR_DOMAIN/api/v1/reports" \\
-  -H "Authorization: Bearer $ACCESS_TOKEN" \\
-  -H 'Content-Type: application/json' \\
+curl -X POST "https://YOUR_DOMAIN/api/v1/reports" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H 'Content-Type: application/json' \
   --data-binary '{
     "source":"codex",
     "stable_task_id":"daily-summary",
@@ -61,7 +61,7 @@ curl -X POST "https://YOUR_DOMAIN/api/v1/reports" \\
     "executed_at":"2026-10-11T09:00:00+08:00",
     "external_id":"run-unique-id",
     "title":"Daily summary",
-    "content":"# Daily summary\\n\\nCompleted report content."
+    "content":"# Daily summary\n\nCompleted report content."
   }'
 ```
 

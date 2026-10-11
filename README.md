@@ -22,8 +22,6 @@
 - [贡献、安全与许可证](#贡献安全与许可证)
 - [English README](README.en.md)
 
-Bolt Dock 是自托管的 AI Bot 报告工作台。任意能发起 HTTPS 请求的任务都可以推送 Markdown 报告；报告按来源和 Bot 自动归档，在同一个网页中搜索、阅读和接收实时提醒。产品界面称为 Bolt Dock，GitHub 仓库仍为 `grok-bot-dock`。
-
 ## 能力
 
 - Bot 首次推送后自动出现响应式卡片；按来源筛选卡片、搜索结果和 Bot/报告计数。
