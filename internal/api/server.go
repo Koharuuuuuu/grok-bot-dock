@@ -39,6 +39,13 @@ type Server struct {
 	sessionMu sync.Mutex
 	sessions  map[string]time.Time
 	streams   map[string]map[chan struct{}]struct{}
+	oauth     OAuthConfig
+	consentMu sync.Mutex
+	consents  map[string]pendingConsent
+	cimdMu    sync.Mutex
+	cimdCache map[string]cimdCacheEntry
+	cimdFetch chan struct{}
+	fetchCIMD func(context.Context, string) (cimdDocument, time.Duration, error)
 }
 
 const (
@@ -54,7 +61,10 @@ type rateWindow struct {
 var sourcePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 func New(s *store.Store, h *events.Hub, token string, maxBytes int64, static embed.FS) *Server {
-	return &Server{store: s, hub: h, token: token, maxBytes: maxBytes, static: static, rate: make(map[string]rateWindow), sessions: make(map[string]time.Time), streams: make(map[string]map[chan struct{}]struct{})}
+	return NewWithOAuth(s, h, token, maxBytes, static, OAuthConfig{})
+}
+func NewWithOAuth(s *store.Store, h *events.Hub, token string, maxBytes int64, static embed.FS, oauth OAuthConfig) *Server {
+	return &Server{store: s, hub: h, token: token, maxBytes: maxBytes, static: static, rate: make(map[string]rateWindow), sessions: make(map[string]time.Time), streams: make(map[string]map[chan struct{}]struct{}), oauth: oauth, consents: make(map[string]pendingConsent), cimdCache: make(map[string]cimdCacheEntry), cimdFetch: make(chan struct{}, 8), fetchCIMD: fetchCIMDMetadata}
 }
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -63,6 +73,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/auth/session", s.sessionStatus)
 	mux.Handle("/api/", s.auth(http.HandlerFunc(s.api)))
 	mux.Handle("/mcp", s.newMCPHandler())
+	if s.oauth.Enabled {
+		mux.HandleFunc("GET /.well-known/oauth-protected-resource", s.protectedResourceMetadata)
+		mux.HandleFunc("GET /.well-known/oauth-protected-resource/mcp", s.protectedResourceMetadata)
+		mux.HandleFunc("GET /.well-known/oauth-authorization-server", s.authorizationServerMetadata)
+		mux.HandleFunc("GET /oauth/authorize", s.oauthAuthorize)
+		mux.HandleFunc("POST /oauth/consent", s.oauthConsent)
+		mux.HandleFunc("POST /oauth/token", s.oauthToken)
+		mux.HandleFunc("POST /oauth/revoke", s.oauthRevoke)
+	}
 	mux.HandleFunc("/mcp/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "MCP endpoint is /mcp")
 	})
@@ -236,12 +255,20 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/mcp/capabilities":
 		writeJSON(w, http.StatusOK, map[string]any{
-			"endpoint":       "/mcp",
-			"transport":      "Streamable HTTP",
-			"authentication": "Authorization: Bearer <ACCESS_TOKEN>",
-			"access_model":   "仅供服务所有者本人或受信任的单用户客户端；共享密钥不支持按客户端授权、撤销或多租户隔离",
-			"tools":          capabilityMetadata(s.maxBytes),
+			"endpoint":  "/mcp",
+			"transport": "Streamable HTTP",
+			"authentication": func() string {
+				if s.oauth.Enabled {
+					return "OAuth Authorization Code + PKCE S256 profile (limited OAuth 2.1 security baseline); legacy Bearer remains supported"
+				}
+				return "Authorization: Bearer <ACCESS_TOKEN>"
+			}(),
+			"oauth_enabled": s.oauth.Enabled,
+			"access_model":  "仅供服务所有者本人或受信任的单用户客户端；共享密钥不支持按客户端授权、撤销或多租户隔离",
+			"tools":         capabilityMetadata(s.maxBytes),
 		})
+	case strings.HasPrefix(r.URL.Path, "/api/v1/oauth/"):
+		s.ownerOAuthAPI(w, r)
 	case r.Method == "POST" && r.URL.Path == "/api/v1/reports":
 		s.createReport(w, r)
 	case r.Method == "GET" && r.URL.Path == "/api/v1/reports":

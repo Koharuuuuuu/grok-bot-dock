@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import createDOMPurify from 'dompurify'
 import { JSDOM } from 'jsdom'
 import { renderSanitizedMarkdown } from './markdown'
-import { buildMCPServiceURL, classifyMCPAddress, highlightParts, makeCodexMCPConfig, makeMCPGenericGuide, makeSearchParams, notificationStatus, readMCPAddressOverride, refreshesSelectedBot, searchSnippet, writeMCPAddressOverride } from './ui-model'
+import { buildMCPServiceURL, classifyMCPAddress, highlightParts, loginFailureMessage, makeCodexMCPConfig, makeMCPGenericGuide, makeSearchParams, notificationStatus, readMCPAddressOverride, refreshesSelectedBot, searchSnippet, sessionExpiredMessage, writeMCPAddressOverride } from './ui-model'
 import { readImmersivePreference, readReaderFontSize, writeImmersivePreference, writeReaderFontSize } from './reader-preferences'
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>')
@@ -60,6 +60,14 @@ describe('Bolt Dock interface helpers', () => {
     expect(guide).not.toContain('ACCESS_TOKEN=')
   })
 
+  it('describes OAuth capabilities without suggesting an administrator secret', () => {
+    const guide = makeMCPGenericGuide('https://reports.example.com/mcp', [], true)
+    expect(guide).toContain('PKCE S256')
+    expect(guide).toContain('reports:read / reports:write')
+    expect(guide).toContain('无 refresh token')
+    expect(guide).not.toContain('Authorization: Bearer <由服务管理员安全提供>')
+  })
+
   it('keeps the Codex-specific environment variable inside its optional example only', () => {
     const example = makeCodexMCPConfig('https://reports.example.com/mcp')
     expect(example).toContain('url = "https://reports.example.com/mcp"')
@@ -102,6 +110,17 @@ describe('Bolt Dock interface helpers', () => {
     expect(notificationStatus(false, 'default')).toBe('当前浏览器不支持通知')
     expect(notificationStatus(true, 'denied')).toBe('通知未获授权')
     expect(notificationStatus(true, 'granted')).toBe('通知已开启')
+  })
+
+  it('keeps failed-login and expired-session messages independent of credentials and response bodies', () => {
+    const submittedToken = 'sensitive-token-marker'
+    const responseBody = { error: { message: `invalid credential ${submittedToken}` } }
+    const messages = [loginFailureMessage(401), loginFailureMessage(500), sessionExpiredMessage]
+    expect(messages[0]).toBe('访问密钥无效，请重试。')
+    expect(messages[1]).toBe('登录失败 (500)')
+    expect(messages[2]).toBe('登录会话已失效，请重新登录。')
+    expect(JSON.stringify(messages)).not.toContain(submittedToken)
+    expect(JSON.stringify(messages)).not.toContain(responseBody.error.message)
   })
 
   it('persists versioned global reading preferences and falls back on invalid values', () => {

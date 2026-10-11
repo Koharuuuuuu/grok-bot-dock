@@ -1,10 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -267,17 +270,51 @@ func (s *Server) mcpAuth(next http.Handler) http.Handler {
 			writeError(w, http.StatusForbidden, "invalid_origin", "cross-origin MCP requests are not allowed")
 			return
 		}
-		const prefix = "Bearer "
-		header := r.Header.Get("Authorization")
-		got := ""
-		if strings.HasPrefix(header, prefix) {
-			got = strings.TrimPrefix(header, prefix)
+		got, _ := bearerToken(r.Header.Get("Authorization"))
+		legacyValid := s.token != "" && len(got) == len(s.token) && subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) == 1
+		var principal oauthPrincipal
+		oauthValid := false
+		if !legacyValid {
+			principal, oauthValid = s.oauthBearer(r)
+			if oauthValid {
+				r = r.WithContext(context.WithValue(r.Context(), oauthPrincipalKey{}, principal))
+			} else {
+				challenge := `Bearer realm="Bolt Dock MCP"`
+				if s.oauth.Enabled && s.validOAuthConfig() {
+					challenge = fmt.Sprintf(`Bearer realm="Bolt Dock MCP", resource_metadata="%s/.well-known/oauth-protected-resource/mcp", scope="%s %s"`, s.oauthBase(), oauthReadScope, oauthWriteScope)
+				}
+				w.Header().Set("WWW-Authenticate", challenge)
+				writeError(w, http.StatusUnauthorized, "unauthorized", "valid bearer token required")
+				return
+			}
 		}
-		valid := s.token != "" && len(got) == len(s.token) && subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) == 1
-		if !valid {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="Bolt Dock MCP"`)
-			writeError(w, http.StatusUnauthorized, "unauthorized", "valid bearer token required")
-			return
+		if oauthValid {
+			originalBody := r.Body
+			body, err := io.ReadAll(io.LimitReader(originalBody, s.maxBytes+1))
+			r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), originalBody))
+			if err == nil && int64(len(body)) <= s.maxBytes {
+				var request struct {
+					ID     any    `json:"id"`
+					Method string `json:"method"`
+					Params struct {
+						Name string `json:"name"`
+					} `json:"params"`
+				}
+				if json.Unmarshal(body, &request) == nil && request.Method == "tools/call" {
+					required := ""
+					if request.Params.Name == "search_reports" {
+						required = oauthReadScope
+					}
+					if request.Params.Name == "publish_report" {
+						required = oauthWriteScope
+					}
+					if required != "" && !principal.scopes[required] {
+						w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer error="insufficient_scope", scope="%s", resource_metadata="%s/.well-known/oauth-protected-resource/mcp"`, required, s.oauthBase()))
+						writeJSON(w, http.StatusForbidden, map[string]any{"jsonrpc": "2.0", "id": request.ID, "error": map[string]any{"code": -32003, "message": "insufficient_scope"}})
+						return
+					}
+				}
+			}
 		}
 		ctx := context.WithValue(r.Context(), mcpRemoteAddrKey{}, r.RemoteAddr)
 		next.ServeHTTP(w, r.WithContext(ctx))
@@ -285,6 +322,9 @@ func (s *Server) mcpAuth(next http.Handler) http.Handler {
 }
 
 func (s *Server) handleMCPPublishReport(ctx context.Context, _ *mcp.CallToolRequest, input publishReportInput) (*mcp.CallToolResult, publishReportOutput, error) {
+	if !s.allowOAuthContext(ctx, oauthWriteScope) {
+		return nil, publishReportOutput{}, errors.New("insufficient_scope: reports:write is required")
+	}
 	raw := reportRequest{ExecutedAt: input.ExecutedAt, Content: input.Content}
 	if input.Source != nil {
 		raw.Source = *input.Source
@@ -335,6 +375,9 @@ func (s *Server) handleMCPPublishReport(ctx context.Context, _ *mcp.CallToolRequ
 }
 
 func (s *Server) handleMCPSearchReports(ctx context.Context, _ *mcp.CallToolRequest, input searchReportsInput) (*mcp.CallToolResult, searchReportsOutput, error) {
+	if !s.allowOAuthContext(ctx, oauthReadScope) {
+		return nil, searchReportsOutput{}, errors.New("insufficient_scope: reports:read is required")
+	}
 	query := strings.TrimSpace(input.Query)
 	if query == "" || len(query) > 256 {
 		return nil, searchReportsOutput{}, fmt.Errorf("query must contain 1 to 256 characters")

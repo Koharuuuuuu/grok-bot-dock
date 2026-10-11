@@ -140,7 +140,10 @@ INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(1,datetime('n
 	if !hasDisplayName {
 		_, err = s.db.ExecContext(ctx, "ALTER TABLE bots ADD COLUMN display_name TEXT")
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	return s.migrateOAuth(ctx)
 }
 
 func (s *Store) CreateReport(ctx context.Context, in ReportInput) (Report, bool, error) {
