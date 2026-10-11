@@ -1,6 +1,6 @@
 # P8 · OAuth 存储迁移、运行兼容和回滚
 
-> 状态：实现已加入本地分支，尚未发布；不得改变已存在 P7 报告与 Bot 数据。数据库为 SQLite WAL、数据卷 `/data`；网页管理认证基于单管理员 ACCESS_TOKEN + 内存 session。
+> 状态（2026-10-11）：实现已合入 `master` 并发布 GHCR；OAuth 默认关闭。迁移设计为 additive，不改变已存在 P7 报告与 Bot 数据。数据库为 SQLite WAL、数据卷 `/data`；网页管理认证基于单管理员 ACCESS_TOKEN + 内存 session。
 
 ## 已实现数据模型
 
@@ -47,4 +47,4 @@
 
 ## 验收证据
 
-本地证据：`internal/store/oauth_test.go` 验证 v1/v2 前向迁移、闭库文件备份恢复、历史数据保留、schema v3、OAuth token 持久/过期拒绝和客户端停用即时失效；`internal/api/oauth_test.go` 验证本地 SQLite 授权/token 生命周期及 CIMD 元数据获取和授权。命令与实际输出见 [P8 验收记录](./P8_OAUTH_ACCEPTANCE.md)。未执行生产数据库备份/恢复、公开反向代理验证、GHCR 发布或生产回滚；这些保持“未验收”，不得把本地演练外推成部署证明。
+隔离证据：`internal/store/oauth_test.go` 验证 v1/v2 前向迁移、闭库文件备份恢复、历史数据保留、schema v3、OAuth token 持久/过期拒绝和客户端停用即时失效；`internal/api/oauth_test.go` 验证本地 SQLite 授权/token 生命周期及 CIMD 元数据获取和授权。GHCR 发布与镜像隔离启动已验证；生产数据库备份/恢复、公开反向代理验证和生产回滚仍未执行，见 [P8 验收记录](./P8_OAUTH_ACCEPTANCE.md)。

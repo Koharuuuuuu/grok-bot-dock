@@ -1,10 +1,10 @@
 # P8 · OAuth 2.1 MCP 升级：Codex 严格执行计划与 TODO
 
-> 状态（2026-10-10）：**P8 本地分支已实现受限 OAuth 授权配置；CIMD 与 OAuth 2.1 draft-16 互通/歧义参数修复已加入隔离测试，仍未达到完整 OAuth 2.1 符合性验收。生产部署与真实第三方 OAuth 联调仍待外部验收。** 共享 `ACCESS_TOKEN` 继续被 `/mcp` 接受是明确的 P7 兼容例外，因此不宣称符合 MCP Authorization 全部要求。当前证据和边界见 [验收记录](./P8_OAUTH_ACCEPTANCE.md)。实现尚未推送、创建 PR 或合并。目标：为已上线 P7 Streamable HTTP MCP 增加独立 OAuth 授权，保留旧 Bearer、REST、SQLite 报告数据和前端工作台。关联 [设计](./P8_OAUTH_ARCHITECTURE.md)、[迁移](./P8_OAUTH_MIGRATION.md)、[客户端](./P8_OAUTH_CLIENTS.md)。**每项验证前不得打勾**。
+> 状态（2026-10-11）：**P8 受限 OAuth 授权已实现，PR #19 已合入 `master`（`76cc117`），CI 及 GHCR 多架构发布均通过；镜像仍默认关闭 OAuth。** 本地/CI/镜像隔离验收完成；真实第三方客户端和生产环境验证仍待外部验收。OAuth 2.1 draft-16 与 MCP Authorization 的完整符合性不作声明；共享 `ACCESS_TOKEN` 继续被 `/mcp` 接受是明确的 P7 兼容例外。证据见 [验收记录](./P8_OAUTH_ACCEPTANCE.md)。目标：为已上线 P7 Streamable HTTP MCP 增加独立 OAuth 授权，保留旧 Bearer、REST、SQLite 报告数据和前端工作台。关联 [设计](./P8_OAUTH_ARCHITECTURE.md)、[迁移](./P8_OAUTH_MIGRATION.md)、[客户端](./P8_OAUTH_CLIENTS.md)。**每项验证前不得打勾**。
 
 ## 执行授权边界（优先于本文其他交付措辞）
 
-- 用户已授权**本次文档优化提交到 master**；这不等于授权 Codex 后续自动创建、推送或合并任何代码提交。后续实现允许在本地工作树与本地分支持续推进，**远程 push、PR 创建、PR 合并、生产部署须另获明确授权**。如果已有独立有效授权，以最新明确指令为准。
+- 用户于 2026-10-11 明确要求完成全部剩余工作并在可部署时通知；本次据此 push P8、创建并合并 PR #19、等待 CI 与 GHCR 发布。该授权不包含操作用户的生产服务器；生产部署由用户发起。
 - 主 Agent 对认证中间件、数据库迁移、token 生命周期、跨模块集成负最终责任；子 Agent 可并行开展规范研究、只读代码审计、前端独立组件、测试设计，但不能并行修改同一核心认证文件。
 - 不使用真实 Grok/Claude 凭据或向生产发送测试报告。外部客户端验证需要用户登录/授权时，只标记 BLOCKED，不阻断隔离环境可继续的工作。
 - 所有结论注明证据来源、日期、规范版本和实际测试结果。文档里的“OAuth 2.1”指目标安全基线，**不得将仍处于草案状态的内容宣称为已发布 RFC**。
@@ -122,12 +122,12 @@
   - [x] 并发 Token 查验/撤销竞态完成后，后续查验拒绝被撤销 Token；已签发的 in-flight 工具调用不会被主动取消。
   - [x] Refresh rotation 不适用：本期不签发 refresh token。
 - [x] 本地检查嵌入静态资源和容器日志不含临时 token/报告正文标记；HTTP logger 只写 URL path，Store 测试断言 token/secret 仅存摘要。
-- [ ] 当前本地未推送 commit 的 GitHub CI 及生产日志需在对应远程工作流/部署运行后检查；已只读核对最新 `master` CI，结果见 `docs/P8_OAUTH_ACCEPTANCE.md`。没有可下载 artifacts，生产日志仍无法检查。
+- [x] 当前 P8 commit 的 PR CI、合并后 `master` CI 和 GHCR 多架构镜像发布已通过；匿名 registry manifest 可读取，arm64 镜像已拉取并做隔离 OAuth discovery/MCP challenge smoke。生产日志须在部署后由部署环境检查。
 - [x] 将“真正多用户隔离”明确列为 P8 范围外：本期单所有者，不能将多用户隔离测试标为通过；本次不把多个客户端的存在宣称为多租户数据隔离。
 
 ## Phase 6：交付策略和验收记录
 
-- [x] 本地分阶段提交与 Go/frontend/Docker 验证方案已执行并记录；未远程查询或改变 PR 保护策略。未经用户明确授权，不 push、不建 PR、不合并；不把本地镜像构建称为发布。
+- [x] P8 功能经 PR #19 合并至 `master`；合并后 CI 和多架构 GHCR 发布通过。生产部署尚未执行，也不把镜像发布称为生产验收。
 - [x] 默认 OAuth 功能关闭；未开启生产 OAuth/未触碰真实生产 DB。
 - [x] 更新 `docs/P8_OAUTH_ACCEPTANCE.md`：记录日期、基线 SHA、实现提交 SHA、测试命令/结果、客户端阻塞、部署风险和隔离备份恢复演练。
 - [x] 文档 README 仅宣称已经完成且验证的功能；未验证项明确标记。

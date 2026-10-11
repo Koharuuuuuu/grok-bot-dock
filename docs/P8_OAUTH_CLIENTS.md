@@ -1,6 +1,6 @@
 # P8 · 第三方 MCP 客户端接入与兼容性
 
-> **OAuth 服务已在本地 P8 分支实现为 opt-in；默认关闭且尚未发布到 master/GHCR。** 协议自动化测试不能证明 Grok、Codex、Cursor、Claude 的真实客户端连接；各产品 OAuth 仍需按具体版本联调。
+> **OAuth 服务已合入 `master` 并发布到 GHCR，作为 opt-in 功能且默认关闭（2026-10-11）。** 协议自动化测试不能证明 Grok、Codex、Cursor、Claude 的真实客户端连接；各产品 OAuth 仍需按具体版本联调。
 
 ## 两种模式：谁用哪一种？
 
