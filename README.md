@@ -48,7 +48,7 @@ curl -X POST "https://YOUR_DOMAIN/api/v1/reports" \
   }'
 ```
 
-新建返回 HTTP 201；同一 `(source, bot_id, external_id)` 重试返回 HTTP 200 和已有报告 ID。Token 不应写入 AI 提示词或报告正文。服务拒绝没有 `ACCESS_TOKEN` 的启动；推送 API 继续使用 Bearer Token。网页登录将密钥一次性提交到 `POST /api/v1/auth/login`，服务端签发 12 小时有效、无持久 `Expires`/`Max-Age` 的 HttpOnly、SameSite=Lax 会话 Cookie；HTTPS（含反向代理的 `X-Forwarded-Proto: https`）下设置 Secure。访问密钥不存进浏览器存储；刷新和同源新标签通过服务端会话恢复，主动退出会撤销会话并清除 Cookie。会话存在服务进程内，重启服务会要求重新登录。浏览器关闭后是否丢弃会话 Cookie 取决于浏览器的会话恢复设置；Web 应用无法可靠侦测窗口或浏览器进程关闭。生产环境应仅经 HTTPS 反向代理公开，并可在代理层增加访问认证和限流。
+新建返回 HTTP 201；同一 `(source, bot_id, external_id)` 重试返回 HTTP 200 和已有报告 ID。Token 不应写入 AI 提示词或报告正文。服务拒绝没有 `ACCESS_TOKEN` 的启动；推送 API 继续使用 Bearer Token。网页登录将密钥一次性提交到 `POST /api/v1/auth/login`，服务端签发 12 小时有效、无持久 `Expires`/`Max-Age` 的 HttpOnly、SameSite=Lax 会话 Cookie；HTTPS 下设置 Secure。OAuth 启用且 `PUBLIC_BASE_URL` 有效时，Origin 校验和 Cookie Secure 属性都以该固定公网地址为准，因此 TLS 终止代理即使将内部 HTTP Host 传给应用或未转发 `X-Forwarded-Proto`，也不影响合法同源会话写入；跨站 Origin 仍会被拒绝。OAuth 未启用时，Secure 属性沿用 TLS/`X-Forwarded-Proto: https` 判断。反向代理仍须覆盖而非透传用户提供的 `X-Forwarded-Proto`。访问密钥不存进浏览器存储；刷新和同源新标签通过服务端会话恢复，主动退出会撤销会话并清除 Cookie。会话存在服务进程内，重启服务会要求重新登录。浏览器关闭后是否丢弃会话 Cookie 取决于浏览器的会话恢复设置；Web 应用无法可靠侦测窗口或浏览器进程关闭。生产环境应仅经 HTTPS 反向代理公开，并可在代理层增加访问认证和限流。
 
 数据接口（阅读工作台支持会话 Cookie；外部推送继续使用 Bearer Token；`GET /healthz` 和会话状态探测除外）：
 

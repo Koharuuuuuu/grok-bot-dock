@@ -99,7 +99,7 @@ func (s *Server) auth(next http.Handler) http.Handler {
 			return
 		}
 		if sessionOK {
-			if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions && !sameOrigin(r) {
+			if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions && !s.isSameSiteOrigin(r) {
 				writeError(w, http.StatusForbidden, "invalid_origin", "session request origin must match this site")
 				return
 			}
@@ -140,7 +140,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	s.sessions[id] = now.Add(sessionTTL)
 	s.sessionMu.Unlock()
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: id, Path: "/", HttpOnly: true, Secure: requestIsHTTPS(r), SameSite: http.SameSiteLaxMode})
+	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: id, Path: "/", HttpOnly: true, Secure: s.publicRequestIsHTTPS(r), SameSite: http.SameSiteLaxMode})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -228,6 +228,28 @@ func requestIsHTTPS(r *http.Request) bool {
 	return strings.EqualFold(strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]), "https")
 }
 
+// isSameSiteOrigin uses the configured public origin when OAuth has a fixed
+// canonical URL. Reverse proxies may send the app an internal Host/scheme;
+// comparing Origin against those backend values rejects legitimate browser
+// session writes even though the browser is on the configured service origin.
+func (s *Server) isSameSiteOrigin(r *http.Request) bool {
+	if s.oauth.Enabled && s.validOAuthConfig() {
+		return s.originIsPublicBase(r)
+	}
+	return sameOrigin(r)
+}
+
+// publicRequestIsHTTPS derives cookie security from the fixed external origin
+// when available, so an omitted X-Forwarded-Proto cannot create a non-Secure
+// session cookie behind a TLS-terminating proxy.
+func (s *Server) publicRequestIsHTTPS(r *http.Request) bool {
+	if s.oauth.Enabled && s.validOAuthConfig() {
+		publicURL, err := url.Parse(s.oauth.PublicBaseURL)
+		return err == nil && publicURL.Scheme == "https"
+	}
+	return requestIsHTTPS(r)
+}
+
 func sameOrigin(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
@@ -250,7 +272,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		if id, _ := r.Context().Value(sessionContextKey{}).(string); id != "" {
 			s.revokeSession(id)
 		}
-		secure := requestIsHTTPS(r)
+		secure := s.publicRequestIsHTTPS(r)
 		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode, MaxAge: -1})
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/mcp/capabilities":
