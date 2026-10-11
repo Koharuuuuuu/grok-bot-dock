@@ -78,7 +78,6 @@ const renameValue = ref('')
 const renameError = ref('')
 const renameBusy = ref(false)
 const readerDialog = ref(null)
-const readerCloseButton = ref(null)
 const themeOptions = [
   { value: 'light', label: '浅色', icon: '☼' },
   { value: 'dark', label: '深色', icon: '☾' },
@@ -617,7 +616,7 @@ watch([selected, promptOpen, mcpConfigOpen, renameTarget, pendingDeletion], asyn
   }
   if (hasReader && !hadReader) {
     await nextTick()
-    readerCloseButton.value?.focus({ preventScroll: true })
+    readerDialog.value?.focus({ preventScroll: true })
   }
   if (hasMCPConfig && !hadMCPConfig) {
     await nextTick()
@@ -734,7 +733,7 @@ function trapReaderFocus(event) {
               <div class="result-foot"><span>{{ item.display_name || item.bot_name }}</span><span>打开报告 ↗</span></div>
             </button>
             <details class="card-actions-menu result-actions-menu" @click.stop @toggle="closeOtherActionMenus">
-              <summary :aria-label="`报告操作：${item.title || item.bot_name}`" title="报告操作">···</summary>
+              <summary :aria-label="`报告操作：${item.title || item.bot_name}`" title="报告操作">⋯</summary>
               <div class="card-action-menu-items"><button @click="closeActionMenu($event); deleteReport(item)">删除报告…</button></div>
             </details>
           </div>
@@ -751,7 +750,7 @@ function trapReaderFocus(event) {
               <div class="card-footer"><span><i class="time-icon">◷</i> {{ formatDate(bot.last_report_at) }}</span><span class="view-link">浏览报告 <b>→</b></span></div>
             </button>
             <details class="card-actions-menu bot-actions-menu" @click.stop @toggle="closeOtherActionMenus">
-              <summary :aria-label="`Bot 操作：${effectiveBotName(bot)}`" title="Bot 操作">···</summary>
+              <summary :aria-label="`Bot 操作：${effectiveBotName(bot)}`" title="Bot 操作">⋯</summary>
               <div class="card-action-menu-items">
                 <button @click="closeActionMenu($event); startRename(bot)">重命名显示名称</button>
                 <hr>
@@ -765,7 +764,7 @@ function trapReaderFocus(event) {
 
       <div v-if="selected" class="reader-scrim" aria-hidden="true" @click="closeReader"></div>
       <section v-if="selected" ref="readerDialog" class="reader-panel" :class="{ immersive }" role="dialog" aria-modal="true" aria-labelledby="reader-title" tabindex="-1" @keydown.tab="trapReaderFocus">
-        <div class="reader-toolbar"><button class="back-button" @click="closeReader"><span>←</span> 返回卡片</button><div class="reader-tools"><label class="date-filter"><span>日期</span><input v-model="reportDate" type="date" @change="loadReports()"></label><div class="font-tools" aria-label="Markdown 字号"><button class="icon-button" :disabled="readerFontSize <= 13" aria-label="缩小 Markdown 字号" title="缩小字号" @click="adjustReaderFont(-1)">−</button><span>{{ readerFontSize }}px</span><button class="icon-button" :disabled="readerFontSize >= 24" aria-label="放大 Markdown 字号" title="放大字号" @click="adjustReaderFont(1)">＋</button><button class="font-reset" aria-label="重置 Markdown 字号" title="重置为 16px" @click="readerFontSize = 16">重置</button></div><button class="icon-button" :disabled="narrowReader" :title="narrowReader ? '移动端详情已全屏显示' : (immersive ? '退出沉浸阅读' : '放大阅读')" :aria-label="immersive ? '退出沉浸阅读' : '放大阅读'" @click="toggleImmersive">{{ immersive ? '⊙' : '⛶' }}</button><button ref="readerCloseButton" class="icon-button close-button" title="关闭" aria-label="关闭阅读面板" @click="closeReader">×</button></div></div>
+        <div class="reader-toolbar"><button class="back-button" @click="closeReader"><span>←</span> 返回卡片</button><div class="reader-tools"><label class="date-filter"><span>日期</span><input v-model="reportDate" type="date" @change="loadReports()"></label><div class="font-tools" aria-label="Markdown 字号"><button class="icon-button" :disabled="readerFontSize <= 13" aria-label="缩小 Markdown 字号" title="缩小字号" @click="adjustReaderFont(-1)">−</button><span>{{ readerFontSize }}px</span><button class="icon-button" :disabled="readerFontSize >= 24" aria-label="放大 Markdown 字号" title="放大字号" @click="adjustReaderFont(1)">＋</button><button class="font-reset" aria-label="重置 Markdown 字号" title="重置为 16px" @click="readerFontSize = 16">重置</button></div><button class="icon-button" :disabled="narrowReader" :title="narrowReader ? '移动端详情已全屏显示' : (immersive ? '退出沉浸阅读' : '放大阅读')" :aria-label="immersive ? '退出沉浸阅读' : '放大阅读'" @click="toggleImmersive">{{ immersive ? '⊙' : '⛶' }}</button></div></div>
         <div class="reader-layout">
           <nav class="report-list" aria-label="报告历史">
             <div class="list-heading"><div><span class="eyebrow">{{ selected.source.toUpperCase() }} · HISTORY</span><h2 id="reader-title">{{ effectiveBotName(selected) }}</h2></div><span class="list-count">{{ reports.length }}</span></div>
@@ -776,9 +775,9 @@ function trapReaderFocus(event) {
             <p v-if="!reports.length && !busy" class="history-empty">这个日期没有报告。</p>
           </nav>
           <article v-if="selectedReport" class="report-document" :style="{ '--reader-font-size': `${readerFontSize}px` }">
-            <div class="document-meta"><span class="source-pill">{{ selectedReport.source }}</span><span>{{ selectedReport.display_name || selectedReport.bot_name }}</span><span>·</span><time>{{ formatDate(selectedReport.executed_at) }}</time><details class="card-actions-menu document-actions-menu" @toggle="closeOtherActionMenus"><summary aria-label="报告操作" title="报告操作">···</summary><div class="card-action-menu-items"><button @click="closeActionMenu($event); deleteReport(selectedReport)">删除报告…</button></div></details></div>
+            <div class="document-meta"><span class="source-pill">{{ selectedReport.source }}</span><span>{{ selectedReport.display_name || selectedReport.bot_name }}</span><span>·</span><time>{{ formatDate(selectedReport.executed_at) }}</time></div>
             <div v-if="selectedReport.tags?.length" class="tag-row"><span v-for="tag in selectedReport.tags" :key="tag"># {{ tag }}</span></div>
-            <h1>{{ selectedReport.title || '运行报告' }}</h1>
+            <div class="document-heading"><h1>{{ selectedReport.title || '运行报告' }}</h1><details class="card-actions-menu document-actions-menu" @toggle="closeOtherActionMenus"><summary aria-label="报告操作" title="报告操作">⋯</summary><div class="card-action-menu-items"><button @click="closeActionMenu($event); deleteReport(selectedReport)">删除报告…</button></div></details></div>
             <p v-if="selectedReport.summary" class="document-summary">{{ selectedReport.summary }}</p>
             <hr><div class="markdown-body" v-html="renderedMarkdown"></div>
             <footer class="document-end"><span></span> 报告正文结束 <span></span></footer>

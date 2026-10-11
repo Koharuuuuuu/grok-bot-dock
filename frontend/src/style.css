@@ -108,11 +108,11 @@ html{scrollbar-gutter:stable}
 .card-topline{padding-right:4px}
 .bot-titles h2{padding-right:0}
 .card-actions-menu{position:absolute;z-index:5}
-.card-actions-menu>summary{display:grid;place-items:center;width:32px;height:32px;border:1px solid #e2e6dc;border-radius:9px;background:#fbfcf8;color:#6a7463;font-size:19px;line-height:1;letter-spacing:1px;cursor:pointer;list-style:none;user-select:none}
+.card-actions-menu>summary{display:grid;place-items:center;width:32px;height:32px;border:1px solid #e2e6dc;border-radius:9px;background:#fbfcf8;color:#6a7463;font-size:21px;line-height:1;letter-spacing:0;cursor:pointer;list-style:none;user-select:none}
 .card-actions-menu>summary::-webkit-details-marker{display:none}
 .card-actions-menu>summary:focus-visible,.card-action-menu-items button:focus-visible,.confirm-actions button:focus-visible{outline:3px solid #b8d395;outline-offset:2px}
 .card-actions-menu>summary:hover,.card-actions-menu[open]>summary{border-color:#cbd7bf;background:#f0f4ea;color:#3f5338}
-.bot-actions-menu{top:11px;right:11px}
+.bot-actions-menu{top:16px;right:18px}
 .card-actions-menu>div{position:absolute;top:37px;right:0;min-width:170px;padding:5px;border:1px solid #e0e5db;border-radius:10px;background:#fff;box-shadow:0 12px 30px #17201624}
 .card-action-menu-items button{display:flex;align-items:center;width:100%;min-height:38px;padding:8px 10px;border:0;border-radius:7px;background:transparent;color:#394238;text-align:left;font:inherit;font-size:13px;cursor:pointer}
 .card-action-menu-items button:hover{background:#f3f6ef}
@@ -125,8 +125,8 @@ html{scrollbar-gutter:stable}
 .history-actions-menu{position:relative;flex:none}
 .history-actions-menu>summary{width:29px;height:34px;border-color:transparent;background:transparent}
 .history-actions-menu>div{top:35px}
-.document-meta{position:relative;padding-right:38px}
-.document-actions-menu{right:0;top:50%;transform:translateY(-50%)}
+.document-meta{position:relative;padding-right:0}
+.document-actions-menu{position:relative;right:auto;top:auto;flex:none;margin:3px 0 0 auto;transform:none}
 .document-actions-menu>summary{width:32px;height:32px}
 .confirm-modal{width:min(440px,100%);padding:25px;border:1px solid #e4e7df;border-radius:16px;background:#fcfcf9;box-shadow:0 24px 100px #131d1760;animation:expandin .18s ease}
 .confirm-icon{display:grid;place-items:center;width:36px;height:36px;margin-bottom:12px;border:1px solid #ead6ce;border-radius:11px;background:#fbf1ed;color:#a65b47;font-size:18px;font-weight:700}
@@ -155,12 +155,15 @@ html{scrollbar-gutter:stable}
 
 /* Keep action controls inside their own surfaces and let dense reader controls wrap. */
 .bot-card-shell .bot-card{padding-right:64px}
-.bot-actions-menu{top:14px;right:20px}
-.document-meta{min-width:0;flex-wrap:wrap;padding-right:54px}
+.bot-actions-menu{top:16px;right:18px}
+.bot-actions-menu>summary{border-color:transparent;background:transparent;color:#8a9081}
+.document-meta{min-width:0;flex-wrap:wrap;padding-right:0}
 .document-meta>span:not(.source-pill){min-width:0;overflow-wrap:anywhere}
 .document-meta time{white-space:nowrap}
-.document-actions-menu{right:12px}
-.reader-toolbar{min-width:0;min-height:53px;height:auto;padding-right:28px;gap:8px}
+.document-heading{display:flex;align-items:flex-start;gap:14px;min-width:0;margin:20px 0 9px}
+.document-heading h1{min-width:0;flex:1;margin:0;font-family:Manrope,sans-serif;font-weight:700;font-size:clamp(23px,2.3vw,32px);letter-spacing:-1.3px;line-height:1.23}
+.document-actions-menu>summary{width:36px;height:36px;border-color:transparent;background:transparent;color:#8a9081}
+.reader-toolbar{min-width:0;min-height:53px;height:auto;padding-right:16px;gap:8px}
 .back-button{flex:none;white-space:nowrap}
 .reader-tools{min-width:0;margin-left:auto;max-width:100%;flex-wrap:wrap;justify-content:flex-end}
 .close-button{flex:none}
@@ -176,7 +179,9 @@ html{scrollbar-gutter:stable}
   .font-tools .icon-button{width:23px;height:26px}
   .font-tools .font-reset{padding:4px 3px}
   .reader-tools>.icon-button{width:27px;height:28px;flex:none}
-  .close-button{display:none!important}
+  .document-heading{gap:8px}
+  .document-heading h1{font-size:22px}
+  .document-actions-menu{margin-top:1px}
 }
 @media(max-width:640px){
   :root:not([data-theme="dark"]) body,:root:not([data-theme="dark"]) .app-shell{background:#eef0e9}
