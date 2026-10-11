@@ -52,6 +52,7 @@ const mcpFallbackText = ref('')
 const oauthClients = ref([])
 const oauthGrants = ref([])
 const oauthClientName = ref('')
+const oauthClientID = ref('')
 const oauthRedirectURI = ref('')
 const oauthConfidential = ref(false)
 const oauthCreatedClient = ref(null)
@@ -346,9 +347,9 @@ async function createOAuthClient() {
   oauthManagementError.value = ''
   try {
     oauthCreatedClient.value = await api('/api/v1/oauth/clients', { method: 'POST', body: JSON.stringify({
-      name: oauthClientName.value.trim(), redirect_uris: oauthRedirectURI.value.split(/\s+/).filter(Boolean), confidential: oauthConfidential.value,
+      name: oauthClientName.value.trim(), client_id: oauthClientID.value.trim(), redirect_uris: oauthRedirectURI.value.split(/\s+/).filter(Boolean), confidential: !oauthClientID.value.trim() && oauthConfidential.value,
     }) })
-    oauthClientName.value = ''; oauthRedirectURI.value = ''; oauthConfidential.value = false
+    oauthClientName.value = ''; oauthClientID.value = ''; oauthRedirectURI.value = ''; oauthConfidential.value = false
     await loadOAuthManagement()
   } catch (e) { oauthManagementError.value = e.message }
   finally { oauthManagementBusy.value = false }
@@ -725,11 +726,12 @@ function trapReaderFocus(event) {
 
         <section v-if="mcpCapabilities?.oauth_enabled" class="mcp-access-section" aria-labelledby="oauth-owner-heading">
           <div class="mcp-section-heading"><h3 id="oauth-owner-heading">OAuth 客户端与授权</h3><span class="mcp-protocol-badge">PKCE · 独立凭据</span></div>
-          <p class="mcp-field-help">可在此预登记客户端，也可由支持 CIMD 的公开客户端提交 HTTPS 元数据地址；两种方式都要核对精确回调 URI 并经管理员同意。机密客户端的 Client Secret 仅在创建或轮换时显示一次；OAuth 默认无刷新令牌，Token 有效期 15 分钟，授权最长 30 天。</p>
+          <p class="mcp-field-help">可预登记客户端 ID 和精确回调 URI，也可让支持 CIMD 的公开客户端提交元数据地址。若客户端元数据地址无法被服务器直接访问，可在此手动固定其 HTTPS Client ID 与回调 URI；必须逐字匹配客户端请求。机密客户端的 Client Secret 仅在创建或轮换时显示一次；OAuth 默认无刷新令牌，Token 有效期 15 分钟，授权最长 30 天。</p>
           <form class="oauth-client-form" @submit.prevent="createOAuthClient">
             <label>客户端名称<input v-model="oauthClientName" maxlength="120" required autocomplete="off"></label>
+            <label>客户端 ID（可选）<input v-model="oauthClientID" maxlength="2048" autocomplete="off" spellcheck="false" placeholder="留空自动生成；或填 https://grok.com/oauth/mcp-client.json"></label>
             <label>精确回调 URI（每行一个）<textarea v-model="oauthRedirectURI" required rows="2" spellcheck="false" placeholder="https://client.example/oauth/callback"></textarea></label>
-            <label class="oauth-checkbox"><input v-model="oauthConfidential" type="checkbox"> 此客户端可安全保存 Client Secret（机密客户端）</label>
+            <label class="oauth-checkbox"><input v-model="oauthConfidential" type="checkbox" :disabled="Boolean(oauthClientID.trim())"> 此客户端可安全保存 Client Secret（机密客户端）</label>
             <button class="secondary-button" :disabled="oauthManagementBusy">登记客户端</button>
           </form>
           <p v-if="oauthManagementError" class="form-error" role="alert">{{ oauthManagementError }}</p>

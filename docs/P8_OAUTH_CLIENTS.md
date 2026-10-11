@@ -25,8 +25,8 @@
 ## OAuth（当前代码已实现；需版本包含 P8 且管理员启用）
 
 1. 仅在反向代理和 canonical `PUBLIC_BASE_URL` 已验证后，将 `OAUTH_ENABLED=true` 并配置 `PUBLIC_BASE_URL=https://<origin>`。当前不支持服务 URL 子路径。
-2. 工作台 MCP 接入页可为可信 client 登记名称和平台提供的**精确** redirect URI；平台要求 confidential secret 时选择 confidential client，并立即将创建时返回的 secret 安全录入平台。支持 CIMD 的公开客户端也可用其 HTTPS Client ID Metadata Document URL 作为 `client_id`；服务会校验 URL、获取并验证元数据和 redirect URI，再让管理员审批。管理员 `ACCESS_TOKEN` 不能替代 client secret。
-3. 客户端复制 MCP URL 后触发发现。浏览器跳到 Bolt Dock；管理员登录并明确勾选所需 scope。登录、同意、授权码/PKCE、resource、client 和 redirect URI 由服务校验。CIMD 客户端名称和 redirect URI 来源于经验证的远端 metadata document。
+2. 工作台 MCP 接入页可为可信 client 登记名称和平台提供的**精确** redirect URI；平台要求 confidential secret 时选择 confidential client，并立即将创建时返回的 secret 安全录入平台。支持 CIMD 的公开客户端通常可让服务从 HTTPS Client ID Metadata Document URL 获取并验证元数据。若元数据 URL 被 Cloudflare 等服务阻止服务器访问，也可由管理员在“客户端 ID”栏手动固定平台提供的精确 HTTPS Client ID，并同时登记精确回调 URI；此绑定绕过远端元数据抓取，但不绕过回调精确匹配、PKCE 或管理员 consent。自定义 Client ID 仅适用于公开客户端；须从实际授权请求中核对原值（包括路径及末尾斜杠），不能猜测。管理员 `ACCESS_TOKEN` 不能替代 client secret。
+3. 客户端复制 MCP URL 后触发发现。浏览器跳到 Bolt Dock；管理员登录并明确勾选所需 scope。登录、同意、授权码/PKCE、resource、client 和 redirect URI 由服务校验。自动 CIMD 客户端名称和 redirect URI 来源于经验证的远端 metadata document；手动固定的客户端则只使用管理员登记的名称和回调 URI。
 4. 授权仅发 `reports:read` 和/或 `reports:write`，可用 15 分钟；grant 期限 30 天。没有 refresh token，客户端需再次进行授权流程。
 5. 在工作台停用 client 或撤销单条 grant；已发 token 应立即失效。
 

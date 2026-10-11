@@ -661,6 +661,7 @@ func (s *Server) registerOAuthClient(w http.ResponseWriter, r *http.Request) {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	var in struct {
+		ClientID     string   `json:"client_id"`
 		Name         string   `json:"name"`
 		RedirectURIs []string `json:"redirect_uris"`
 		Confidential bool     `json:"confidential"`
@@ -669,18 +670,39 @@ func (s *Server) registerOAuthClient(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid_client", "name and 1-10 redirect_uris are required")
 		return
 	}
+	if in.ClientID != "" && !validCIMDClientID(in.ClientID) {
+		writeError(w, 400, "invalid_client", "custom client_id must be an HTTPS metadata URL")
+		return
+	}
+	if in.ClientID != "" && in.Confidential {
+		writeError(w, 400, "invalid_client", "custom metadata URL client IDs must be public clients")
+		return
+	}
+	if in.ClientID != "" {
+		if _, lookupErr := s.store.OAuthClient(r.Context(), in.ClientID); lookupErr == nil {
+			writeError(w, 409, "client_already_registered", "client_id is already registered")
+			return
+		} else if !errors.Is(lookupErr, sql.ErrNoRows) {
+			serverError(w, lookupErr)
+			return
+		}
+	}
 	for _, raw := range in.RedirectURIs {
 		if !validOAuthRedirectURI(raw) {
 			writeError(w, 400, "invalid_redirect_uri", "redirect URIs must be HTTPS, except loopback clients")
 			return
 		}
 	}
-	id, err := randomOAuthValue(24)
-	if err != nil {
-		serverError(w, err)
-		return
+	var err error
+	id := in.ClientID
+	if id == "" {
+		id, err = randomOAuthValue(24)
+		if err != nil {
+			serverError(w, err)
+			return
+		}
+		id = "bd_" + id
 	}
-	id = "bd_" + id
 	secret := ""
 	hash := ""
 	if in.Confidential {
