@@ -612,7 +612,7 @@ func TestOAuthOwnerCanRotateConfidentialClientSecretOnce(t *testing.T) {
 	cookie := login.Result().Cookies()[0]
 	registration := httptest.NewRequest(http.MethodPost, "/api/v1/oauth/clients", strings.NewReader(`{"name":"New confidential","redirect_uris":["https://new-client.example/callback"],"confidential":true}`))
 	registration.Header.Set("Content-Type", "application/json")
-	registration.Header.Set("Origin", "http://example.com")
+	registration.Header.Set("Origin", "https://oauth.example")
 	registration.AddCookie(cookie)
 	registered := httptest.NewRecorder()
 	h.ServeHTTP(registered, registration)
@@ -621,7 +621,7 @@ func TestOAuthOwnerCanRotateConfidentialClientSecretOnce(t *testing.T) {
 	}
 	rotate := httptest.NewRequest(http.MethodPost, "/api/v1/oauth/clients/confidential-client/rotate-secret", nil)
 	rotate.AddCookie(cookie)
-	rotate.Header.Set("Origin", "http://example.com")
+	rotate.Header.Set("Origin", "https://oauth.example")
 	rotated := httptest.NewRecorder()
 	h.ServeHTTP(rotated, rotate)
 	if rotated.Code != http.StatusOK || rotated.Header().Get("Cache-Control") != "no-store" {
@@ -651,7 +651,7 @@ func TestOAuthOwnerCanRotateConfidentialClientSecretOnce(t *testing.T) {
 	}
 	public := httptest.NewRequest(http.MethodPost, "/api/v1/oauth/clients/public-client/rotate-secret", nil)
 	public.AddCookie(cookie)
-	public.Header.Set("Origin", "http://example.com")
+	public.Header.Set("Origin", "https://oauth.example")
 	publicResponse := httptest.NewRecorder()
 	h.ServeHTTP(publicResponse, public)
 	if publicResponse.Code != http.StatusConflict {
@@ -675,7 +675,7 @@ func TestOAuthOwnerCanPinPublicCIMDClientIDAndExactRedirect(t *testing.T) {
 	}
 	registration := httptest.NewRequest(http.MethodPost, "/api/v1/oauth/clients", strings.NewReader(`{"name":"Grok","client_id":"`+clientID+`","redirect_uris":["`+redirectURI+`"],"confidential":false}`))
 	registration.Header.Set("Content-Type", "application/json")
-	registration.Header.Set("Origin", "http://example.com")
+	registration.Header.Set("Origin", base)
 	registration.AddCookie(login.Result().Cookies()[0])
 	registered := httptest.NewRecorder()
 	h.ServeHTTP(registered, registration)
@@ -715,7 +715,7 @@ func TestOAuthOwnerCanPinPublicCIMDClientIDAndExactRedirect(t *testing.T) {
 		body := `{"name":"Grok","client_id":"` + invalid + `","redirect_uris":["` + redirectURI + `"]}`
 		badRequest := httptest.NewRequest(http.MethodPost, "/api/v1/oauth/clients", strings.NewReader(body))
 		badRequest.Header.Set("Content-Type", "application/json")
-		badRequest.Header.Set("Origin", "http://example.com")
+		badRequest.Header.Set("Origin", base)
 		badRequest.AddCookie(login.Result().Cookies()[0])
 		bad := httptest.NewRecorder()
 		h.ServeHTTP(bad, badRequest)
@@ -729,13 +729,51 @@ func TestOAuthOwnerCanPinPublicCIMDClientIDAndExactRedirect(t *testing.T) {
 	} {
 		badRequest := httptest.NewRequest(http.MethodPost, "/api/v1/oauth/clients", strings.NewReader(body))
 		badRequest.Header.Set("Content-Type", "application/json")
-		badRequest.Header.Set("Origin", "http://example.com")
+		badRequest.Header.Set("Origin", base)
 		badRequest.AddCookie(login.Result().Cookies()[0])
 		bad := httptest.NewRecorder()
 		h.ServeHTTP(bad, badRequest)
 		if bad.Code < 400 || bad.Code >= 500 {
 			t.Errorf("duplicate or confidential custom client status=%d body=%s", bad.Code, bad.Body.String())
 		}
+	}
+}
+
+func TestOAuthSessionOriginUsesCanonicalPublicBaseBehindProxy(t *testing.T) {
+	db, err := store.Open(t.TempDir() + "/oauth-origin-proxy.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	const base = "https://oauth.example"
+	h := NewWithOAuth(db, events.New(), "owner-secret", 1<<20, webui.Files, OAuthConfig{Enabled: true, PublicBaseURL: base}).Handler()
+	login := request(h, http.MethodPost, "/api/v1/auth/login", `{"token":"owner-secret"}`, "")
+	if login.Code != http.StatusOK || !login.Result().Cookies()[0].Secure {
+		t.Fatalf("canonical HTTPS login did not issue Secure session cookie: status=%d cookies=%#v", login.Code, login.Result().Cookies())
+	}
+	cookie := login.Result().Cookies()[0]
+	body := `{"name":"Proxy client","client_id":"https://client.example/oauth/metadata.json","redirect_uris":["https://client.example/callback"]}`
+	registration := httptest.NewRequest(http.MethodPost, "/api/v1/oauth/clients", strings.NewReader(body))
+	registration.Host = "bolt-dock:18765"
+	registration.Header.Set("Content-Type", "application/json")
+	registration.Header.Set("Origin", base)
+	registration.AddCookie(cookie)
+	registered := httptest.NewRecorder()
+	h.ServeHTTP(registered, registration)
+	if registered.Code != http.StatusCreated {
+		t.Fatalf("same-site browser write was rejected behind proxy Host/scheme: status=%d body=%s", registered.Code, registered.Body.String())
+	}
+
+	foreignBody := `{"name":"Foreign client","redirect_uris":["https://foreign.example/callback"]}`
+	foreign := httptest.NewRequest(http.MethodPost, "/api/v1/oauth/clients", strings.NewReader(foreignBody))
+	foreign.Host = "bolt-dock:18765"
+	foreign.Header.Set("Content-Type", "application/json")
+	foreign.Header.Set("Origin", "https://attacker.example")
+	foreign.AddCookie(cookie)
+	rejected := httptest.NewRecorder()
+	h.ServeHTTP(rejected, foreign)
+	if rejected.Code != http.StatusForbidden {
+		t.Fatalf("foreign Origin accepted behind proxy: status=%d body=%s", rejected.Code, rejected.Body.String())
 	}
 }
 

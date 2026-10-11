@@ -29,7 +29,7 @@ Bolt Dock 同时实现 OAuth **Authorization Server (AS)** 和 MCP **Protected R
                        └─ /mcp → 身份/权限/resource 校验 → 原 MCP 工具层/Store
 ```
 
-授权系统应把单所有者身份建模为稳定的内部 subject（如 `owner`），以后扩展多用户可迁移；**本次不引入假的用户表或宣称支持其他用户自助授权**。现有管理员会话只用于授权页身份确认，**绝不能直接作为 MCP OAuth 凭据**。为授权页面的跨站跳转及 CSRF 使用经过审计的同源 session + Origin/CSRF token 保护；回调跳转只允许精确验证的注册 URI。
+授权系统应把单所有者身份建模为稳定的内部 subject（如 `owner`），以后扩展多用户可迁移；**本次不引入假的用户表或宣称支持其他用户自助授权**。现有管理员会话只用于授权页身份确认，**绝不能直接作为 MCP OAuth 凭据**。为授权页面的跨站跳转及 CSRF 使用经过审计的同源 session + Origin/CSRF token 保护；回调跳转只允许精确验证的注册 URI。OAuth 配置有效时，管理员会话写请求和带 Origin 的 MCP 请求均针对固定 `PUBLIC_BASE_URL` 校验 Origin，而不信任反代传入的内部 Host/协议；外部 HTTPS 也决定会话 Cookie 的 `Secure` 属性。OAuth 未启用时保留基于请求 Host、TLS 和 `X-Forwarded-Proto` 的现有行为。该设计需通过生产反代实测，不以单测替代部署验收。
 
 ## 3. 标准发现/端点（路径以 SDK/规范核查结果为准）
 

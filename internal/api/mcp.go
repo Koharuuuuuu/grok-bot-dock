@@ -266,7 +266,7 @@ func (s *Server) mcpAuth(next http.Handler) http.Handler {
 			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "MCP supports GET, POST, and DELETE")
 			return
 		}
-		if origin := r.Header.Get("Origin"); origin != "" && !sameOrigin(r) {
+		if origin := r.Header.Get("Origin"); origin != "" && !s.isSameSiteOrigin(r) {
 			writeError(w, http.StatusForbidden, "invalid_origin", "cross-origin MCP requests are not allowed")
 			return
 		}
