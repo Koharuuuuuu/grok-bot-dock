@@ -154,12 +154,12 @@ html{scrollbar-gutter:stable}
 @media(max-width:640px){.mcp-client-grid{grid-template-columns:1fr}.mcp-client-card--reserved{grid-column:auto;grid-template-columns:1fr}.confirm-modal{padding:21px}.card-actions-menu>div{min-width:160px}}
 
 /* Keep action controls inside their own surfaces and let dense reader controls wrap. */
-.bot-card-shell .bot-card{padding-right:58px}
-.bot-actions-menu{top:14px;right:16px}
-.document-meta{min-width:0;flex-wrap:wrap;padding-right:46px}
+.bot-card-shell .bot-card{padding-right:64px}
+.bot-actions-menu{top:14px;right:20px}
+.document-meta{min-width:0;flex-wrap:wrap;padding-right:54px}
 .document-meta>span:not(.source-pill){min-width:0;overflow-wrap:anywhere}
 .document-meta time{white-space:nowrap}
-.reader-toolbar{min-width:0;min-height:53px;height:auto;padding-right:20px;gap:8px}
+.reader-toolbar{min-width:0;min-height:53px;height:auto;padding-right:28px;gap:8px}
 .back-button{flex:none;white-space:nowrap}
 .reader-tools{min-width:0;margin-left:auto;max-width:100%;flex-wrap:wrap;justify-content:flex-end}
 .close-button{flex:none}
@@ -168,9 +168,13 @@ html{scrollbar-gutter:stable}
   .reader-tools{flex:1 1 360px}
 }
 @media(max-width:540px){
-  .reader-toolbar{min-height:49px;height:auto;padding:7px 12px}
-  .reader-tools{flex:1 1 auto;gap:4px}
-  .reader-tools>.icon-button{flex:none}
+  .reader-toolbar{min-height:52px;height:52px;padding:0 8px;flex-wrap:nowrap;gap:6px}
+  .reader-tools{flex:0 0 auto;max-width:none;flex-wrap:nowrap;gap:3px}
+  .date-filter input{width:min(104px,27vw);max-width:none;padding:5px 4px}
+  .font-tools{gap:1px}
+  .font-tools .icon-button{width:23px;height:26px}
+  .font-tools .font-reset{padding:4px 3px}
+  .reader-tools>.icon-button{width:27px;height:28px;flex:none}
   .close-button{display:none!important}
 }
 @media(max-width:640px){
