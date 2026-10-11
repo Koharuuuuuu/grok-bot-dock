@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -153,7 +154,7 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 	if redirect == "" && len(client.Redirects) == 1 {
 		redirect = client.Redirects[0]
 	}
-	if !containsExact(client.Redirects, redirect) {
+	if !oauthRedirectAllowed(client.Redirects, redirect) {
 		oauthError(w, r, "invalid_request", "invalid client or redirect_uri")
 		return
 	}
@@ -604,6 +605,42 @@ func containsExact(items []string, value string) bool {
 	}
 	return false
 }
+
+// oauthRedirectAllowed accepts exact registered URIs and the RFC 8252 native-app
+// loopback-port exception: a client may bind an available local port at runtime.
+// Scheme, loopback host, path, query, and all other URI components still match.
+func oauthRedirectAllowed(registered []string, supplied string) bool {
+	if containsExact(registered, supplied) {
+		return true
+	}
+	actual, err := url.Parse(supplied)
+	if err != nil || actual.Scheme != "http" || actual.User != nil || actual.Fragment != "" {
+		return false
+	}
+	port := actual.Port()
+	if port == "" {
+		return false
+	}
+	portNumber, err := strconv.ParseUint(port, 10, 16)
+	if err != nil || portNumber == 0 {
+		return false
+	}
+	host := actual.Hostname()
+	if host != "localhost" && host != "127.0.0.1" && host != "::1" {
+		return false
+	}
+	for _, raw := range registered {
+		base, parseErr := url.Parse(raw)
+		if parseErr != nil || base.Scheme != "http" || base.User != nil || base.Fragment != "" || base.Port() != "" {
+			continue
+		}
+		if base.Hostname() == host && base.Path == actual.Path && base.RawPath == actual.RawPath && base.RawQuery == actual.RawQuery && base.ForceQuery == actual.ForceQuery {
+			return true
+		}
+	}
+	return false
+}
+
 func validChallenge(value string) bool { return len(value) == 43 && unreservedVerifier(value) }
 func unreservedVerifier(value string) bool {
 	if len(value) < 43 || len(value) > 128 {

@@ -95,3 +95,11 @@ Merged PR: [#19](https://github.com/Nyakooo/grok-bot-dock/pull/19), merge commit
 - Local browser check: owner login, OAuth client registration/listing and Secret rotation, 390×844 viewport, all three appearance modes, CIMD guidance, consent and management-panel keyboard navigation, client-disable confirmation/status refresh, and copy-button success status. Clipboard readback was denied by browser permission. Real mobile device remains unverified.
 - The detailed execution plan intentionally leaves external items unchecked: real third-party OAuth, physical-device UX and production reverse-proxy/backup/log/resource measurements. The existing Codex CLI Bearer baseline is recorded in P7; the Inspector recheck is recorded above. Session-fixation regression, requested-scope-only consent rendering, REST/MCP principal permissions, redirect URL encoding/trailing-slash behavior, and CIMD fetch/consent are covered locally. Refresh-token rotation and DCR tests are not applicable because those features are not implemented.
 - Local API tests do verify the app ignores a hostile Host and `X-Forwarded-*` on MCP challenges and AS metadata; this does not verify a real reverse proxy's forwarding, TLS, or path-prefix configuration.
+
+## MCP 接入与卡片交互优化（2026-10-11）
+
+- Bot 卡片按未读优先展示；同组内按最近报告时间排序，已读卡片排在未读卡片之后。
+- Bot 卡片操作收进右上角菜单；搜索结果与报告详情使用轻量操作菜单。永久删除统一显示产品内二次确认，说明影响范围并提供取消，避免显眼的卡片删除按钮导致误触。
+- MCP 接入面板保留通用方案，并增加 Codex CLI OAuth 快速配置、Grok.com 独立 OAuth 指引，以及 Cursor/Claude 等后续入口预留。
+- 为符合 RFC 8252 的原生客户端实现动态 loopback 端口匹配：仅允许已注册无端口 HTTP loopback URI 对应相同 loopback 主机、路径和查询的动态端口；授权码仍绑定客户端本次提交的完整回调 URI。Codex CLI OAuth 采用 CIMD + browser login 命令路径。
+- `npm run build`、`go vet ./...`、`git diff --check` 已通过。本次没有运行单元测试或浏览器验收。**Codex 与 Grok 的 OAuth 真实客户端连接、授权和工具调用均未验收**；部署后需分别完成产品端验证。

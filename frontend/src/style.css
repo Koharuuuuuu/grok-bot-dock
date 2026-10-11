@@ -102,3 +102,53 @@ html{scrollbar-gutter:stable}
 @media(max-width:360px){.back-button{gap:3px;flex:none;white-space:nowrap;font-size:0}.back-button::after{content:'返回';font-size:13px}.back-button span{font-size:14px}.reader-tools{gap:2px}.date-filter input{max-width:92px;padding:5px 3px}.reader-tools .icon-button{width:26px;height:27px}.font-tools{gap:1px}.font-tools span{font-size:13px}.font-tools .icon-button{width:23px;height:25px}.font-tools .font-reset{width:20px;height:25px;padding:3px;font-size:0}.font-tools .font-reset::after{content:'↺';font-size:13px}}
 .eyebrow,.heading-count,.heading-meta,.source-pill,.report-number,.unread-pill,.preview-label,.card-footer,.result-top>span:last-child,.result-foot,.load-more,.loading-line,.back-button,.date-filter,.list-count,.history-item .history-date,.history-more,.history-empty,.document-meta,.tag-row span,.document-end,.app-footer,.gate-foot,.search-filters,.font-tools,.font-reset,.advanced-toggle,.rename-action,.delete-action,.copy-prompt-button,.modal-intro,.template-fields label,.preview-heading,.copy-note{font-weight:600}
 .card-topline{height:auto;min-height:24px}
+
+/* Keep card actions discoverable without turning destructive actions into card furniture. */
+.bot-card-shell .bot-card{padding:18px 45px 20px 18px}
+.card-topline{padding-right:4px}
+.bot-titles h2{padding-right:0}
+.card-actions-menu{position:absolute;z-index:5}
+.card-actions-menu>summary{display:grid;place-items:center;width:32px;height:32px;border:1px solid #e2e6dc;border-radius:9px;background:#fbfcf8;color:#6a7463;font-size:19px;line-height:1;letter-spacing:1px;cursor:pointer;list-style:none;user-select:none}
+.card-actions-menu>summary::-webkit-details-marker{display:none}
+.card-actions-menu>summary:focus-visible,.card-action-menu-items button:focus-visible,.confirm-actions button:focus-visible{outline:3px solid #b8d395;outline-offset:2px}
+.card-actions-menu>summary:hover,.card-actions-menu[open]>summary{border-color:#cbd7bf;background:#f0f4ea;color:#3f5338}
+.bot-actions-menu{top:11px;right:11px}
+.card-actions-menu>div{position:absolute;top:37px;right:0;min-width:170px;padding:5px;border:1px solid #e0e5db;border-radius:10px;background:#fff;box-shadow:0 12px 30px #17201624}
+.card-action-menu-items button{display:flex;align-items:center;width:100%;min-height:38px;padding:8px 10px;border:0;border-radius:7px;background:transparent;color:#394238;text-align:left;font:inherit;font-size:13px;cursor:pointer}
+.card-action-menu-items button:hover{background:#f3f6ef}
+.card-actions-menu hr{height:1px;margin:4px 6px;border:0;background:#edf0e9}
+.card-action-menu-items button.menu-danger{color:#8d4d3e}
+.card-action-menu-items button.menu-danger:hover{background:#fbf0ed}
+.result-actions-menu{top:9px;right:9px}
+.result-row .result-card{padding-right:48px;padding-bottom:18px}
+.history-row{position:relative;padding-right:2px}
+.history-actions-menu{position:relative;flex:none}
+.history-actions-menu>summary{width:29px;height:34px;border-color:transparent;background:transparent}
+.history-actions-menu>div{top:35px}
+.document-meta{position:relative;padding-right:38px}
+.document-actions-menu{right:0;top:50%;transform:translateY(-50%)}
+.document-actions-menu>summary{width:32px;height:32px}
+.confirm-modal{width:min(440px,100%);padding:25px;border:1px solid #e4e7df;border-radius:16px;background:#fcfcf9;box-shadow:0 24px 100px #131d1760;animation:expandin .18s ease}
+.confirm-icon{display:grid;place-items:center;width:36px;height:36px;margin-bottom:12px;border:1px solid #ead6ce;border-radius:11px;background:#fbf1ed;color:#a65b47;font-size:18px;font-weight:700}
+.confirm-modal .eyebrow{margin:0 0 6px;color:#9a766c;font-size:13px;letter-spacing:.07em}
+.confirm-modal h2{margin:0;color:#303a31;font:650 20px Manrope,'PingFang SC',sans-serif;letter-spacing:-.4px}
+.confirm-copy{margin:10px 0 0;color:#687166;font-size:14px;line-height:1.7}
+.confirm-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:22px;padding-top:16px;border-top:1px solid #eceee7}
+.confirm-actions .secondary-button,.danger-confirm-button{min-height:39px;padding:0 14px;border:1px solid #e0e4dc;border-radius:9px;background:#fff;color:#53604f;font:600 13px 'DM Sans','PingFang SC',sans-serif;cursor:pointer}
+.danger-confirm-button{border-color:#e8c7be;background:#fbf2ef;color:#984c3d}
+.danger-confirm-button:hover{border-color:#d8a69a;background:#f8e9e5}
+.confirm-actions button:disabled{opacity:.55;cursor:wait}
+.mcp-client-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.mcp-client-card{display:grid;align-content:start;gap:10px;min-width:0;padding:13px;border:1px solid #e4e9df;border-radius:11px;background:#fafbf8}
+.mcp-client-card--featured{border-color:#dce5d4;background:linear-gradient(145deg,#fbfcf8,#f5f8f0)}
+.mcp-client-card--reserved{grid-column:1/-1;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:center;background:#fafaf8}
+.mcp-client-card-heading{display:flex;align-items:center;gap:10px;min-width:0}
+.mcp-client-logo{display:grid;place-items:center;flex:none;width:34px;height:34px;border:1px solid #dfe5da;border-radius:10px;background:#fff;color:#43533c;font-size:16px;font-weight:750}
+.mcp-client-logo--grok{background:#232822;color:#f5f7f1}
+.mcp-client-card h4{margin:0;color:#374136;font-size:14px}
+.mcp-client-card-heading p,.mcp-client-card-note,.mcp-client-card--reserved>p{margin:3px 0 0;color:#71796e;font-size:13px;line-height:1.5}
+.mcp-client-card ol{display:grid;gap:6px;margin:0;padding-left:21px;color:#616b5e;font-size:13px;line-height:1.5}
+.mcp-client-card ol a{color:#4e713c;text-underline-offset:2px}
+.mcp-client-card>.secondary-button{justify-self:start;min-height:36px;padding:0 11px;border:1px solid #dce4d4;border-radius:8px;background:#f6f8f2;color:#4e623f;font:600 13px 'DM Sans','PingFang SC',sans-serif;cursor:pointer}
+.mcp-client-card-note{padding:8px 9px;border-radius:7px;background:#f0f2ed}
+@media(max-width:640px){.mcp-client-grid{grid-template-columns:1fr}.mcp-client-card--reserved{grid-column:auto;grid-template-columns:1fr}.confirm-modal{padding:21px}.card-actions-menu>div{min-width:160px}}

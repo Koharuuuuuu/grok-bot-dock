@@ -6,9 +6,9 @@
 
 | 客户端/场景 | 当前可用模式 | P8 目标 | 注意事项 |
 | --- | --- | --- | --- |
-| Codex CLI | 远程 Streamable HTTP + 环境变量 Bearer；P7 已验收特定 CLI 版本 | P8 OAuth 可按标准尝试 | OAuth 未实测；不是 Codex 专属 MCP |
+| Codex CLI | 远程 Streamable HTTP；OAuth 快速入口使用 `codex mcp add` + `codex mcp login`；P7 另有特定 CLI 版本 Bearer 验收 | 用 OAuth 浏览器流，凭据保存在 Codex；不设置 Codex 本机 Bearer `.env` | 配置入口已提供；Bolt Dock 与 Codex OAuth 真实连接及工具调用仍未实测 |
 | Cursor | 官方文档提到远程 MCP/OAuth；具体 Bearer 配法按版本核实 | OAuth 浏览器授权 | 本地 OAuth 协议未在 Cursor 产品端验证 |
-| Grok.com Custom Connector | 官方文档描述：添加 Custom MCP URL 并完成所需认证；服务须公网可达 | 按 Grok 实际提供的注册资料配置客户端；不能预先编造 client_id、redirect URI 或 secret 要求 | 官方说明认证可使用 OAuth 或 API key；具体 OAuth discovery、redirect/client 注册、scope/resource 和该服务的授权回调仍待实测 |
+| Grok.com Custom Connector | 工作台提供独立的 Grok.com OAuth 步骤；官方文档描述添加 Custom MCP URL 并完成所需认证，服务须公网可达 | 在 Grok 连接器完成 OAuth；若客户端/回调无效，用 Grok 实际提供的数据手动固定 CIMD Client ID 与精确回调 URI | UI 指引已提供；官方说明认证可使用 OAuth 或 API key；Bolt Dock 的真实 OAuth、scope/resource 和该服务的授权回调仍待实测 |
 | Grok CLI | 官方文档支持远程 HTTP MCP，OAuth server 首次使用时启动浏览器授权 | 先核实本机 CLI 版本，再从标准发现接入 | 具体 draft-16/MCP 元数据参数及本服务 OAuth 端到端尚未实测 |
 | Claude | 官方资料提及远程 MCP/OAuth；具体产品、计划和版本需验证 | 标准远程 OAuth 连接 | 本地 OAuth 协议未在 Claude 产品端验证 |
 | ChatGPT | 账号/功能入口限制需验证 | 在其实际开放的 MCP 客户端支持范围内接入 | 不承诺普通聊天或 Tasks 可调用 |
@@ -25,7 +25,7 @@
 ## OAuth（当前代码已实现；需版本包含 P8 且管理员启用）
 
 1. 仅在反向代理和 canonical `PUBLIC_BASE_URL` 已验证后，将 `OAUTH_ENABLED=true` 并配置 `PUBLIC_BASE_URL=https://<origin>`。当前不支持服务 URL 子路径。
-2. 工作台 MCP 接入页可为可信 client 登记名称和平台提供的**精确** redirect URI；平台要求 confidential secret 时选择 confidential client，并立即将创建时返回的 secret 安全录入平台。支持 CIMD 的公开客户端通常可让服务从 HTTPS Client ID Metadata Document URL 获取并验证元数据。若元数据 URL 被 Cloudflare 等服务阻止服务器访问，也可由管理员在“客户端 ID”栏手动固定平台提供的精确 HTTPS Client ID，并同时登记精确回调 URI；此绑定绕过远端元数据抓取，但不绕过回调精确匹配、PKCE 或管理员 consent。自定义 Client ID 仅适用于公开客户端；须从实际授权请求中核对原值（包括路径及末尾斜杠），不能猜测。管理员 `ACCESS_TOKEN` 不能替代 client secret。
+2. 工作台 MCP 接入页可为可信 client 登记名称和平台提供的**精确** redirect URI；平台要求 confidential secret 时选择 confidential client，并立即将创建时返回的 secret 安全录入平台。支持 CIMD 的公开客户端通常可让服务从 HTTPS Client ID Metadata Document URL 获取并验证元数据。若元数据 URL 被 Cloudflare 等服务阻止服务器访问，也可由管理员在“客户端 ID”栏手动固定平台提供的精确 HTTPS Client ID，并同时登记回调 URI；此绑定绕过远端元数据抓取，但不绕过 redirect 校验、PKCE 或管理员 consent。除已注册的无端口 HTTP loopback URI 外，回调仍逐字匹配；loopback 仅允许 RFC 8252 原生客户端在同一 localhost/127.0.0.1/::1 主机、路径和查询下选择动态端口。自定义 Client ID 仅适用于公开客户端；须从实际授权请求中核对原值（包括路径及末尾斜杠），不能猜测。管理员 `ACCESS_TOKEN` 不能替代 client secret。
 3. 客户端复制 MCP URL 后触发发现。浏览器跳到 Bolt Dock；管理员登录并明确勾选所需 scope。登录、同意、授权码/PKCE、resource、client 和 redirect URI 由服务校验。自动 CIMD 客户端名称和 redirect URI 来源于经验证的远端 metadata document；手动固定的客户端则只使用管理员登记的名称和回调 URI。
 4. 授权仅发 `reports:read` 和/或 `reports:write`，可用 15 分钟；grant 期限 30 天。没有 refresh token，客户端需再次进行授权流程。
 5. 在工作台停用 client 或撤销单条 grant；已发 token 应立即失效。

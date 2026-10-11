@@ -61,6 +61,7 @@ const oauthManagementNotice = ref('')
 const oauthManagementBusy = ref(false)
 const mcpDialog = ref(null)
 const mcpCloseButton = ref(null)
+const deleteConfirmationDialog = ref(null)
 const pushTemplate = ref({ endpoint: '', source: '' })
 const promptAdvanced = ref(false)
 const defaultEndpoint = window.location.origin
@@ -70,6 +71,7 @@ const mcpServiceURL = computed(() => {
 })
 const mcpAddressScope = computed(() => classifyMCPAddress(mcpServiceURL.value))
 const mcpCodexExample = computed(() => makeCodexMCPConfig(mcpServiceURL.value || buildMCPServiceURL(window.location.origin)))
+const mcpCodexOAuthCommands = computed(() => `codex mcp add bolt-dock --url ${mcpServiceURL.value}\ncodex mcp login bolt-dock\ncodex mcp list`)
 const mcpGenericGuide = computed(() => makeMCPGenericGuide(mcpServiceURL.value, mcpCapabilities.value?.tools || [], mcpCapabilities.value?.oauth_enabled === true))
 const renameTarget = ref(null)
 const renameValue = ref('')
@@ -94,7 +96,13 @@ let copyFeedbackTimer
 
 const renderedMarkdown = computed(() => selectedReport.value
   ? renderSanitizedMarkdown(selectedReport.value.content || '') : '')
-const visibleBots = computed(() => bots.value)
+const visibleBots = computed(() => [...bots.value].sort((a, b) => {
+  const aUnread = Number(a.unread_count || 0) > 0
+  const bUnread = Number(b.unread_count || 0) > 0
+  if (aUnread !== bUnread) return aUnread ? -1 : 1
+  const byLatest = (Date.parse(b.last_report_at || '') || 0) - (Date.parse(a.last_report_at || '') || 0)
+  return byLatest || String(effectiveBotName(a)).localeCompare(String(effectiveBotName(b)), 'zh-CN')
+}))
 const filteredSources = computed(() => sources.value)
 const totalUnreadCount = computed(() => sources.value.reduce((total, item) => total + (item.unread_count || 0), 0))
 const isLoggedIn = computed(() => authenticated.value)
@@ -272,35 +280,66 @@ async function saveRename(value = renameValue.value) {
   finally { renameBusy.value = false }
 }
 
-async function deleteReport(report) {
-  const name = report.title || '未命名报告'
-  if (!window.confirm(`确定永久删除报告「${name}」？此操作无法撤销。`)) return
-  deleting.value = `report:${report.id}`
+const pendingDeletion = ref(null)
+function requestDeleteReport(report) {
+  pendingDeletion.value = { type: 'report', report, name: report.title || '未命名报告' }
+}
+function requestDeleteBot(bot) {
+  pendingDeletion.value = { type: 'bot', bot, name: effectiveBotName(bot), count: bot.report_count || 0 }
+}
+async function confirmDeletion() {
+  const pending = pendingDeletion.value
+  if (!pending || deleting.value) return
+  const isBot = pending.type === 'bot'
+  const report = pending.report
+  const bot = pending.bot
+  const name = pending.name
+  deleting.value = isBot ? `bot:${bot.source}:${bot.bot_id}` : `report:${report.id}`
   actionNotice.value = ''
+  error.value = ''
   try {
-    await api(`/api/v1/reports/${report.id}`, { method: 'DELETE' })
+    if (isBot) {
+      const params = new URLSearchParams({ source: bot.source, bot_id: bot.bot_id })
+      await api(`/api/v1/bots?${params}`, { method: 'DELETE' })
+    } else {
+      await api(`/api/v1/reports/${report.id}`, { method: 'DELETE' })
+    }
+    pendingDeletion.value = null
+    if (isBot && selected.value?.source === bot.source && selected.value?.bot_id === bot.bot_id) closeReader()
     await loadData()
-    if (selected.value?.source === report.source && selected.value?.bot_id === report.bot_id) await loadReports()
+    if (!isBot && selected.value?.source === report.source && selected.value?.bot_id === report.bot_id) await loadReports()
     if (searching.value) await runSearch()
-    actionNotice.value = '报告已删除。'
-  } catch (e) { error.value = e.message }
+    actionNotice.value = isBot
+      ? `Bot「${name}」及其 ${pending.count} 份报告已删除。`
+      : '报告已删除。'
+  } catch (e) { pendingDeletion.value = null; error.value = e.message }
   finally { deleting.value = '' }
 }
 
-async function deleteBot(bot) {
-  const count = bot.report_count || 0
-  const name = effectiveBotName(bot)
-  if (!window.confirm(`确定永久删除 Bot「${name}」及其全部 ${count} 份报告？此操作无法撤销。`)) return
-  deleting.value = `bot:${bot.source}:${bot.bot_id}`
-  actionNotice.value = ''
-  try {
-    const params = new URLSearchParams({ source: bot.source, bot_id: bot.bot_id })
-    await api(`/api/v1/bots?${params}`, { method: 'DELETE' })
-    await loadData()
-    if (searching.value) await runSearch()
-    actionNotice.value = `Bot「${name}」及其 ${count} 份报告已删除。`
-  } catch (e) { error.value = e.message }
-  finally { deleting.value = '' }
+/* Deletion is intentionally launched from a separate confirmation dialog. */
+function deleteReport(report) {
+  requestDeleteReport(report)
+}
+function deleteBot(bot) {
+  requestDeleteBot(bot)
+}
+function closeActionMenu(event) {
+  const menu = event.currentTarget.closest('details')
+  if (menu) menu.open = false
+}
+function closeOtherActionMenus(event) {
+  const activeMenu = event.currentTarget
+  if (!activeMenu.open) return
+  document.querySelectorAll('.card-actions-menu[open]').forEach(menu => {
+    if (menu !== activeMenu) menu.open = false
+  })
+}
+function closeActionMenusOnOutsideClick(event) {
+  if (event.target instanceof Element && event.target.closest('.card-actions-menu')) return
+  document.querySelectorAll('.card-actions-menu[open]').forEach(menu => { menu.open = false })
+}
+async function copyCodexOAuthCommands() {
+  return copyMCPText(mcpCodexOAuthCommands.value, '已复制 Codex OAuth 配置命令。')
 }
 
 async function runSearch(append = false) {
@@ -466,6 +505,15 @@ function trapMCPFocus(event) {
   if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
   else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
 }
+function trapDeleteConfirmationFocus(event) {
+  if (event.key !== 'Tab' || !deleteConfirmationDialog.value) return
+  const focusable = [...deleteConfirmationDialog.value.querySelectorAll('button:not(:disabled)')]
+  if (!focusable.length) { event.preventDefault(); deleteConfirmationDialog.value.focus(); return }
+  const first = focusable[0]
+  const last = focusable.at(-1)
+  if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+}
 
 async function enableNotifications() {
   if (!('Notification' in window)) { notificationState.value = '当前浏览器不支持通知'; return }
@@ -529,6 +577,8 @@ async function startStream() {
 function onKey(event) {
   if (event.key !== 'Escape') return
   if (themeMenuOpen.value) themeMenuOpen.value = false
+  else if (document.querySelector('.card-actions-menu[open]')) document.querySelector('.card-actions-menu[open]').open = false
+  else if (pendingDeletion.value) pendingDeletion.value = null
   else if (renameTarget.value) renameTarget.value = null
   else if (mcpConfigOpen.value) mcpConfigOpen.value = false
   else if (promptOpen.value) promptOpen.value = false
@@ -547,9 +597,9 @@ watch(effectiveTheme, theme => {
   document.documentElement.style.colorScheme = theme
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#151a17' : '#f2f2ed')
 }, { immediate: true })
-watch([selected, promptOpen, mcpConfigOpen, renameTarget], async ([hasReader, hasPrompt, hasMCPConfig, hasRename], [hadReader, hadPrompt, hadMCPConfig, hadRename]) => {
-  const shouldLock = Boolean(hasReader || hasPrompt || hasMCPConfig || hasRename)
-  const wasLocked = Boolean(hadReader || hadPrompt || hadMCPConfig || hadRename)
+watch([selected, promptOpen, mcpConfigOpen, renameTarget, pendingDeletion], async ([hasReader, hasPrompt, hasMCPConfig, hasRename, hasDelete], [hadReader, hadPrompt, hadMCPConfig, hadRename, hadDelete]) => {
+  const shouldLock = Boolean(hasReader || hasPrompt || hasMCPConfig || hasRename || hasDelete)
+  const wasLocked = Boolean(hadReader || hadPrompt || hadMCPConfig || hadRename || hadDelete)
   if (shouldLock && !wasLocked) {
     previousFocus = document.activeElement
     lockedScrollY = window.scrollY
@@ -573,11 +623,16 @@ watch([selected, promptOpen, mcpConfigOpen, renameTarget], async ([hasReader, ha
     await nextTick()
     mcpCloseButton.value?.focus({ preventScroll: true })
   }
+  if (hasDelete && !hadDelete) {
+    await nextTick()
+    deleteConfirmationDialog.value?.querySelector('button:not(:disabled)')?.focus({ preventScroll: true })
+  }
 })
 function updateNarrowReader() { narrowReader.value = window.matchMedia('(max-width: 800px)').matches }
 function updateSystemTheme(event) { systemPrefersDark.value = event.matches }
 onMounted(async () => {
   window.addEventListener('keydown', onKey)
+  window.addEventListener('click', closeActionMenusOnOutsideClick)
   window.addEventListener('resize', updateNarrowReader)
   systemThemeQuery.addEventListener('change', updateSystemTheme)
   if ('BroadcastChannel' in window) {
@@ -594,7 +649,7 @@ onMounted(async () => {
   } catch {}
   authReady.value = true
 })
-onUnmounted(() => { window.removeEventListener('keydown', onKey); window.removeEventListener('resize', updateNarrowReader); systemThemeQuery.removeEventListener('change', updateSystemTheme); authChannel?.close(); streamAbort?.abort(); clearTimeout(refreshTimer); clearTimeout(copyFeedbackTimer); document.body.style.overflow = previousBodyOverflow; document.body.style.paddingRight = previousBodyPaddingRight })
+onUnmounted(() => { window.removeEventListener('keydown', onKey); window.removeEventListener('click', closeActionMenusOnOutsideClick); window.removeEventListener('resize', updateNarrowReader); systemThemeQuery.removeEventListener('change', updateSystemTheme); authChannel?.close(); streamAbort?.abort(); clearTimeout(refreshTimer); clearTimeout(copyFeedbackTimer); document.body.style.overflow = previousBodyOverflow; document.body.style.paddingRight = previousBodyPaddingRight })
 
 function trapReaderFocus(event) {
   const focusable = [...readerDialog.value.querySelectorAll('a[href], button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])')]
@@ -678,22 +733,31 @@ function trapReaderFocus(event) {
               <p><template v-for="(part, index) in highlightParts(searchSnippet(item, query), query)" :key="index"><mark v-if="part.match">{{ part.text }}</mark><span v-else>{{ part.text }}</span></template></p>
               <div class="result-foot"><span>{{ item.display_name || item.bot_name }}</span><span>打开报告 ↗</span></div>
             </button>
-            <button class="delete-action result-delete" :disabled="Boolean(deleting)" :aria-label="`删除报告：${item.title || item.bot_name}`" @click="deleteReport(item)">删除报告</button>
+            <details class="card-actions-menu result-actions-menu" @click.stop @toggle="closeOtherActionMenus">
+              <summary :aria-label="`报告操作：${item.title || item.bot_name}`" title="报告操作">···</summary>
+              <div class="card-action-menu-items"><button @click="closeActionMenu($event); deleteReport(item)">删除报告…</button></div>
+            </details>
           </div>
           <div v-if="!searchResults.length && !busy" class="empty-state"><div class="empty-icon">⌕</div><h2>没有找到匹配报告</h2><p>试试更短的关键词，或切换到其他来源。</p></div>
           <button v-if="searchCursor" class="load-more" @click="runSearch(true)">加载更多</button>
         </div>
         <div v-else-if="!bots.length && !busy" class="empty-state welcome-empty"><div class="empty-icon">✳</div><p class="eyebrow">A QUIET DOCK</p><h2>等待第一份报告靠岸</h2><p>当 Bot 首次推送报告后，它会自动出现在这里。</p><span>仅显示已通过 API 推送的来源</span></div>
         <div v-else class="bot-grid">
-          <div v-for="bot in bots" :key="`${bot.source}:${bot.bot_id}`" class="bot-card-shell">
+          <div v-for="bot in visibleBots" :key="`${bot.source}:${bot.bot_id}`" class="bot-card-shell">
             <button class="bot-card" :class="{ selected: selected?.source === bot.source && selected?.bot_id === bot.bot_id }" @click="openBot(bot)">
               <div class="card-topline"><span class="source-pill">{{ bot.source }}</span><span v-if="bot.unread_count" class="unread-pill"><i></i> 未读 {{ bot.unread_count }} 份</span><span v-else class="report-number">{{ bot.report_count }} 份报告</span></div>
               <div class="bot-identity"><div class="avatar-wrap"><img v-if="bot.avatar_url" :src="bot.avatar_url" alt="" @error="avatarFailed"><span class="avatar-fallback" :class="{ hidden: bot.avatar_url }">✳</span></div><div class="bot-titles"><h2>{{ effectiveBotName(bot) }}</h2><p>{{ bot.bot_id }}</p></div><span class="card-arrow">↗</span></div>
               <div class="card-preview"><span class="preview-label">LATEST REPORT</span><strong>{{ bot.latest_report?.title || '暂无报告' }}</strong><p>{{ bot.latest_report?.summary || '新报告将显示在这里。' }}</p></div>
               <div class="card-footer"><span><i class="time-icon">◷</i> {{ formatDate(bot.last_report_at) }}</span><span class="view-link">浏览报告 <b>→</b></span></div>
             </button>
-            <button class="rename-action" :aria-label="`重命名 Bot：${effectiveBotName(bot)}`" @click.stop="startRename(bot)">重命名</button>
-            <button class="delete-action bot-delete" :disabled="Boolean(deleting)" :aria-label="`删除 Bot：${effectiveBotName(bot)}`" @click.stop="deleteBot(bot)">删除 Bot</button>
+            <details class="card-actions-menu bot-actions-menu" @click.stop @toggle="closeOtherActionMenus">
+              <summary :aria-label="`Bot 操作：${effectiveBotName(bot)}`" title="Bot 操作">···</summary>
+              <div class="card-action-menu-items">
+                <button @click="closeActionMenu($event); startRename(bot)">重命名显示名称</button>
+                <hr>
+                <button class="menu-danger" @click="closeActionMenu($event); deleteBot(bot)">删除 Bot…</button>
+              </div>
+            </details>
           </div>
         </div>
         <div v-if="busy" class="loading-line"><span></span>正在更新…</div>
@@ -707,13 +771,12 @@ function trapReaderFocus(event) {
             <div class="list-heading"><div><span class="eyebrow">{{ selected.source.toUpperCase() }} · HISTORY</span><h2 id="reader-title">{{ effectiveBotName(selected) }}</h2></div><span class="list-count">{{ reports.length }}</span></div>
             <div v-for="item in reports" :key="item.id" class="history-row">
               <button class="history-item" :class="{ active: selectedReport?.id === item.id }" @click="selectReport(item)"><span class="history-date">{{ formatDate(item.executed_at) }}</span><strong>{{ item.title || item.display_name || item.bot_name }}</strong><span>{{ item.summary || '打开查看完整报告' }}</span></button>
-              <button class="delete-action history-delete" :disabled="Boolean(deleting)" :aria-label="`删除报告：${item.title || item.bot_name}`" @click="deleteReport(item)">删除</button>
             </div>
             <button v-if="reportCursor" class="history-more" :disabled="busy" @click="loadReports({ append: true })">加载更早报告</button>
             <p v-if="!reports.length && !busy" class="history-empty">这个日期没有报告。</p>
           </nav>
           <article v-if="selectedReport" class="report-document" :style="{ '--reader-font-size': `${readerFontSize}px` }">
-            <div class="document-meta"><span class="source-pill">{{ selectedReport.source }}</span><span>{{ selectedReport.display_name || selectedReport.bot_name }}</span><span>·</span><time>{{ formatDate(selectedReport.executed_at) }}</time><button class="delete-action document-delete" :disabled="Boolean(deleting)" @click="deleteReport(selectedReport)">删除报告</button></div>
+            <div class="document-meta"><span class="source-pill">{{ selectedReport.source }}</span><span>{{ selectedReport.display_name || selectedReport.bot_name }}</span><span>·</span><time>{{ formatDate(selectedReport.executed_at) }}</time><details class="card-actions-menu document-actions-menu" @toggle="closeOtherActionMenus"><summary aria-label="报告操作" title="报告操作">···</summary><div class="card-action-menu-items"><button @click="closeActionMenu($event); deleteReport(selectedReport)">删除报告…</button></div></details></div>
             <div v-if="selectedReport.tags?.length" class="tag-row"><span v-for="tag in selectedReport.tags" :key="tag"># {{ tag }}</span></div>
             <h1>{{ selectedReport.title || '运行报告' }}</h1>
             <p v-if="selectedReport.summary" class="document-summary">{{ selectedReport.summary }}</p>
@@ -818,6 +881,28 @@ function trapReaderFocus(event) {
             <textarea class="prompt-preview mcp-copy-fallback-field" :value="mcpFallbackText" readonly aria-label="待手动复制的 MCP 内容"></textarea>
           </label>
         </section>
+
+        <section class="mcp-access-section" aria-labelledby="client-guides-heading">
+          <div class="mcp-section-heading"><h3 id="client-guides-heading">客户端快捷接入</h3><span class="mcp-field-help">各平台单独配置</span></div>
+          <div class="mcp-client-grid">
+            <article class="mcp-client-card mcp-client-card--featured">
+              <div class="mcp-client-card-heading"><span class="mcp-client-logo">C</span><div><h4>Codex CLI · OAuth</h4><p>浏览器授权，不用在 Codex 环境配置 `.env`。</p></div></div>
+              <template v-if="mcpCapabilities?.oauth_enabled">
+                <ol><li>在终端执行添加命令。</li><li>执行登录命令，在浏览器中登录 Bolt Dock 并选择权限。</li><li>返回终端，确认服务器状态为 connected。</li></ol>
+                <pre class="mcp-client-config">{{ mcpCodexOAuthCommands }}</pre>
+                <button class="secondary-button" :disabled="!mcpServiceURL" @click="copyCodexOAuthCommands">复制 Codex OAuth 命令</button>
+              </template>
+              <p v-else class="mcp-client-card-note">当前服务未启用 OAuth。管理员启用 OAuth 后，可按这条流程进行浏览器授权；也可使用下方通用 Bearer 方案。</p>
+            </article>
+            <article class="mcp-client-card mcp-client-card--featured">
+              <div class="mcp-client-card-heading"><span class="mcp-client-logo mcp-client-logo--grok">G</span><div><h4>Grok.com · OAuth</h4><p>在 Grok 的连接器页面添加自定义 MCP。</p></div></div>
+              <ol><li>打开 <a href="https://grok.com/connectors" target="_blank" rel="noopener noreferrer">Grok Connectors</a>，选择「New Connector → Custom」。</li><li>粘贴上方服务地址，并选择 OAuth 授权。</li><li>登录 Bolt Dock、选择权限并完成连接。</li></ol>
+              <p v-if="!mcpCapabilities?.oauth_enabled" class="mcp-client-card-note">当前服务未启用 OAuth；管理员启用后再连接。</p>
+              <p v-else class="mcp-client-card-note">若授权页提示客户端或回调地址无效，请在 OAuth 管理中登记 Grok 提供的 Client ID 和精确回调 URI，再重试。</p>
+            </article>
+            <article class="mcp-client-card mcp-client-card--reserved"><div class="mcp-client-card-heading"><span class="mcp-client-logo">+</span><div><h4>其他客户端</h4><p>Cursor、Claude 等</p></div></div><p>预留独立配置入口。待对应产品和版本完成实测后开放专属步骤。</p></article>
+          </div>
+        </section>
       </section>
     </div>
     <div v-if="renameTarget" class="modal-scrim" @click.self="renameTarget = null">
@@ -829,6 +914,19 @@ function trapReaderFocus(event) {
           <p v-if="renameError" class="form-error" role="alert">{{ renameError }}</p>
           <footer class="modal-actions"><button class="font-reset" type="button" :disabled="renameBusy" @click="saveRename('')">恢复原始名称</button><span></span><button class="primary-button copy-action" type="submit" :disabled="renameBusy">{{ renameBusy ? '保存中…' : '保存名称' }} <span>↗</span></button></footer>
         </form>
+      </section>
+    </div>
+    <div v-if="pendingDeletion" class="modal-scrim confirm-scrim" @click.self="pendingDeletion = null">
+      <section ref="deleteConfirmationDialog" class="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-confirm-title" aria-describedby="delete-confirm-description" tabindex="-1" @keydown.tab="trapDeleteConfirmationFocus">
+        <div class="confirm-icon" aria-hidden="true">!</div>
+        <p class="eyebrow">PERMANENT ACTION</p>
+        <h2 id="delete-confirm-title">{{ pendingDeletion.type === 'bot' ? '删除整个 Bot？' : '删除这份报告？' }}</h2>
+        <p id="delete-confirm-description" class="confirm-copy">
+          <template v-if="pendingDeletion.type === 'bot'">将永久删除 Bot「{{ pendingDeletion.name }}」及其 {{ pendingDeletion.count }} 份报告。</template>
+          <template v-else>将永久删除报告「{{ pendingDeletion.name }}」。</template>
+          此操作无法撤销。
+        </p>
+        <footer class="confirm-actions"><button class="secondary-button" :disabled="Boolean(deleting)" @click="pendingDeletion = null">取消</button><button class="danger-confirm-button" :disabled="Boolean(deleting)" @click="confirmDeletion">{{ deleting ? '删除中…' : '永久删除' }}</button></footer>
       </section>
     </div>
   </div>

@@ -62,3 +62,22 @@
 :root[data-theme="dark"] .search-box input::placeholder{color:#849083}
 :root[data-theme="dark"] .gate-orbit{border-color:#303b32}
 :root[data-theme="dark"] .gate-orbit.orbit-two{border-color:#283029}
+:root[data-theme="dark"] .card-actions-menu>summary{border-color:#39433b;background:#202722;color:#c4cfbd}
+:root[data-theme="dark"] .card-actions-menu>summary:hover,:root[data-theme="dark"] .card-actions-menu[open]>summary{border-color:#53654b;background:#293226;color:#d5e9c5}
+:root[data-theme="dark"] .card-actions-menu>div{border-color:#39433b;background:#202722;box-shadow:0 12px 30px #0008}
+:root[data-theme="dark"] .card-action-menu-items button{color:#d5ddd1}
+:root[data-theme="dark"] .card-action-menu-items button:hover{background:#293226}
+:root[data-theme="dark"] .card-actions-menu hr{background:#39433b}
+:root[data-theme="dark"] .card-action-menu-items button.menu-danger{color:#f0a18b}
+:root[data-theme="dark"] .card-action-menu-items button.menu-danger:hover{background:#392a26}
+:root[data-theme="dark"] .confirm-modal,:root[data-theme="dark"] .mcp-client-card{border-color:#39433b;background:#202722;color:#e0e5dc}
+:root[data-theme="dark"] .confirm-modal h2,:root[data-theme="dark"] .mcp-client-card h4{color:#edf1e9}
+:root[data-theme="dark"] .confirm-copy,:root[data-theme="dark"] .mcp-client-card-heading p,:root[data-theme="dark"] .mcp-client-card-note,:root[data-theme="dark"] .mcp-client-card--reserved>p,:root[data-theme="dark"] .mcp-client-card ol{color:#aab4a8}
+:root[data-theme="dark"] .mcp-client-card--featured{background:linear-gradient(145deg,#202722,#242d25)}
+:root[data-theme="dark"] .mcp-client-card-note{background:#293226}
+:root[data-theme="dark"] .mcp-client-logo{border-color:#39433b;background:#272f29;color:#c8e99b}
+:root[data-theme="dark"] .mcp-client-logo--grok{background:#e4e9e0;color:#202722}
+:root[data-theme="dark"] .confirm-actions{border-color:#39433b}
+:root[data-theme="dark"] .confirm-actions .secondary-button{border-color:#39433b;background:#272f29;color:#d4dccf}
+:root[data-theme="dark"] .danger-confirm-button{border-color:#60413a;background:#392a26;color:#f0a18b}
+:root[data-theme="dark"] .confirm-icon{border-color:#60413a;background:#392a26;color:#f0a18b}

@@ -152,6 +152,24 @@ P8 已合入 `master` 并发布到 GHCR（2026-10-11）；镜像包含可选 OAu
 
 OAuth 使用增量 SQLite v3 迁移，不修改既有报告/Bot/FTS 表；禁用 OAuth 不删授权表。公开启用前须验证实际反向代理原样转发 well-known、`/oauth/*`、`/mcp` 与 `WWW-Authenticate`，并完成数据库备份。**未在真实 Grok、Codex OAuth、Cursor 或 Claude 平台完成授权与工具调用实测；协议测试通过不等于这些客户端已验收。** 服务仍是单所有者模型；`reports:read` 可检索全库，写入者可声明 source/Bot 身份，不构成租户隔离。
 
+### Codex CLI OAuth 快速配置
+
+当服务端已启用 OAuth、配置固定公网 HTTPS 地址且能从 Codex CLI 访问时，使用 Codex 自己的 OAuth 凭据存储和浏览器授权；**不需要在 Codex 启动环境设置本地 Bearer `.env`**。服务器的 `.env` 仍需按上文配置，尤其是服务本身必需的 `ACCESS_TOKEN`；客户端不应读取或复制这个管理员密钥。
+
+```sh
+codex mcp add bolt-dock --url https://<你的公开域名>/mcp
+codex mcp login bolt-dock
+codex mcp list
+```
+
+首次登录会打开浏览器。确认 Bolt Dock 域名与请求权限后批准授权，再用 `codex mcp list` 查看连接状态。若 OAuth 未启用，此命令不能替代现有 Bearer 接入。该配置路径已按 Codex 官方 CLI 文档设计，但 Bolt Dock 与真实 Codex OAuth 的完整工具调用仍需按当前版本实测，不能将命令可执行视为客户端验收通过。
+
+### Grok.com OAuth 快速配置
+
+在 [Grok Connectors](https://grok.com/connectors) 选择「New Connector → Custom」，粘贴上方 `/mcp` 服务地址并完成 OAuth 授权。服务端须先启用 OAuth 并通过公网 HTTPS 可达。若授权页报 `invalid client or redirect_uri`，在 Bolt Dock「MCP 接入 → OAuth 客户端与授权」中用 Grok 显示的 Client ID 与回调 URI 进行手动固定，然后重试；回调 URI 必须逐字匹配。Grok 官方说明自定义 MCP 需要公网可达；Bolt Dock 对当前 Grok 产品/账号的真实授权和工具调用仍应以现场验收为准。
+
+其他客户端（例如 Cursor、Claude）继续从通用接入说明开始；完成具体产品和版本的验证后再补充独立入口。
+
 接入及验收文档：[P8 架构](docs/P8_OAUTH_ARCHITECTURE.md)、[迁移与回滚](docs/P8_OAUTH_MIGRATION.md)、[客户端说明](docs/P8_OAUTH_CLIENTS.md)、[执行计划](docs/P8_OAUTH_EXECUTION_PLAN.md)、[基线审计](docs/P8_BASELINE_AUDIT.md)、[验收记录](docs/P8_OAUTH_ACCEPTANCE.md)。
 
 ## Docker 部署（拉取 GHCR 镜像）
