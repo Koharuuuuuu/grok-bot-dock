@@ -2,7 +2,7 @@
 
 > 状态（2026-10-11）：**P8 受限 OAuth profile 与 CIMD 已合入 `master` 并发布到 GHCR，默认关闭；真实第三方客户端及生产反向代理仍待验收。** 当前 MCP Authorization 基线为 2026-07-28，OAuth 2.1 仍是 draft-16 Internet-Draft。这不是完整 OAuth 2.1 或 MCP Authorization 符合性声明；共享 legacy `ACCESS_TOKEN` 被保留为明确的 P7 兼容例外。
 >
-> 目标仓库：`Nyakooo/grok-bot-dock`（私有）；默认分支 `master`。关联 [执行清单](./P8_OAUTH_EXECUTION_PLAN.md)、[迁移/回滚](./P8_OAUTH_MIGRATION.md)、[客户端接入](./P8_OAUTH_CLIENTS.md)。
+> 目标仓库：`Nyakooo/grok-bot-dock`（2026-10-11 起公开）；默认分支 `master`。关联 [执行清单](./P8_OAUTH_EXECUTION_PLAN.md)、[迁移/回滚](./P8_OAUTH_MIGRATION.md)、[客户端接入](./P8_OAUTH_CLIENTS.md)。
 
 ## 1. 已核实基线和非目标
 

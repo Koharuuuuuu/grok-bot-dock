@@ -26,7 +26,7 @@
 4. 新旧 token 各自独立撤销/轮换；不得互认，不得把单一 `ACCESS_TOKEN` 自动下放给所有 OAuth 客户端。
 5. Scope `reports:read` 控制 `search_reports`；`reports:write` 控制 `publish_report`，且保留原报告参数验证、来源隔离及 `external_id` 去重。
 6. 没有 OAuth 授权记录时，不因迁移脚本改变任何已存在 `reports`、`bots`、FTS/触发器或会话行为。
-7. 公开 GHCR 镜像仍可匿名拉取；仓库始终保持 private；不能把发布和生产启用自动绑定。
+7. 公开 GHCR 镜像可匿名拉取；源码仓库和镜像包的可见性分别管理；不能把发布和生产启用自动绑定。
 
 ## 迁移步骤
 

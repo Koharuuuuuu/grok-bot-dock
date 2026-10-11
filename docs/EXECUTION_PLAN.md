@@ -54,7 +54,7 @@
 ## P4 补充：GitHub Actions、公开 GHCR 镜像、Compose
 - [x] 新增 `.github/workflows/docker-publish.yml`：配置 master 和版本标签触发，校验通过后发布 GHCR 镜像，使用 packages: write 与最小权限；master 标签发布 amd64/arm64。
 - [x] 配置镜像命名 `ghcr.io/nyakooo/grok-bot-dock`；master → :master，vX.Y.Z → 对应版本和 :latest；发布使用 GITHUB_TOKEN，不输出凭据。
-- [x] 保持 GitHub 源码仓库 private；master 首次发布已创建 GHCR 包 `grok-bot-dock`，标签 `master`。
+- [x] 初始发布阶段源码仓库保持 private；2026-10-11 已由仓库所有者改为 public。master 首次发布已创建 GHCR 包 `grok-bot-dock`，标签 `master`。
 - [x] 将 GHCR 包单独设为 Public，并从无凭据 Docker 配置验证 `linux/amd64` 匿名 pull。
 - [x] 提供默认拉取 GHCR 的 Compose 与真正可运行的本地构建 Compose 配置，包含持久化 /data、健康检查、重启策略、可配置端口与 token。
 - [x] README 写明一键拉取部署及一键本地构建命令，均附 `docker image prune -f`；警告其清理宿主机所有悬空镜像且不删除数据卷。
@@ -76,7 +76,7 @@
 
 ## GHCR 发布验收
 
-GHCR 首次发布及后续多架构修复均已验收：PR #1–#3 已合并至 master，实现基线为 `ee9c48e`；PR #4–#5 合并验收报告更新，PR #6 合并报告与 Bot 删除功能（`efa1619`）。GHCR 包为 Public，GitHub 源码仓库保持 Private。删除功能对应的 master 发布 run `37938768277` 成功，匿名拉取 digest `sha256:f385cad5e01edb93a8a5f44b41316ada38b8c671680fdf64792dc4864d119b22`；镜像索引包含 amd64 和 arm64，arm64 容器健康检查通过。
+GHCR 首次发布及后续多架构修复均已验收：PR #1–#3 已合并至 master，实现基线为 `ee9c48e`；PR #4–#5 合并验收报告更新，PR #6 合并报告与 Bot 删除功能（`efa1619`）。GHCR 包为 Public；该记录写入时源码仓库为 Private，仓库于 2026-10-11 改为 Public。删除功能对应的 master 发布 run `37938768277` 成功，匿名拉取 digest `sha256:f385cad5e01edb93a8a5f44b41316ada38b8c671680fdf64792dc4864d119b22`；镜像索引包含 amd64 和 arm64，arm64 容器健康检查通过。
 
 
 ## P5 专项优化：会话、详情、移动端、品牌与 CI/CD（2026-10-10，已完成）

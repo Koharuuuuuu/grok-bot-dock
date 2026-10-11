@@ -52,7 +52,7 @@ UI：无左侧导航；顶部品牌 Bolt Dock、默认跨来源全局搜索、�
 
 ## 10. GHCR 发布、Compose 与复制指令（新增强制约束）
 - GitHub Actions：单一 `.github/workflows/ci.yml` 在 master push、v* tag、master PR 和手动 dispatch 触发；每次只执行一套 Go 与前端验证。master push 通过完整 `before..sha` diff 和 `scripts/release-paths.sh` 判定运行镜像输入；文档类改动不发布，rename/deletion 通过 `--no-renames` 检查旧、新路径。PR 验证不受路径过滤影响；tag 和手动 dispatch 不依赖路径变化，发布失败可重跑失败 Job 或 dispatch 失败 ref。发布 Job 依赖验证，仅授予 `packages: write`，用一个 Buildx 调用推送 linux/amd64、linux/arm64 manifest。master 发布 `master`；版本 tag 发布对应版本及 `latest`。所有工作流修改路径都能触发发布流程修复的验证与部署；启用缓存和并发取消，但不取消版本 tag 发布。
-- GHCR 包必须 Public，源码仓库保持现有私有属性；首次发布后由有权限者在 Package settings 将包可见性设为 Public（若未自动公开）。从未认证环境验证 `docker pull ghcr.io/nyakooo/grok-bot-dock:master`；Actions 通过不等于镜像已公开。
+- GHCR 包需设为 Public 才能匿名拉取；仓库代码与 GHCR 包的可见性分别管理。当前仓库于 2026-10-11 设为 Public。首次发布后由有权限者在 Package settings 将包可见性设为 Public（若未自动公开）。从未认证环境验证 `docker pull ghcr.io/nyakooo/grok-bot-dock:master`；Actions 通过不等于镜像已公开。
 - Compose：默认使用公开 GHCR 镜像；映射 `18765:18765`（建议绑定 127.0.0.1 并通过 HTTPS 反代），挂载命名卷到 /data，设置 restart、healthcheck、必要环境变量。额外提供本地 build 的 compose override/profile 或明确 `docker compose -f ...` 命令，确保确实触发 build。README 写出拉取部署、本地构建、更新及 `docker image prune -f`，注明 prune 影响整台主机的悬空镜像，不删数据卷。
 - UI：提供「复制 AI 推送指令」入口和轻量配置/预览；用 Clipboard API 复制与 README 一致的模板，包含 source、bot_id、bot_name、executed_at、content、external_id；强调仅推正式报告、不得推测试/草稿/日志；拒绝授权或 Clipboard API 不可用时显示可手动选择的文本。不要将真实 token 写入浏览器页面、localStorage 或剪贴板，模板使用安全占位符。UI 需与无侧栏卡片布局兼容。
 - 验收：检查 workflow 成功、GHCR 匿名 pull、Compose 启动/健康检查/持久化、复制文本字段完整且包含正式报告过滤规则；在未配置实际域名时不虚构真实部署地址。

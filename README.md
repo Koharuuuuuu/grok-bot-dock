@@ -1,6 +1,26 @@
-<p align="center"><img src="frontend/public/brand/bolt-dock.svg" width="92" height="92" alt="Bolt Dock Logo"></p>
+<p align="center"><img src="assets/bolt-dock-banner.png" alt="Bolt Dock dashboard illustration" width="100%"></p>
+<p align="center"><img src="frontend/public/brand/bolt-dock.svg" width="72" height="72" alt="Bolt Dock logo"></p>
 <h1 align="center">Bolt Dock</h1>
-<p align="center">一个轻量、自托管的 AI 报告聚合工作台</p>
+<p align="center">一个轻量、自托管的 AI Agent 报告工作台</p>
+<p align="center"><a href="README.md">简体中文</a> · <a href="README.en.md">English</a></p>
+<p align="center"><a href="https://github.com/Nyakooo/grok-bot-dock/actions/workflows/ci.yml"><img src="https://github.com/Nyakooo/grok-bot-dock/actions/workflows/ci.yml/badge.svg?branch=master" alt="CI"></a> <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a></p>
+
+**Bolt Dock** 是一个自托管工作台，用于汇总、检索和阅读 AI Agent 生成的正式报告。任务可通过 REST API 或远程 MCP 发布 Markdown 报告；数据保存在你自己的 SQLite 数据库中。
+
+> 产品名称为 Bolt Dock；GitHub 仓库名仍为 `grok-bot-dock`。
+
+## 目录
+
+- [能力](#能力)
+- [本地开发](#本地开发)
+- [推送 API](#推送-api)
+- [一键复制 AI 推送指令](#一键复制-ai-推送指令)
+- [远程 MCP 接入](#远程-mcp-接入)
+- [OAuth 配置与限制](#p8-mcp-oauth-21-安全配置受限实现)
+- [Docker 部署](#docker-部署拉取-ghcr-镜像)
+- [备份与恢复](#备份与恢复)
+- [贡献、安全与许可证](#贡献安全与许可证)
+- [English README](README.en.md)
 
 Bolt Dock 是自托管的 AI Bot 报告工作台。任意能发起 HTTPS 请求的任务都可以推送 Markdown 报告；报告按来源和 Bot 自动归档，在同一个网页中搜索、阅读和接收实时提醒。产品界面称为 Bolt Dock，GitHub 仓库仍为 `grok-bot-dock`。
 
@@ -207,7 +227,7 @@ location = /mcp {
 
 `.github/workflows/ci.yml` 是唯一的验证和发布工作流：PR 始终运行 Go 测试、前端测试和构建，发布 Job 不会在 PR 中运行；master push 仍执行一次验证，只有 Go/前端/镜像运行时构建输入变更才发布 `:master`。版本标签 `vX.Y.Z` 发布 `:X.Y.Z` 和 `:latest`，`workflow_dispatch` 可对选定 ref 手动发布或重试。路径判断比较一次 push 的完整 `before..sha` 文件差异，文档和图片证据不发布镜像；重命名/删除也会匹配原路径。发布 Job 依赖验证成功，并用一次 Buildx 操作推送 amd64/arm64 manifest。验证 Job 仅需要 `contents: read`，发布 Job 另需 `packages: write`，认证使用短期 `GITHUB_TOKEN`。发布失败可在 GitHub Actions 中重跑失败 Job；若其后有 docs-only push，可手动 dispatch 失败版本 ref 补发。
 
-GHCR 包的公开可见性由仓库拥有者在 GitHub Packages 页面设置：打开 `grok-bot-dock` 容器包的 **Package settings → Change visibility → Public**。保持源码仓库原有私有设置。2026-10-10 已对 `ghcr.io/nyakooo/grok-bot-dock:master` 完成匿名多架构 manifest/blob 读取及 arm64 拉取验证；当前 digest 和发布记录见 [P7 验收报告](docs/P7_MCP_ACCEPTANCE.md)。
+GHCR 包的可见性由仓库拥有者在 GitHub Packages 页面单独设置：打开 `grok-bot-dock` 容器包的 **Package settings → Change visibility**。截至 2026-10-11，源码仓库已公开；GitHub 仓库与 GHCR 包的可见性分别管理。2026-10-10 已对 `ghcr.io/nyakooo/grok-bot-dock:master` 完成匿名多架构 manifest/blob 读取及 arm64 拉取验证；当前 digest 和发布记录见 [P7 验收报告](docs/P7_MCP_ACCEPTANCE.md)。
 
 ## 测试
 
@@ -217,3 +237,12 @@ cd frontend && npm ci && npm test && npm run build
 ```
 
 完整验收及限制见 [docs/ACCEPTANCE_REPORT.md](docs/ACCEPTANCE_REPORT.md)；P6 本轮逐项证据见 [docs/P6_ACCEPTANCE_REPORT.md](docs/P6_ACCEPTANCE_REPORT.md)。
+
+
+## 贡献、安全与许可证
+
+欢迎提交问题报告和 Pull Request。请先阅读[贡献指南](CONTRIBUTING.md)，并通过 GitHub 私密安全公告报告漏洞，详见[安全政策](SECURITY.md)。请勿提交访问密钥、真实报告或数据库文件。
+
+本项目采用 [MIT License](LICENSE)。使用、修改和分发代码时请保留版权与许可声明；软件按“现状”提供，不附带明示或默示担保。
+
+完整技术设计、迁移说明与逐项验收记录见 [`docs/`](docs/)。
