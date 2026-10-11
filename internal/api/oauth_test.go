@@ -659,6 +659,86 @@ func TestOAuthOwnerCanRotateConfidentialClientSecretOnce(t *testing.T) {
 	}
 }
 
+func TestOAuthOwnerCanPinPublicCIMDClientIDAndExactRedirect(t *testing.T) {
+	db, err := store.Open(t.TempDir() + "/oauth-pinned-cimd.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	const base = "https://oauth.example"
+	const clientID = "https://grok.com/oauth/mcp-client.json"
+	const redirectURI = "https://grok.com/connectors-oauth-exchange-code/"
+	h := NewWithOAuth(db, events.New(), "owner-secret", 1<<20, webui.Files, OAuthConfig{Enabled: true, PublicBaseURL: base}).Handler()
+	login := request(h, http.MethodPost, "/api/v1/auth/login", `{"token":"owner-secret"}`, "")
+	if login.Code != http.StatusOK {
+		t.Fatalf("owner login status=%d body=%s", login.Code, login.Body.String())
+	}
+	registration := httptest.NewRequest(http.MethodPost, "/api/v1/oauth/clients", strings.NewReader(`{"name":"Grok","client_id":"`+clientID+`","redirect_uris":["`+redirectURI+`"],"confidential":false}`))
+	registration.Header.Set("Content-Type", "application/json")
+	registration.Header.Set("Origin", "http://example.com")
+	registration.AddCookie(login.Result().Cookies()[0])
+	registered := httptest.NewRecorder()
+	h.ServeHTTP(registered, registration)
+	if registered.Code != http.StatusCreated {
+		t.Fatalf("pin public client status=%d body=%s", registered.Code, registered.Body.String())
+	}
+	var result struct {
+		ClientID string `json:"client_id"`
+	}
+	if err := json.Unmarshal(registered.Body.Bytes(), &result); err != nil || result.ClientID != clientID {
+		t.Fatalf("registered client_id=%q err=%v body=%s", result.ClientID, err, registered.Body.String())
+	}
+	client, err := db.OAuthClient(context.Background(), clientID)
+	if err != nil || client.Registration != "manual" || client.SecretHash != "" || !containsExact(client.Redirects, redirectURI) {
+		t.Fatalf("pinned public client=%#v err=%v", client, err)
+	}
+
+	challenge := base64.RawURLEncoding.EncodeToString(make([]byte, sha256.Size))
+	query := url.Values{"response_type": {"code"}, "client_id": {clientID}, "redirect_uri": {redirectURI}, "code_challenge_method": {"S256"}, "code_challenge": {challenge}, "resource": {base + "/mcp"}, "scope": {oauthReadScope}}
+	validRequest := httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+query.Encode(), nil)
+	validRequest.AddCookie(login.Result().Cookies()[0])
+	valid := httptest.NewRecorder()
+	h.ServeHTTP(valid, validRequest)
+	if valid.Code != http.StatusOK || !strings.Contains(valid.Body.String(), "Grok") || !strings.Contains(valid.Body.String(), redirectURI) {
+		t.Fatalf("pinned CIMD authorization did not reach owner login/consent: status=%d body=%s", valid.Code, valid.Body.String())
+	}
+	query.Set("redirect_uri", strings.TrimSuffix(redirectURI, "/"))
+	wrongRequest := httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+query.Encode(), nil)
+	wrongRequest.AddCookie(login.Result().Cookies()[0])
+	wrongRedirect := httptest.NewRecorder()
+	h.ServeHTTP(wrongRedirect, wrongRequest)
+	if wrongRedirect.Code != http.StatusBadRequest || strings.Contains(wrongRedirect.Body.String(), "Grok") {
+		t.Fatalf("non-exact callback was not rejected before consent: status=%d body=%s", wrongRedirect.Code, wrongRedirect.Body.String())
+	}
+
+	for _, invalid := range []string{"https://grok.com", "http://grok.com/oauth/mcp-client.json", "https://user@grok.com/oauth/mcp-client.json"} {
+		body := `{"name":"Grok","client_id":"` + invalid + `","redirect_uris":["` + redirectURI + `"]}`
+		badRequest := httptest.NewRequest(http.MethodPost, "/api/v1/oauth/clients", strings.NewReader(body))
+		badRequest.Header.Set("Content-Type", "application/json")
+		badRequest.Header.Set("Origin", "http://example.com")
+		badRequest.AddCookie(login.Result().Cookies()[0])
+		bad := httptest.NewRecorder()
+		h.ServeHTTP(bad, badRequest)
+		if bad.Code != http.StatusBadRequest {
+			t.Errorf("unsafe custom client_id %q status=%d body=%s", invalid, bad.Code, bad.Body.String())
+		}
+	}
+	for _, body := range []string{
+		`{"name":"Duplicate","client_id":"` + clientID + `","redirect_uris":["` + redirectURI + `"]}`,
+		`{"name":"Confidential custom ID","client_id":"https://grok.com/oauth/other.json","redirect_uris":["` + redirectURI + `"],"confidential":true}`,
+	} {
+		badRequest := httptest.NewRequest(http.MethodPost, "/api/v1/oauth/clients", strings.NewReader(body))
+		badRequest.Header.Set("Content-Type", "application/json")
+		badRequest.Header.Set("Origin", "http://example.com")
+		badRequest.AddCookie(login.Result().Cookies()[0])
+		bad := httptest.NewRecorder()
+		h.ServeHTTP(bad, badRequest)
+		if bad.Code < 400 || bad.Code >= 500 {
+			t.Errorf("duplicate or confidential custom client status=%d body=%s", bad.Code, bad.Body.String())
+		}
+	}
+}
+
 func TestOAuthPrincipalMatrixDoesNotCrossIntoREST(t *testing.T) {
 	db, err := store.Open(t.TempDir() + "/oauth-matrix.db")
 	if err != nil {
