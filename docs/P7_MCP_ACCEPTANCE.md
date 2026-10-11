@@ -139,3 +139,21 @@ MCP 接入对话框打开时焦点落在关闭按钮，Tab/Shift+Tab 在对话�
 | GHCR Docker pull | 本机 Docker daemon 未运行，未验证实际 Docker pull 或容器启动；匿名 Registry 清单读取已验证。 |
 
 验收结束后移除了本轮独立 Docker 容器与命名卷；Playwright 临时会话目录 `.playwright-cli/` 保留为本机未跟踪用户数据。
+
+## 复制操作反馈补充验收（2026-10-11）
+
+### 修复与覆盖范围
+
+- 复制 MCP 服务地址、通用接入说明、Codex CLI 示例、REST 完整推送指令后，统一显示位于视口顶部的成功提示；提示使用 `role="status"` 和 `aria-live="polite"`，约 3.2 秒后消失。
+- 修复前 MCP 成功状态位于长对话框滚动内容末尾，Playwright 实测该状态 y=1705，而视口高度为 720px，点击后不可见。修复后提示固定在视口顶部，不受对话框滚动位置影响。
+- 剪贴板 API 拒绝或不可用时显示醒目的手动复制提示，并继续聚焦、选中可复制文本；MCP 与 REST 指令分别保留可手动选择的内容区域。
+- MCP 服务地址保存成功后也显示相同位置的确认提示。OAuth Client Secret 复制调用与 MCP 内容相同的 `copyMCPText` 处理器，因此复用相同成功/失败反馈；本次隔离环境未启用 OAuth，未对 Secret 按钮进行端到端点击验收。
+
+### 实测记录
+
+- 隔离本地实例：`http://127.0.0.1:18771`，独立临时数据目录 `/tmp/bolt-dock-copy-audit-verify`，非生产实例。
+- Playwright CLI / Chromium 实测 MCP 服务地址、通用说明、Codex 示例、REST 完整指令的成功提示；提示在 1280×720 视口的 `top=16`、`bottom=63`，完全可见。
+- 通过隔离浏览器上下文模拟 Clipboard API 拒绝：REST 与 MCP 均出现警示提示；MCP 文本框实测已聚焦且全文选中。
+- 实测「保存地址」提示“`MCP 服务地址已保存到此浏览器。`”。
+- `make test` 通过（Go 测试通过；Vitest 15/15）；`npm run build` 通过；`git diff --check` 通过。
+- 用户生产部署、OAuth Client Secret 实际复制及其他浏览器/客户端尚未实测，不据此宣称已验收。

@@ -36,6 +36,7 @@ const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)')
 const systemPrefersDark = ref(systemThemeQuery.matches)
 const narrowReader = ref(typeof window !== 'undefined' && window.matchMedia('(max-width: 800px)').matches)
 const notificationState = ref('')
+const copyFeedback = ref(null)
 const promptOpen = ref(false)
 const promptCopied = ref(false)
 const promptFallback = ref(false)
@@ -46,7 +47,6 @@ const mcpCapabilitiesError = ref('')
 const mcpAddressOverride = ref(readMCPAddressOverride())
 const mcpAddressDraft = ref(mcpAddressOverride.value || window.location.origin)
 const mcpAddressError = ref('')
-const mcpCopyStatus = ref('')
 const mcpCopyFallback = ref(false)
 const mcpFallbackText = ref('')
 const oauthClients = ref([])
@@ -88,6 +88,7 @@ let previousBodyPaddingRight = ''
 let streamAbort
 let refreshTimer
 let authChannel
+let copyFeedbackTimer
 
 
 const renderedMarkdown = computed(() => selectedReport.value
@@ -319,16 +320,36 @@ function openSearchResult(report) {
   openBot(bot).then(() => selectReport(reports.value.find(item => item.id === report.id) || report))
 }
 function clearSearch() { query.value = ''; searchFrom.value = ''; searchTo.value = ''; searching.value = false; searchResults.value = []; loadData() }
-function openPrompt() { promptOpen.value = true; promptCopied.value = false; promptFallback.value = false }
+function clearCopyFeedback() {
+  clearTimeout(copyFeedbackTimer)
+  copyFeedback.value = null
+}
+function showCopyFeedback(message, kind = 'success') {
+  clearCopyFeedback()
+  copyFeedback.value = { message, kind }
+  copyFeedbackTimer = setTimeout(() => { copyFeedback.value = null }, 3200)
+}
+function openPrompt() { clearCopyFeedback(); promptOpen.value = true; promptCopied.value = false; promptFallback.value = false }
 async function copyPrompt() {
-  try { await navigator.clipboard.writeText(pushPrompt.value); promptCopied.value = true; promptFallback.value = false }
-  catch { promptCopied.value = false; promptFallback.value = true; requestAnimationFrame(() => { const field = document.querySelector('.prompt-preview'); field?.focus(); field?.select() }) }
+  try {
+    await navigator.clipboard.writeText(pushPrompt.value)
+    promptCopied.value = true
+    promptFallback.value = false
+    showCopyFeedback('已复制完整 REST 推送指令。')
+  } catch {
+    promptCopied.value = false
+    promptFallback.value = true
+    showCopyFeedback('浏览器未允许访问剪贴板，指令已选中，请按 ⌘C / Ctrl+C 复制。', 'warning')
+    requestAnimationFrame(() => { const field = document.querySelector('.prompt-preview'); field?.focus(); field?.select() })
+  }
 }
 async function openMCPAccess() {
+  clearCopyFeedback()
   mcpConfigOpen.value = true
   mcpAddressDraft.value = mcpAddressOverride.value || window.location.origin
   mcpAddressError.value = ''
-  mcpCopyStatus.value = ''
+  mcpCopyFallback.value = false
+  mcpFallbackText.value = ''
   mcpCapabilities.value = null
   mcpCapabilitiesError.value = ''
   mcpCapabilitiesLoading.value = true
@@ -387,7 +408,7 @@ function saveMCPAddress() {
     writeMCPAddressOverride(mcpAddressOverride.value)
     mcpAddressDraft.value = base
     mcpAddressError.value = ''
-    mcpCopyStatus.value = 'MCP 服务地址已保存到此浏览器。'
+    showCopyFeedback('MCP 服务地址已保存到此浏览器。')
   } catch (e) { mcpAddressError.value = e.message }
 }
 function resetMCPAddress() {
@@ -396,14 +417,15 @@ function resetMCPAddress() {
 }
 async function copyMCPText(value, successMessage) {
   if (!value) return
-  mcpCopyStatus.value = ''
+  clearCopyFeedback()
   mcpCopyFallback.value = false
   mcpFallbackText.value = value
   try {
     await navigator.clipboard.writeText(value)
-    mcpCopyStatus.value = successMessage
+    showCopyFeedback(successMessage)
   } catch {
     mcpCopyFallback.value = true
+    showCopyFeedback('浏览器未允许访问剪贴板，内容已选中，请按 ⌘C / Ctrl+C 复制。', 'warning')
     requestAnimationFrame(() => {
       const field = document.querySelector('.mcp-copy-fallback-field')
       field?.focus()
@@ -553,7 +575,7 @@ onMounted(async () => {
   } catch {}
   authReady.value = true
 })
-onUnmounted(() => { window.removeEventListener('keydown', onKey); window.removeEventListener('resize', updateNarrowReader); systemThemeQuery.removeEventListener('change', updateSystemTheme); authChannel?.close(); streamAbort?.abort(); clearTimeout(refreshTimer); document.body.style.overflow = previousBodyOverflow; document.body.style.paddingRight = previousBodyPaddingRight })
+onUnmounted(() => { window.removeEventListener('keydown', onKey); window.removeEventListener('resize', updateNarrowReader); systemThemeQuery.removeEventListener('change', updateSystemTheme); authChannel?.close(); streamAbort?.abort(); clearTimeout(refreshTimer); clearTimeout(copyFeedbackTimer); document.body.style.overflow = previousBodyOverflow; document.body.style.paddingRight = previousBodyPaddingRight })
 
 function trapReaderFocus(event) {
   const focusable = [...readerDialog.value.querySelectorAll('a[href], button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])')]
@@ -584,6 +606,9 @@ function trapReaderFocus(event) {
   </main>
 
   <div v-else class="app-shell" @click="themeMenuOpen = false">
+    <div v-if="copyFeedback" class="copy-feedback-toast" :class="`copy-feedback-toast--${copyFeedback.kind}`" role="status" aria-live="polite" aria-atomic="true">
+      <span class="copy-feedback-icon" aria-hidden="true">{{ copyFeedback.kind === 'warning' ? '!' : '✓' }}</span>{{ copyFeedback.message }}
+    </div>
     <header class="topbar">
       <a class="wordmark" href="#" @click.prevent="closeReader(); clearSearch()"><span class="brand-mark small"><img src="/brand/bolt-dock.svg" alt=""></span><span>Bolt <b>Dock</b></span></a>
       <form class="search-box" @submit.prevent="runSearch()">
@@ -769,7 +794,6 @@ function trapReaderFocus(event) {
             <ul><li><code>401</code>：检查客户端是否已安全设置正确的服务端 Bearer 密钥。</li><li><code>404</code>：检查反向代理是否将 <code>/mcp</code> 转发到 Bolt Dock。</li><li>协议不兼容：确认客户端支持远程 Streamable HTTP MCP；只支持 stdio 的客户端不能直接连接。</li><li>浏览器型客户端跨域失败：MCP 会拒绝不允许的跨源 Origin；请使用受支持的服务端连接方式并检查 HTTPS 代理转发。</li></ul>
           </details>
           <div class="mcp-copy-actions"><button class="secondary-button" @click="openRESTPushInstructions">改用 REST 推送指令</button></div>
-          <p v-if="mcpCopyStatus" class="mcp-copy-status" role="status">{{ mcpCopyStatus }}</p>
           <label v-if="mcpCopyFallback" class="mcp-copy-fallback">浏览器未开放剪贴板权限，内容已选中，请按 ⌘C / Ctrl+C 复制。
             <textarea class="prompt-preview mcp-copy-fallback-field" :value="mcpFallbackText" readonly aria-label="待手动复制的 MCP 内容"></textarea>
           </label>
