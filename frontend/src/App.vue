@@ -94,6 +94,7 @@ const renderedMarkdown = computed(() => selectedReport.value
   ? renderSanitizedMarkdown(selectedReport.value.content || '') : '')
 const visibleBots = computed(() => bots.value)
 const filteredSources = computed(() => sources.value)
+const totalUnreadCount = computed(() => sources.value.reduce((total, item) => total + (item.unread_count || 0), 0))
 const isLoggedIn = computed(() => authenticated.value)
 const effectiveTheme = computed(() => themeMode.value === 'system'
   ? (systemPrefersDark.value ? 'dark' : 'light')
@@ -229,8 +230,7 @@ async function selectReport(report) {
   if (selected.value) {
     try {
       await api('/api/v1/bots/read', { method: 'POST', body: JSON.stringify({ source: selected.value.source, bot_id: selected.value.bot_id, report_id: report.id }) })
-      const bot = bots.value.find(item => item.source === selected.value.source && item.bot_id === selected.value.bot_id)
-      if (bot?.latest_report?.id <= report.id) bot.unread_count = 0
+      await loadData()
     } catch {}
   }
 }
@@ -590,7 +590,7 @@ function trapReaderFocus(event) {
       </form>
       <div class="top-actions">
         <label class="source-select-wrap"><span class="sr-only">选择来源</span>
-          <select v-model="source" aria-label="筛选报告来源"><option value="">全部来源</option><option v-for="item in filteredSources" :key="item.source" :value="item.source">{{ item.source }} <small>· {{ item.report_count }}</small></option></select><span class="select-caret">⌄</span>
+          <select v-model="source" aria-label="按来源筛选未读报告"><option value="">全部来源 · {{ totalUnreadCount }} 未读</option><option v-for="item in filteredSources" :key="item.source" :value="item.source">{{ item.source }} · {{ item.unread_count }} 未读</option></select><span class="select-caret">⌄</span>
         </label>
         <div class="theme-control" @click.stop>
           <button id="theme-trigger" class="icon-button theme-trigger" type="button" :aria-label="`外观：${themeMode === 'system' ? '跟随系统' : themeMode === 'dark' ? '深色' : '浅色'}`" :aria-expanded="themeMenuOpen" aria-controls="theme-menu" title="外观设置" @click="themeMenuOpen = !themeMenuOpen">{{ themeIcon }}</button>
@@ -639,7 +639,7 @@ function trapReaderFocus(event) {
         <div v-else class="bot-grid">
           <div v-for="bot in bots" :key="`${bot.source}:${bot.bot_id}`" class="bot-card-shell">
             <button class="bot-card" :class="{ selected: selected?.source === bot.source && selected?.bot_id === bot.bot_id }" @click="openBot(bot)">
-              <div class="card-topline"><span class="source-pill">{{ bot.source }}</span><span v-if="bot.unread_count" class="unread-pill"><i></i> 新报告</span><span v-else class="report-number">{{ bot.report_count }} 份报告</span></div>
+              <div class="card-topline"><span class="source-pill">{{ bot.source }}</span><span v-if="bot.unread_count" class="unread-pill"><i></i> 未读 {{ bot.unread_count }} 份</span><span v-else class="report-number">{{ bot.report_count }} 份报告</span></div>
               <div class="bot-identity"><div class="avatar-wrap"><img v-if="bot.avatar_url" :src="bot.avatar_url" alt="" @error="avatarFailed"><span class="avatar-fallback" :class="{ hidden: bot.avatar_url }">✳</span></div><div class="bot-titles"><h2>{{ effectiveBotName(bot) }}</h2><p>{{ bot.bot_id }}</p></div><span class="card-arrow">↗</span></div>
               <div class="card-preview"><span class="preview-label">LATEST REPORT</span><strong>{{ bot.latest_report?.title || '暂无报告' }}</strong><p>{{ bot.latest_report?.summary || '新报告将显示在这里。' }}</p></div>
               <div class="card-footer"><span><i class="time-icon">◷</i> {{ formatDate(bot.last_report_at) }}</span><span class="view-link">浏览报告 <b>→</b></span></div>

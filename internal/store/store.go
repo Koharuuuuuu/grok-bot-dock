@@ -66,6 +66,7 @@ type Source struct {
 	Source      string `json:"source"`
 	BotCount    int    `json:"bot_count"`
 	ReportCount int    `json:"report_count"`
+	UnreadCount int    `json:"unread_count"`
 }
 type Page struct {
 	Items      []Report `json:"items"`
@@ -289,7 +290,7 @@ func (s *Store) RenameBot(ctx context.Context, source, botID, displayName string
 }
 
 func (s *Store) Sources(ctx context.Context) ([]Source, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT s.source,COUNT(DISTINCT b.id),COUNT(r.id) FROM sources s LEFT JOIN bots b ON b.source=s.source LEFT JOIN reports r ON r.bot_pk=b.id GROUP BY s.source ORDER BY s.source`)
+	rows, err := s.db.QueryContext(ctx, `SELECT s.source,COUNT(DISTINCT b.id),COUNT(r.id),COUNT(CASE WHEN r.id>b.last_read_report_id THEN 1 END) FROM sources s LEFT JOIN bots b ON b.source=s.source LEFT JOIN reports r ON r.bot_pk=b.id GROUP BY s.source ORDER BY s.source`)
 	if err != nil {
 		return nil, err
 	}
@@ -297,7 +298,7 @@ func (s *Store) Sources(ctx context.Context) ([]Source, error) {
 	out := []Source{}
 	for rows.Next() {
 		var x Source
-		if err := rows.Scan(&x.Source, &x.BotCount, &x.ReportCount); err != nil {
+		if err := rows.Scan(&x.Source, &x.BotCount, &x.ReportCount, &x.UnreadCount); err != nil {
 			return nil, err
 		}
 		out = append(out, x)

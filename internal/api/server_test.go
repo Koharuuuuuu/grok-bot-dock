@@ -236,10 +236,20 @@ func TestReportPushAndReadFlow(t *testing.T) {
 	if got := request(h, "POST", "/api/v1/reports", postBody("grok", "# AI\n\n人工智能摘要", "g1"), ""); got.Code != 401 {
 		t.Fatalf("missing token status=%d", got.Code)
 	}
+	var grokReportID int64
 	for _, source := range []string{"grok", "codex"} {
 		got := request(h, "POST", "/api/v1/reports", postBody(source, "# AI\n\n人工智能摘要", source+"-1"), "test-secret")
 		if got.Code != 201 {
 			t.Fatalf("push %s: status=%d body=%s", source, got.Code, got.Body.String())
+		}
+		if source == "grok" {
+			var result struct {
+				ReportID int64 `json:"report_id"`
+			}
+			if err := json.Unmarshal(got.Body.Bytes(), &result); err != nil || result.ReportID == 0 {
+				t.Fatalf("invalid Grok report response: body=%s err=%v", got.Body.String(), err)
+			}
+			grokReportID = result.ReportID
 		}
 	}
 	dup := request(h, "POST", "/api/v1/reports", postBody("grok", "different body", "grok-1"), "test-secret")
@@ -247,11 +257,56 @@ func TestReportPushAndReadFlow(t *testing.T) {
 		t.Fatalf("idempotent retry: %d %s", dup.Code, dup.Body.String())
 	}
 	sources := request(h, "GET", "/api/v1/sources", "", "test-secret")
-	if sources.Code != 200 || !bytes.Contains(sources.Body.Bytes(), []byte(`"source":"grok"`)) || !bytes.Contains(sources.Body.Bytes(), []byte(`"source":"codex"`)) {
+	var sourceResult struct {
+		Items []struct {
+			Source      string `json:"source"`
+			ReportCount int    `json:"report_count"`
+			UnreadCount int    `json:"unread_count"`
+		} `json:"items"`
+	}
+	if sources.Code != 200 || json.Unmarshal(sources.Body.Bytes(), &sourceResult) != nil || len(sourceResult.Items) != 2 {
 		t.Fatalf("sources: %d %s", sources.Code, sources.Body.String())
 	}
+	for _, source := range sourceResult.Items {
+		if source.ReportCount != 1 || source.UnreadCount != 1 {
+			t.Fatalf("source counts before reading should include one unread report: %#v", source)
+		}
+	}
+	read := request(h, "POST", "/api/v1/bots/read", `{"source":"grok","bot_id":"daily","report_id":`+strconv.FormatInt(grokReportID, 10)+`}`, "test-secret")
+	if read.Code != 200 {
+		t.Fatalf("mark Grok report read: %d %s", read.Code, read.Body.String())
+	}
+	sources = request(h, "GET", "/api/v1/sources", "", "test-secret")
+	if sources.Code != 200 || json.Unmarshal(sources.Body.Bytes(), &sourceResult) != nil {
+		t.Fatalf("sources after read: %d %s", sources.Code, sources.Body.String())
+	}
+	for _, source := range sourceResult.Items {
+		wantUnread := 1
+		if source.Source == "grok" {
+			wantUnread = 0
+		}
+		if source.UnreadCount != wantUnread {
+			t.Fatalf("source unread count after reading Grok report: %#v want %d", source, wantUnread)
+		}
+	}
+	newReport := request(h, "POST", "/api/v1/reports", postBody("grok", "new report after read", "grok-2"), "test-secret")
+	if newReport.Code != 201 {
+		t.Fatalf("push new Grok report: %d %s", newReport.Code, newReport.Body.String())
+	}
+	sources = request(h, "GET", "/api/v1/sources", "", "test-secret")
+	if sources.Code != 200 || json.Unmarshal(sources.Body.Bytes(), &sourceResult) != nil {
+		t.Fatalf("sources after new report: %d %s", sources.Code, sources.Body.String())
+	}
+	for _, source := range sourceResult.Items {
+		if source.Source == "grok" && source.ReportCount != 2 {
+			t.Fatalf("Grok report total after new report=%d want 2", source.ReportCount)
+		}
+		if source.UnreadCount != 1 {
+			t.Fatalf("new report did not increment source unread count: %#v want 1", source)
+		}
+	}
 	filtered := request(h, "GET", "/api/v1/bots?source=grok", "", "test-secret")
-	if filtered.Code != 200 || !bytes.Contains(filtered.Body.Bytes(), []byte(`"bot_count":1`)) || !bytes.Contains(filtered.Body.Bytes(), []byte(`"report_count":1`)) {
+	if filtered.Code != 200 || !bytes.Contains(filtered.Body.Bytes(), []byte(`"bot_count":1`)) || !bytes.Contains(filtered.Body.Bytes(), []byte(`"report_count":2`)) {
 		t.Fatalf("filtered stats: %d %s", filtered.Code, filtered.Body.String())
 	}
 	search := request(h, "GET", "/api/v1/search?q=%E4%BA%BA%E5%B7%A5%E6%99%BA%E8%83%BD&source=codex", "", "test-secret")

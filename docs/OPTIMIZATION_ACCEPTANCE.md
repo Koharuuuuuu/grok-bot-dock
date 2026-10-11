@@ -51,3 +51,10 @@
 - 本地 `go test -race ./... && go vet ./...`、前端 Vitest 8/8 + 构建、`docker build -t bolt-dock:p6 .` 和隔离容器健康检查/SQLite 报告及 display_name 重启持久性通过；报告、Bot 删除 UI 确认通过本地浏览器实测。
 - P6 PR [#10](https://github.com/Nyakooo/grok-bot-dock/pull/10) 的 validate run `38029771656` 通过、publish 跳过；合并提交 [`cd89031c617a4ec12b0cf90b773912e336125303`](https://github.com/Nyakooo/grok-bot-dock/commit/cd89031c617a4ec12b0cf90b773912e336125303) 的 master run [`38029816646`](https://github.com/Nyakooo/grok-bot-dock/actions/runs/38029816646) 中 validate/publish 均通过。匿名 Docker 配置拉取 `ghcr.io/nyakooo/grok-bot-dock:master` 的 amd64/arm64 成功，OCI index digest 为 `sha256:a3afc5cb8da33089659d831706debd6560225e10557cee95d1a08f2fabbbda8a`；用该 GHCR 镜像启动隔离容器后 `/healthz` 和报告 API 通过，容器健康且 UID `10001:10001`。
 - 生产 URL/主机未提供，生产部署版本、缓存和数据库未验证；不得将本地或公开镜像结果视作生产验收。未触发 semver tag。
+
+## 未读报告计数联动修复（2026-10-11）
+
+- `/api/v1/sources` 为每个来源额外返回 `unread_count`，按 Bot 阅读游标汇总；原 `report_count` 仍保留给总量统计。
+- 阅读报告后，前端重新加载 Bot 与来源聚合，卡片未读徽标和来源筛选项随服务端阅读状态同步；新报告经 SSE 刷新后会再次增加对应未读数。「全部来源」显示所有来源未读数之和。
+- 回归覆盖：Grok/Codex 初始各 1 条未读；标记 Grok 报告已读后，Grok 来源归零而 Codex 保持 1；同一 Bot 收到新报告后，Grok 来源未读数重新变为 1，且总报告数独立更新。
+- 此记录仅对应本轮实现与本地验收；GitHub CI、发布镜像和生产浏览器验收在完成发布后补录。
