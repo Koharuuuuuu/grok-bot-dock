@@ -223,9 +223,9 @@ async function loadReports({ append = false, preserveSelection = false } = {}) {
     const page = await api(`/api/v1/reports?${params}`)
     reports.value = append ? [...reports.value, ...page.items] : page.items
     reportCursor.value = page.next_cursor || ''
-    if (!append && reports.value.length) {
+    if (!append) {
       if (preserveSelection) selectedReport.value = reports.value.find(report => report.id === selectedReportId) || null
-      else selectReport(reports.value[0])
+      else if (reports.value.length) selectReport(reports.value[0])
     }
   } catch (e) { error.value = e.message } finally { busy.value = false }
 }
