@@ -211,18 +211,22 @@ async function openBot(bot) {
   reportDate.value = ''; reports.value = []; reportCursor.value = ''
   await loadReports()
 }
-async function loadReports(append = false) {
+async function loadReports({ append = false, preserveSelection = false } = {}) {
   if (!selected.value) return
+  const selectedReportId = preserveSelection ? selectedReport.value?.id : null
   busy.value = true; error.value = ''
   try {
-    if (!append) selectedReport.value = null
+    if (!append && !preserveSelection) selectedReport.value = null
     const params = new URLSearchParams({ source: selected.value.source, bot_id: selected.value.bot_id, limit: '20' })
     if (reportDate.value) params.set('date', reportDate.value)
     if (append && reportCursor.value) params.set('cursor', reportCursor.value)
     const page = await api(`/api/v1/reports?${params}`)
     reports.value = append ? [...reports.value, ...page.items] : page.items
     reportCursor.value = page.next_cursor || ''
-    if (!append && reports.value.length) selectReport(reports.value[0])
+    if (!append) {
+      if (preserveSelection) selectedReport.value = reports.value.find(report => report.id === selectedReportId) || null
+      else if (reports.value.length) selectReport(reports.value[0])
+    }
   } catch (e) { error.value = e.message } finally { busy.value = false }
 }
 async function selectReport(report) {
@@ -469,7 +473,7 @@ async function startStream() {
                   const selectedBotChanged = ['report.deleted', 'bot.updated'].includes(event)
                     && selected.value?.source === payload.source
                     && selected.value?.bot_id === payload.bot_id
-                  if (selectedBotChanged || (event === 'report.created' && refreshesSelectedBot(selected.value, payload))) await loadReports()
+                  if (selectedBotChanged || (event === 'report.created' && refreshesSelectedBot(selected.value, payload))) await loadReports({ preserveSelection: true })
                   if (searching.value) await runSearch()
                 } catch {}
               }, 120)
@@ -661,7 +665,7 @@ function trapReaderFocus(event) {
               <button class="history-item" :class="{ active: selectedReport?.id === item.id }" @click="selectReport(item)"><span class="history-date">{{ formatDate(item.executed_at) }}</span><strong>{{ item.title || item.display_name || item.bot_name }}</strong><span>{{ item.summary || '打开查看完整报告' }}</span></button>
               <button class="delete-action history-delete" :disabled="Boolean(deleting)" :aria-label="`删除报告：${item.title || item.bot_name}`" @click="deleteReport(item)">删除</button>
             </div>
-            <button v-if="reportCursor" class="history-more" :disabled="busy" @click="loadReports(true)">加载更早报告</button>
+            <button v-if="reportCursor" class="history-more" :disabled="busy" @click="loadReports({ append: true })">加载更早报告</button>
             <p v-if="!reports.length && !busy" class="history-empty">这个日期没有报告。</p>
           </nav>
           <article v-if="selectedReport" class="report-document" :style="{ '--reader-font-size': `${readerFontSize}px` }">

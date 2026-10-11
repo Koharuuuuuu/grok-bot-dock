@@ -24,7 +24,7 @@
 
 ## 能力
 
-- Bot 首次推送后自动出现响应式卡片；按来源筛选卡片、搜索结果和 Bot/报告计数。
+- Bot 首次推送后自动出现响应式卡片；按来源筛选卡片和搜索结果，并展示 Bot/报告总量及动态未读数。打开报告后相应未读数清零，新报告到达后重新增加。
 - 全局搜索支持中文；历史报告提供日期过滤、游标分页及 Markdown 阅读。
 - Markdown 支持表格、代码、引用、链接和图片；原始 HTML 禁用，渲染结果由 DOMPurify 消毒。
 - SSE 实时更新；用户主动允许后可显示浏览器通知。
@@ -76,7 +76,7 @@ curl -X POST "https://YOUR_DOMAIN/api/v1/reports" \
 | `POST /api/v1/auth/login` | 使用 `ACCESS_TOKEN` 创建浏览器会话 |
 | `GET /api/v1/auth/session` | 探测当前浏览器会话，不泄露凭据 |
 | `POST /api/v1/auth/logout` | 立即撤销浏览器会话并清除 Cookie |
-| `GET /api/v1/sources` | 已推送来源及计数 |
+| `GET /api/v1/sources` | 已推送来源及计数（`report_count` 为总报告数，`unread_count` 为按 Bot 阅读游标汇总的未读数） |
 | `GET /api/v1/bots?source=` | Bot 卡片、未读状态和统计 |
 | `PATCH /api/v1/bots?source=&bot_id=` | 浏览器会话修改或清除 Bot 展示名称（`display_name`）；Bearer-only 推送客户端不可调用 |
 | `GET /api/v1/reports?source=&bot_id=&date=&cursor=` | 报告列表和历史分页 |

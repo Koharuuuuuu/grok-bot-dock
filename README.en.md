@@ -11,7 +11,7 @@ Bolt Dock collects, searches, and displays completed reports from AI agents. Age
 
 ## Features
 
-- Automatically groups reports by source and bot, with a responsive dashboard, history, filters, and full-text search (including Chinese).
+- Automatically groups reports by source and bot, with a responsive dashboard, history, filters, and full-text search (including Chinese). Cards and source filters show live unread counts: opening a report clears its unread count, and new reports increase it again.
 - Renders Markdown with raw HTML disabled and sanitized output.
 - Streams updates to open dashboards with Server-Sent Events (SSE).
 - Stores data in SQLite with WAL and FTS5 search.
