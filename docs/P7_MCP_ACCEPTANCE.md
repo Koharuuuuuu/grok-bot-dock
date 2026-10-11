@@ -157,3 +157,4 @@ MCP 接入对话框打开时焦点落在关闭按钮，Tab/Shift+Tab 在对话�
 - 实测「保存地址」提示“`MCP 服务地址已保存到此浏览器。`”。
 - `make test` 通过（Go 测试通过；Vitest 15/15）；`npm run build` 通过；`git diff --check` 通过。
 - 用户生产部署、OAuth Client Secret 实际复制及其他浏览器/客户端尚未实测，不据此宣称已验收。
+- 当前 `master` 镜像在随后的提交 `8757c9f` 中统一发布；该发布的 CI、GHCR digest 和平台清单记录见 [P8 OAuth 验收](P8_OAUTH_ACCEPTANCE.md#oauth-客户端重新启用补充验收2026-10-11)。本次未对 GHCR 镜像执行容器启动测试。

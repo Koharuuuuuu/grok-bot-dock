@@ -85,7 +85,8 @@ Merged PR: [#19](https://github.com/Nyakooo/grok-bot-dock/pull/19), merge commit
 - 新增所有者会话保护的 `POST /api/v1/oauth/clients/enable`，通过 JSON `client_id` 接收标识，支持 URL 形式的 CIMD Client ID；存储层启用操作幂等，未知 ID 返回未找到。
 - Store 回归测试证明重新启用后已撤销 Token 仍无效，并覆盖重复启用及未知 ID。API 测试覆盖需要有效所有者会话、URL 形式 Client ID 和成功启用。
 - 隔离本地 OAuth 启用实例的 Playwright 实测：在 MCP 弹窗创建客户端，停用后看到状态和“启用”按钮，点击后客户端恢复“停用”操作；同样验证了 URL 形式的手动固定 Client ID。测试使用本地临时数据库和临时凭据，不涉及生产数据。
-- 该补充验收为本地验证；CI、镜像发布与真实第三方 OAuth 重新授权尚待本次 master 提交的流水线结果。
+- master 提交 `8757c9f` 的 [CI 与多架构发布](https://github.com/Nyakooo/grok-bot-dock/actions/runs/38107387348) 均通过。匿名 GHCR Registry 请求返回 HTTP 200，`ghcr.io/nyakooo/grok-bot-dock:master` digest 为 `sha256:50fae4a8d35ca02d2f8b2b5b53a533db5d1781848ba948e3169b12c629103fc8`，清单包含 linux/amd64 与 linux/arm64。
+- 该发布记录不代表生产部署或真实第三方 OAuth 重新授权已经完成；本次没有拉取镜像启动容器，也未连接生产 OAuth 客户端。
 
 ## Current delivery boundary
 
