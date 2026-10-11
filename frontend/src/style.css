@@ -152,3 +152,24 @@ html{scrollbar-gutter:stable}
 .mcp-client-card>.secondary-button{justify-self:start;min-height:36px;padding:0 11px;border:1px solid #dce4d4;border-radius:8px;background:#f6f8f2;color:#4e623f;font:600 13px 'DM Sans','PingFang SC',sans-serif;cursor:pointer}
 .mcp-client-card-note{padding:8px 9px;border-radius:7px;background:#f0f2ed}
 @media(max-width:640px){.mcp-client-grid{grid-template-columns:1fr}.mcp-client-card--reserved{grid-column:auto;grid-template-columns:1fr}.confirm-modal{padding:21px}.card-actions-menu>div{min-width:160px}}
+
+/* Keep action controls inside their own surfaces and let dense reader controls wrap. */
+.bot-card-shell .bot-card{padding-right:58px}
+.bot-actions-menu{top:14px;right:16px}
+.document-meta{min-width:0;flex-wrap:wrap;padding-right:46px}
+.document-meta>span:not(.source-pill){min-width:0;overflow-wrap:anywhere}
+.document-meta time{white-space:nowrap}
+.reader-toolbar{min-width:0;min-height:53px;height:auto;padding-right:20px;gap:8px}
+.back-button{flex:none;white-space:nowrap}
+.reader-tools{min-width:0;margin-left:auto;max-width:100%;flex-wrap:wrap;justify-content:flex-end}
+.close-button{flex:none}
+@media(max-width:800px){
+  .reader-toolbar{padding-top:7px;padding-bottom:7px}
+  .reader-tools{flex:1 1 360px}
+}
+@media(max-width:540px){
+  .reader-toolbar{min-height:49px;height:auto;padding:7px 12px}
+  .reader-tools{flex:1 1 auto;gap:4px}
+  .reader-tools>.icon-button{flex:none}
+  .close-button{display:none!important}
+}
