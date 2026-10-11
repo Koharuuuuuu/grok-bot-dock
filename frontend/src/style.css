@@ -159,6 +159,7 @@ html{scrollbar-gutter:stable}
 .document-meta{min-width:0;flex-wrap:wrap;padding-right:54px}
 .document-meta>span:not(.source-pill){min-width:0;overflow-wrap:anywhere}
 .document-meta time{white-space:nowrap}
+.document-actions-menu{right:12px}
 .reader-toolbar{min-width:0;min-height:53px;height:auto;padding-right:28px;gap:8px}
 .back-button{flex:none;white-space:nowrap}
 .reader-tools{min-width:0;margin-left:auto;max-width:100%;flex-wrap:wrap;justify-content:flex-end}
