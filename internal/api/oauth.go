@@ -769,6 +769,24 @@ func (s *Server) ownerOAuthAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.rotateOAuthClientSecret(w, r, id)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/oauth/clients/enable":
+		var in struct {
+			ClientID string `json:"client_id"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in); err != nil || in.ClientID == "" {
+			writeError(w, http.StatusBadRequest, "invalid_request", "client_id is required")
+			return
+		}
+		if err := s.store.EnableOAuthClient(r.Context(), in.ClientID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, 404, "not_found", "client not found")
+				return
+			}
+			serverError(w, err)
+			return
+		}
+		_ = s.store.OAuthAudit(r.Context(), "client_enabled", in.ClientID, "success")
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/oauth/grants":
 		items, err := s.store.OAuthGrants(r.Context())
 		if err != nil {

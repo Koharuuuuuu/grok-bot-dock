@@ -103,6 +103,22 @@ func TestOAuthAdditiveMigrationAndTokenSurviveRestart(t *testing.T) {
 	if _, err = db.OAuthToken(ctx, "token-hash", "https://dock.example/mcp"); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("disabled client token error=%v", err)
 	}
+	if err = db.EnableOAuthClient(ctx, "client"); err != nil {
+		t.Fatalf("enable previously disabled client: %v", err)
+	}
+	client, err = db.OAuthClient(ctx, "client")
+	if err != nil || client.DisabledAt != "" {
+		t.Fatalf("client was not re-enabled: disabled_at=%q err=%v", client.DisabledAt, err)
+	}
+	if _, err = db.OAuthToken(ctx, "token-hash", "https://dock.example/mcp"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("enabling client restored a revoked token: %v", err)
+	}
+	if err = db.EnableOAuthClient(ctx, "client"); err != nil {
+		t.Fatalf("re-enabling active client should be idempotent: %v", err)
+	}
+	if err = db.EnableOAuthClient(ctx, "missing"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("enabling missing client error=%v", err)
+	}
 }
 
 func TestOAuthV2DatabaseMigratesClientRegistrationType(t *testing.T) {

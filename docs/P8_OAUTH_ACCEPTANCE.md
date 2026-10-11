@@ -79,6 +79,14 @@ Merged PR: [#19](https://github.com/Nyakooo/grok-bot-dock/pull/19), merge commit
 - Multi-user or per-source data isolation; P8 remains a single-owner system.
 - Production deployment and public OAuth enablement; the user will deploy the published image after verifying their server and reverse proxy.
 
+## OAuth 客户端重新启用补充验收（2026-10-11）
+
+- MCP 弹窗的客户端管理列表中，停用客户端显示“启用”按钮；启用后恢复客户端注册状态，并显示需重新授权的说明。停用会撤销既有授权和 Token，重新启用不会恢复这些凭据。
+- 新增所有者会话保护的 `POST /api/v1/oauth/clients/enable`，通过 JSON `client_id` 接收标识，支持 URL 形式的 CIMD Client ID；存储层启用操作幂等，未知 ID 返回未找到。
+- Store 回归测试证明重新启用后已撤销 Token 仍无效，并覆盖重复启用及未知 ID。API 测试覆盖需要有效所有者会话、URL 形式 Client ID 和成功启用。
+- 隔离本地 OAuth 启用实例的 Playwright 实测：在 MCP 弹窗创建客户端，停用后看到状态和“启用”按钮，点击后客户端恢复“停用”操作；同样验证了 URL 形式的手动固定 Client ID。测试使用本地临时数据库和临时凭据，不涉及生产数据。
+- 该补充验收为本地验证；CI、镜像发布与真实第三方 OAuth 重新授权尚待本次 master 提交的流水线结果。
+
 ## Current delivery boundary
 
 - P8 is merged and published in GHCR; no production deployment was performed.

@@ -243,6 +243,24 @@ func (s *Store) DisableOAuthClient(ctx context.Context, id string) error {
 	return tx.Commit()
 }
 
+// EnableOAuthClient reactivates a previously disabled client. Grants and
+// tokens revoked during disable remain revoked; the client must obtain consent again.
+func (s *Store) EnableOAuthClient(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE oauth_clients SET disabled_at='' WHERE client_id=? AND disabled_at<>''`, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	var exists int
+	return s.db.QueryRowContext(ctx, `SELECT 1 FROM oauth_clients WHERE client_id=?`, id).Scan(&exists)
+}
+
 func (s *Store) CreateOAuthCode(ctx context.Context, codeHash string, code OAuthCode, grantExpiry time.Time) (int64, error) {
 	encoded, _ := json.Marshal(code.Scopes)
 	tx, err := s.db.BeginTx(ctx, nil)

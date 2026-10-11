@@ -57,6 +57,7 @@ const oauthRedirectURI = ref('')
 const oauthConfidential = ref(false)
 const oauthCreatedClient = ref(null)
 const oauthManagementError = ref('')
+const oauthManagementNotice = ref('')
 const oauthManagementBusy = ref(false)
 const mcpDialog = ref(null)
 const mcpCloseButton = ref(null)
@@ -357,6 +358,7 @@ async function openMCPAccess() {
     mcpCapabilities.value = await api('/api/v1/mcp/capabilities')
     oauthCreatedClient.value = null
     oauthManagementError.value = ''
+    oauthManagementNotice.value = ''
     if (mcpCapabilities.value.oauth_enabled) await loadOAuthManagement()
   } catch (e) { mcpCapabilitiesError.value = e.message || '无法读取当前服务的 MCP 能力清单。' }
   finally { mcpCapabilitiesLoading.value = false }
@@ -370,6 +372,7 @@ async function createOAuthClient() {
   if (!oauthClientName.value.trim() || !oauthRedirectURI.value.trim() || oauthManagementBusy.value) return
   oauthManagementBusy.value = true
   oauthManagementError.value = ''
+  oauthManagementNotice.value = ''
   try {
     oauthCreatedClient.value = await api('/api/v1/oauth/clients', { method: 'POST', body: JSON.stringify({
       name: oauthClientName.value.trim(), client_id: oauthClientID.value.trim(), redirect_uris: oauthRedirectURI.value.split(/\s+/).filter(Boolean), confidential: !oauthClientID.value.trim() && oauthConfidential.value,
@@ -381,11 +384,26 @@ async function createOAuthClient() {
 }
 async function disableOAuthClient(client) {
   if (!window.confirm(`停用 ${client.client_name}？相关授权和 Token 会立即失效。`)) return
+  oauthManagementError.value = ''
+  oauthManagementNotice.value = ''
   try { await api(`/api/v1/oauth/clients/${encodeURIComponent(client.client_id)}`, { method: 'DELETE' }); await loadOAuthManagement() }
   catch (e) { oauthManagementError.value = e.message }
 }
+async function enableOAuthClient(client) {
+  if (oauthManagementBusy.value) return
+  oauthManagementBusy.value = true
+  oauthManagementError.value = ''
+  oauthManagementNotice.value = ''
+  try {
+    await api('/api/v1/oauth/clients/enable', { method: 'POST', body: JSON.stringify({ client_id: client.client_id }) })
+    await loadOAuthManagement()
+    oauthManagementNotice.value = '客户端已启用；之前的授权已撤销，请在客户端重新授权。'
+  } catch (e) { oauthManagementError.value = e.message }
+  finally { oauthManagementBusy.value = false }
+}
 async function rotateOAuthClientSecret(client) {
   if (!window.confirm(`为 ${client.client_name} 轮换 Client Secret？新 Secret 只显示一次。`)) return
+  oauthManagementNotice.value = ''
   try {
     oauthCreatedClient.value = { ...await api(`/api/v1/oauth/clients/${encodeURIComponent(client.client_id)}/rotate-secret`, { method: 'POST' }), notice: 'Client Secret 已轮换' }
     await loadOAuthManagement()
@@ -393,6 +411,7 @@ async function rotateOAuthClientSecret(client) {
 }
 async function revokeOAuthGrant(grant) {
   if (!window.confirm(`撤销 ${grant.client_name} 的这条授权？现有 Token 会立即失效。`)) return
+  oauthManagementNotice.value = ''
   try { await api(`/api/v1/oauth/grants/${grant.id}`, { method: 'DELETE' }); await loadOAuthManagement() }
   catch (e) { oauthManagementError.value = e.message }
 }
@@ -764,8 +783,9 @@ function trapReaderFocus(event) {
             <button class="secondary-button" :disabled="oauthManagementBusy">登记客户端</button>
           </form>
           <p v-if="oauthManagementError" class="form-error" role="alert">{{ oauthManagementError }}</p>
+          <p v-if="oauthManagementNotice" class="oauth-management-notice" role="status" aria-live="polite">{{ oauthManagementNotice }}</p>
           <div v-if="oauthCreatedClient" class="oauth-created-client" role="status"><strong>{{ oauthCreatedClient.notice || '客户端已登记' }}：{{ oauthCreatedClient.client_id }}</strong><p v-if="oauthCreatedClient.client_secret">Client Secret（只显示本次）：<code>{{ oauthCreatedClient.client_secret }}</code> <button class="secondary-button" @click="copyOAuthClientSecret">复制 Secret</button></p><p v-else>此客户端为公开客户端，不签发 Client Secret。</p></div>
-          <ul v-if="oauthClients.length" class="oauth-managed-list"><li v-for="client in oauthClients" :key="client.client_id"><div><strong>{{ client.client_name }}</strong><code>{{ client.client_id }}</code><small v-if="client.registration_type === 'cimd'">Client ID Metadata Document（公开客户端）</small><small v-else>管理员预注册客户端</small><small>{{ client.redirect_uris.join(' · ') }}</small><small v-if="client.disabled_at">已停用</small></div><button v-if="!client.disabled_at && client.confidential" class="text-button" @click="rotateOAuthClientSecret(client)">轮换 Secret</button><button v-if="!client.disabled_at" class="text-button" @click="disableOAuthClient(client)">停用</button></li></ul>
+          <ul v-if="oauthClients.length" class="oauth-managed-list"><li v-for="client in oauthClients" :key="client.client_id"><div><strong>{{ client.client_name }}</strong><code>{{ client.client_id }}</code><small v-if="client.registration_type === 'cimd'">Client ID Metadata Document（公开客户端）</small><small v-else>管理员预注册客户端</small><small>{{ client.redirect_uris.join(' · ') }}</small><small v-if="client.disabled_at">已停用 · 启用后需重新授权</small></div><button v-if="!client.disabled_at && client.confidential" class="text-button" @click="rotateOAuthClientSecret(client)">轮换 Secret</button><button v-if="!client.disabled_at" class="text-button" @click="disableOAuthClient(client)">停用</button><button v-else class="text-button" :disabled="oauthManagementBusy" @click="enableOAuthClient(client)">启用</button></li></ul>
           <h4>已授权记录</h4>
           <ul v-if="oauthGrants.length" class="oauth-managed-list"><li v-for="grant in oauthGrants" :key="grant.id"><div><strong>{{ grant.client_name }} <small>授权 #{{ grant.id }}</small></strong><small>{{ grant.scopes.join(' · ') }} · {{ grant.resource }}</small><small>{{ grant.revoked_at ? '已撤销' : `有效期至 ${grant.expires_at}` }}</small></div><button v-if="!grant.revoked_at" class="text-button" @click="revokeOAuthGrant(grant)">撤销</button></li></ul>
           <p v-else class="mcp-field-help">目前没有 OAuth 授权记录。</p>

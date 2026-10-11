@@ -659,6 +659,46 @@ func TestOAuthOwnerCanRotateConfidentialClientSecretOnce(t *testing.T) {
 	}
 }
 
+func TestOAuthOwnerCanReEnableDisabledClient(t *testing.T) {
+	db, err := store.Open(t.TempDir() + "/oauth-enable.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	const base = "https://oauth.example"
+	const clientID = "https://client.example/oauth/metadata.json"
+	if err := db.RegisterOAuthClient(context.Background(), clientID, "Public client", []string{"https://client.example/callback"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	h := NewWithOAuth(db, events.New(), "owner-secret", 1<<20, webui.Files, OAuthConfig{Enabled: true, PublicBaseURL: base}).Handler()
+	login := request(h, http.MethodPost, "/api/v1/auth/login", `{"token":"owner-secret"}`, "")
+	if login.Code != http.StatusOK {
+		t.Fatalf("owner login status=%d body=%s", login.Code, login.Body.String())
+	}
+	cookie := login.Result().Cookies()[0]
+	if err := db.DisableOAuthClient(context.Background(), clientID); err != nil {
+		t.Fatalf("disable client for re-enable test: %v", err)
+	}
+	enable := httptest.NewRequest(http.MethodPost, "/api/v1/oauth/clients/enable", strings.NewReader(`{"client_id":"`+clientID+`"}`))
+	enable.AddCookie(cookie)
+	enable.Header.Set("Origin", base)
+	enable.Header.Set("Content-Type", "application/json")
+	enabled := httptest.NewRecorder()
+	h.ServeHTTP(enabled, enable)
+	if enabled.Code != http.StatusOK || !strings.Contains(enabled.Body.String(), `"ok":true`) {
+		t.Fatalf("enable client status=%d body=%s", enabled.Code, enabled.Body.String())
+	}
+	client, err := db.OAuthClient(context.Background(), clientID)
+	if err != nil || client.DisabledAt != "" {
+		t.Fatalf("enabled client disabled_at=%q err=%v", client.DisabledAt, err)
+	}
+	unauthorized := httptest.NewRecorder()
+	h.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodPost, "/api/v1/oauth/clients/enable", strings.NewReader(`{"client_id":"`+clientID+`"}`)))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous enable status=%d want=401 body=%s", unauthorized.Code, unauthorized.Body.String())
+	}
+}
+
 func TestOAuthOwnerCanPinPublicCIMDClientIDAndExactRedirect(t *testing.T) {
 	db, err := store.Open(t.TempDir() + "/oauth-pinned-cimd.db")
 	if err != nil {
