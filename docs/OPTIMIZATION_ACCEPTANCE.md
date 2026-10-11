@@ -57,4 +57,6 @@
 - `/api/v1/sources` 为每个来源额外返回 `unread_count`，按 Bot 阅读游标汇总；原 `report_count` 仍保留给总量统计。
 - 阅读报告后，前端重新加载 Bot 与来源聚合，卡片未读徽标和来源筛选项随服务端阅读状态同步；新报告经 SSE 刷新后会再次增加对应未读数。「全部来源」显示所有来源未读数之和。
 - 回归覆盖：Grok/Codex 初始各 1 条未读；标记 Grok 报告已读后，Grok 来源归零而 Codex 保持 1；同一 Bot 收到新报告后，Grok 来源未读数重新变为 1，且总报告数独立更新。
-- 此记录仅对应本轮实现与本地验收；GitHub CI、发布镜像和生产浏览器验收在完成发布后补录。
+- 真实浏览器复验发现并修复一个 SSE 边界：阅读面板打开时收到新报告，列表刷新会自动选中它并误标已读。现改为保留当前选中报告，不触发新报告的阅读请求；本地浏览器观察到旧报告仍打开、新报告卡片显示「未读 1 份」、来源选项和总未读同步增加。
+- 本地验收：`make test`、`go test -race ./...`、`go vet ./...`、`make build` 和 `git diff --check` 均通过；Vitest 15/15。隔离容器健康检查及 API 计数联动通过。上述浏览器和容器均使用本地临时数据，未连接生产服务。
+- 初版 master（尚未包含上述 SSE 边界修复）GitHub CI run [38105934042](https://github.com/Nyakooo/grok-bot-dock/actions/runs/38105934042) 的 validate/publish 均通过，匿名方式拉取 GHCR `master` 成功，OCI index digest 为 `sha256:8d96aab43aa64174f62e54f9a7d1c81aedb66a1d97a4f09926ada2443cacc1fe`；arm64 隔离容器完成 health 和读/未读 API 联测。最终合并版本的 CI、镜像 digest 与拉取验收待本次修复合并后补录。
