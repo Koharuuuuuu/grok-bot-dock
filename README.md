@@ -25,6 +25,7 @@
 ## 能力
 
 - Bot 首次推送后自动出现响应式卡片；按来源筛选卡片和搜索结果，并展示 Bot/报告总量及动态未读数。打开报告后相应未读数清零，新报告到达后重新增加。
+- 移动端顶栏按主要筛选/主题与次级操作分组；报告可创建 1 小时至 7 天的匿名限时分享，并可随时撤销。
 - 全局搜索支持中文；历史报告提供日期过滤、游标分页及 Markdown 阅读。
 - Markdown 支持表格、代码、引用、链接和图片；原始 HTML 禁用，渲染结果由 DOMPurify 消毒。
 - SSE 实时更新；用户主动允许后可显示浏览器通知。
@@ -81,6 +82,10 @@ curl -X POST "https://YOUR_DOMAIN/api/v1/reports" \
 | `PATCH /api/v1/bots?source=&bot_id=` | 浏览器会话修改或清除 Bot 展示名称（`display_name`）；Bearer-only 推送客户端不可调用 |
 | `GET /api/v1/reports?source=&bot_id=&date=&cursor=` | 报告列表和历史分页 |
 | `GET /api/v1/reports/{id}` | 单份报告 |
+| `POST /api/v1/reports/{id}/shares` | 创建单报告分享（仅所有者浏览器会话；`{"ttl_unit":"hour"|"day","ttl_value":1..168|1..7}`） |
+| `GET /api/v1/reports/{id}/shares` | 列出该报告分享元数据，不返回令牌（仅所有者浏览器会话） |
+| `DELETE /api/v1/reports/{id}/shares/{share_id}` | 撤销分享，后续访问立即失效（仅所有者浏览器会话） |
+| `GET /api/v1/public/shares/{token}` | 匿名读取单条报告的白名单字段；无效/到期/撤销/已删除报告统一返回 404 |
 | `DELETE /api/v1/reports/{id}` | 永久删除单份报告并更新 FTS 搜索索引 |
 | `DELETE /api/v1/bots?source=&bot_id=` | 删除 Bot 及其全部报告；来源下已无其他 Bot 时同步移除来源 |
 | `GET /api/v1/search?q=&source=&bot_id=&from=&to=&cursor=` | 全文检索及筛选 |
@@ -89,6 +94,29 @@ curl -X POST "https://YOUR_DOMAIN/api/v1/reports" \
 工作台的报告列表、搜索结果和阅读面板均可删除单份报告；Bot 卡片可重命名或删除整个 Bot。展示名称存储在 SQLite `display_name` 中，与上报的 `bot_name` 和稳定 `(source, bot_id)` 分离；新报告不会覆盖自定义名称，清除展示名称可恢复使用上报名称。界面在执行永久删除前显示确认。删除 Bot 会连同其所有报告一起删除，不能恢复；删除最后一个关联 Bot 后，该来源也会从来源筛选中移除。删除后的卡片、统计、历史和搜索结果会刷新，其他打开的工作台通过 SSE 同步。
 
 默认页面将数据库容量标为“全库”，即使其他统计按来源筛选也不会把物理数据库大小伪装成来源大小。
+
+## 报告限时分享
+
+在报告详情中选择「分享」，有效期可选小时（1–168）或天（1–7），默认 1 天。每条报告最多有 20 个有效链接。创建时显示完整链接并可复制；关闭弹窗后不会再次显示原始链接。分享管理只接受网页登录后的所有者会话，不接受 `ACCESS_TOKEN` Bearer 或 OAuth MCP Token。
+
+持有链接的人在到期前无需登录即可阅读这一份报告。链接使用 32 字节随机令牌，SQLite 只存 SHA-256 摘要；每次访问都会检查到期、撤销和报告是否仍存在。撤销或删除原报告后立即拒绝访问。过期/撤销记录由服务启动时及每小时分批清理；清理不是链接失效的条件。分享页不提供工作台、搜索、Bot 或管理 API，设置 `no-store`、`no-referrer`、`noindex`，且分享正文中的远程 Markdown 图片不会加载。
+
+分享功能按“持有链接即可阅读”处理。发送前检查报告是否包含敏感内容；已被访客读取、截图或另行保存的内容无法远程销毁。原始分享链接属于凭据，不要放入日志、工单或公开页面。应用会脱敏 `/share/<token>` 和公开分享 API 的日志路径；如果启用了 Nginx/Caddy 访问日志，也必须排除完整 URI 或对 token 路径脱敏。Nginx 可单独关闭这两类路径的 access log：
+
+```nginx
+location ^~ /share/ {
+    access_log off;
+    proxy_pass http://127.0.0.1:18765;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+location ^~ /api/v1/public/shares/ {
+    access_log off;
+    proxy_pass http://127.0.0.1:18765;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
 
 ## 一键复制 AI 推送指令
 
@@ -224,7 +252,7 @@ reports.example.com {
 }
 ```
 
-Bolt Dock 自身仍要求 Bearer Token；可在现有反向代理再加一层访问认证。推送、网页阅读和 SSE 都走同源 HTTPS。排查时先运行 `docker compose ps` 和 `docker compose logs --tail=100 bolt-dock`：健康检查失败时核对 `ACCESS_TOKEN` 与端口；API 401 表示网页或推送方的 Token 不匹配；来源列表为空表示还没有成功推送；不要通过 `docker compose down -v` 排查数据库问题，以免删除持久卷。
+Bolt Dock 自身仍保护管理 API；可在现有反向代理再加一层访问认证。推送、工作台和 SSE 都走同源 HTTPS。分享页面与匿名读取 API 不要求登录，因此反代访问日志不得记录分享 token。排查时先运行 `docker compose ps` 和 `docker compose logs --tail=100 bolt-dock`：健康检查失败时核对 `ACCESS_TOKEN` 与端口；API 401 表示网页或推送方的 Token 不匹配；来源列表为空表示还没有成功推送；不要通过 `docker compose down -v` 排查数据库问题，以免删除持久卷。
 
 MCP 反向代理须保留 `/mcp` 下的 POST、GET、DELETE 和 MCP 请求头；不要缓冲或改写 `text/event-stream` 响应。Caddy 的 `reverse_proxy` 默认支持流式响应。若使用 Nginx，需为 `/mcp` 关闭代理缓冲并延长读取超时，例如：
 

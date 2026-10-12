@@ -171,6 +171,36 @@ html{scrollbar-gutter:stable}
   .reader-toolbar{padding-top:7px;padding-bottom:7px}
   .reader-tools{flex:1 1 360px}
 }
+
+/* P9 mobile toolbar hierarchy: keep filtering and appearance together, move
+   low-frequency integration/stat controls onto a separate compact row. */
+@media(max-width:540px){
+  .topbar{grid-template-columns:minmax(0,1fr);gap:9px;padding:10px 12px}
+  .wordmark{grid-column:1;grid-row:1;min-width:0}
+  .search-box{grid-column:1;grid-row:2;width:100%;min-width:0}
+  .top-actions{display:contents}
+  .top-primary-controls{grid-column:1;grid-row:3;display:flex;align-items:center;gap:8px;min-width:0;width:100%}
+  .source-select-wrap{flex:1;min-width:0;max-width:none}
+  .source-select-wrap select{width:100%;min-width:0;min-height:44px;padding:9px 28px 9px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .select-caret{right:10px;top:10px}
+  .theme-trigger{width:44px;height:44px;flex:none}
+  .top-secondary-controls{grid-column:1;grid-row:4;display:flex;align-items:center;justify-content:flex-end;gap:6px;min-width:0;width:100%}
+  .top-secondary-controls .copy-prompt-button,.top-secondary-controls .mcp-access-button{display:grid;place-items:center;width:44px;height:44px;flex:none;padding:0;font-size:0}
+  .top-secondary-controls .copy-prompt-button span,.top-secondary-controls .mcp-access-button>span:first-child{font-size:17px}
+  .top-secondary-controls .mcp-access-label{display:none}
+  .top-secondary-controls .stat{min-width:30px;height:44px;justify-content:center}
+  .top-secondary-controls .stat-label{display:none}
+  .top-secondary-controls .icon-button{width:44px;height:44px;flex:none}
+  .top-divider{height:24px}
+  .source-pill{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .card-topline>.source-pill{min-width:0;flex:0 1 auto}
+  .card-topline>.unread-pill,.card-topline>.report-number{flex:none;white-space:nowrap}
+}
+@media(max-width:360px){
+  .topbar{padding:9px 10px;gap:8px}
+  .top-primary-controls{gap:7px}
+  .top-secondary-controls{gap:5px}
+}
 @media(max-width:540px){
   .reader-toolbar{min-height:52px;height:52px;padding:0 8px;flex-wrap:nowrap;gap:6px}
   .reader-tools{flex:0 0 auto;max-width:none;flex-wrap:nowrap;gap:3px}

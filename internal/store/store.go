@@ -144,7 +144,10 @@ INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(1,datetime('n
 	if err != nil {
 		return err
 	}
-	return s.migrateOAuth(ctx)
+	if err := s.migrateOAuth(ctx); err != nil {
+		return err
+	}
+	return s.migrateShares(ctx)
 }
 
 func (s *Store) CreateReport(ctx context.Context, in ReportInput) (Report, bool, error) {

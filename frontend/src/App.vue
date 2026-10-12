@@ -91,10 +91,38 @@ let streamAbort
 let refreshTimer
 let authChannel
 let copyFeedbackTimer
+const isPublicShare = window.location.pathname.startsWith('/share/')
+const publicShareToken = isPublicShare ? window.location.pathname.slice('/share/'.length) : ''
+const publicShareLoading = ref(isPublicShare)
+const publicShareReport = ref(null)
+const publicShareUnavailable = ref(false)
+const shareDialogOpen = ref(false)
+const shareDialog = ref(null)
+const shareBusy = ref(false)
+const shareError = ref('')
+const shareTTLUnit = ref('day')
+const shareTTLValue = ref(1)
+const createdSharePath = ref('')
+const reportShares = ref([])
+const shareFallback = ref(false)
+const shareFallbackText = ref('')
+let shareExpiryTimer
 
 
 const renderedMarkdown = computed(() => selectedReport.value
   ? renderSanitizedMarkdown(selectedReport.value.content || '') : '')
+const renderedPublicMarkdown = computed(() => publicShareReport.value
+  ? renderSanitizedMarkdown(publicShareReport.value.content || '', undefined, { allowImages: false }) : '')
+const shareExpiryPreview = computed(() => {
+  const hours = Number(shareTTLValue.value) * (shareTTLUnit.value === 'day' ? 24 : 1)
+  if (!Number.isInteger(hours) || hours < 1 || hours > 168) return '有效期须为 1 小时至 7 天'
+  return formatShareDate(Date.now() + hours * 60 * 60 * 1000)
+})
+const shareTTLValid = computed(() => {
+  const value = Number(shareTTLValue.value)
+  return Number.isInteger(value) && value >= 1 && value <= (shareTTLUnit.value === 'day' ? 7 : 168)
+})
+const createdShareURL = computed(() => createdSharePath.value ? new URL(createdSharePath.value, window.location.origin).href : '')
 const visibleBots = computed(() => [...bots.value].sort((a, b) => {
   const aUnread = Number(a.unread_count || 0) > 0
   const bUnread = Number(b.unread_count || 0) > 0
@@ -158,6 +186,7 @@ async function api(url, options = {}) {
     try { message = (await response.json()).error?.message || message } catch {}
     throw new Error(message)
   }
+  if (response.status === 204) return null
   return response.json()
 }
 
@@ -255,6 +284,9 @@ function toggleImmersive() {
 }
 function adjustReaderFont(delta) { readerFontSize.value = Math.min(24, Math.max(13, readerFontSize.value + delta)) }
 function effectiveBotName(bot) { return bot.display_name || bot.bot_name || bot.bot_id }
+function formatShareDate(value) {
+  return new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' }).format(new Date(value))
+}
 function startRename(bot) {
   renameTarget.value = bot
   renameValue.value = effectiveBotName(bot)
@@ -359,6 +391,109 @@ function openSearchResult(report) {
   openBot(bot).then(() => selectReport(reports.value.find(item => item.id === report.id) || report))
 }
 function clearSearch() { query.value = ''; searchFrom.value = ''; searchTo.value = ''; searching.value = false; searchResults.value = []; loadData() }
+async function openShareDialog() {
+  if (!selectedReport.value) return
+  shareDialogOpen.value = true
+  shareBusy.value = false
+  shareError.value = ''
+  createdSharePath.value = ''
+  shareFallback.value = false
+  shareTTLUnit.value = 'day'
+  shareTTLValue.value = 1
+  await loadReportShares()
+}
+async function loadReportShares() {
+  if (!selectedReport.value) return
+  shareError.value = ''
+  try {
+    const result = await api(`/api/v1/reports/${selectedReport.value.id}/shares`)
+    reportShares.value = result.items || []
+  } catch (e) { shareError.value = e.message }
+}
+async function createShare() {
+  const value = Number(shareTTLValue.value)
+  const max = shareTTLUnit.value === 'day' ? 7 : 168
+  if (!Number.isInteger(value) || value < 1 || value > max || !selectedReport.value) {
+    shareError.value = '有效期须为 1 小时至 7 天。'
+    return
+  }
+  shareBusy.value = true
+  shareError.value = ''
+  try {
+    const result = await api(`/api/v1/reports/${selectedReport.value.id}/shares`, {
+      method: 'POST', body: JSON.stringify({ ttl_unit: shareTTLUnit.value, ttl_value: value }),
+    })
+    createdSharePath.value = result.share_path
+    await loadReportShares()
+    showCopyFeedback('分享链接已创建；拥有此链接的人可在有效期内匿名阅读这份报告。')
+  } catch (e) { shareError.value = e.message }
+  finally { shareBusy.value = false }
+}
+async function copyShareLink() {
+  const value = createdSharePath.value ? new URL(createdSharePath.value, window.location.origin).href : ''
+  if (!value) return
+  shareFallbackText.value = value
+  try {
+    await navigator.clipboard.writeText(value)
+    showCopyFeedback('分享链接已复制。')
+  } catch {
+    shareFallbackText.value = value
+    shareFallback.value = true
+    showCopyFeedback('浏览器未允许剪贴板访问，链接已选中，请手动复制。', 'warning')
+    await nextTick()
+    const input = document.querySelector('.share-copy-fallback')
+    input?.focus(); input?.select()
+  }
+}
+async function revokeShare(share) {
+  shareError.value = ''
+  try {
+    await api(`/api/v1/reports/${selectedReport.value.id}/shares/${share.share_id}`, { method: 'DELETE' })
+    await loadReportShares()
+    showCopyFeedback('分享链接已撤销，后续访问会立即失效。')
+  } catch (e) { shareError.value = e.message }
+}
+function trapShareFocus(event) {
+  if (event.key !== 'Tab' || !shareDialog.value) return
+  const focusable = [...shareDialog.value.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)')]
+    .filter(element => element.getClientRects().length > 0)
+  if (!focusable.length) { event.preventDefault(); shareDialog.value.focus(); return }
+  const first = focusable[0], last = focusable.at(-1)
+  if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+}
+async function loadPublicShare() {
+  clearTimeout(shareExpiryTimer)
+  publicShareLoading.value = true
+  publicShareUnavailable.value = false
+  try {
+    if (!/^[A-Za-z0-9_-]{43}$/.test(publicShareToken)) throw new Error('unavailable')
+    const response = await fetch(`/api/v1/public/shares/${encodeURIComponent(publicShareToken)}`, { credentials: 'omit', cache: 'no-store' })
+    if (!response.ok) throw new Error('unavailable')
+    publicShareReport.value = await response.json()
+    const delay = Date.parse(publicShareReport.value.expires_at) - Date.now()
+    if (delay > 0) shareExpiryTimer = setTimeout(() => { publicShareReport.value = null; publicShareUnavailable.value = true }, delay)
+  } catch {
+    publicShareReport.value = null
+    publicShareUnavailable.value = true
+  } finally { publicShareLoading.value = false }
+}
+function onShareVisibilityChange() {
+  if (isPublicShare && document.visibilityState === 'visible') loadPublicShare()
+}
+async function copyPublicShareUrl() {
+  shareFallbackText.value = window.location.href
+  try {
+    await navigator.clipboard.writeText(shareFallbackText.value)
+    showCopyFeedback('分享链接已复制。')
+  } catch {
+    shareFallback.value = true
+    showCopyFeedback('浏览器未允许剪贴板访问，链接已选中，请手动复制。', 'warning')
+    await nextTick()
+    const input = document.querySelector('.share-copy-fallback-text')
+    input?.focus(); input?.select()
+  }
+}
 function clearCopyFeedback() {
   clearTimeout(copyFeedbackTimer)
   copyFeedback.value = null
@@ -581,6 +716,7 @@ function onKey(event) {
   else if (renameTarget.value) renameTarget.value = null
   else if (mcpConfigOpen.value) mcpConfigOpen.value = false
   else if (promptOpen.value) promptOpen.value = false
+  else if (shareDialogOpen.value) shareDialogOpen.value = false
   else if (selected.value) closeReader()
 }
 
@@ -596,9 +732,9 @@ watch(effectiveTheme, theme => {
   document.documentElement.style.colorScheme = theme
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#151a17' : '#f2f2ed')
 }, { immediate: true })
-watch([selected, promptOpen, mcpConfigOpen, renameTarget, pendingDeletion], async ([hasReader, hasPrompt, hasMCPConfig, hasRename, hasDelete], [hadReader, hadPrompt, hadMCPConfig, hadRename, hadDelete]) => {
-  const shouldLock = Boolean(hasReader || hasPrompt || hasMCPConfig || hasRename || hasDelete)
-  const wasLocked = Boolean(hadReader || hadPrompt || hadMCPConfig || hadRename || hadDelete)
+watch([selected, promptOpen, mcpConfigOpen, renameTarget, pendingDeletion, shareDialogOpen], async ([hasReader, hasPrompt, hasMCPConfig, hasRename, hasDelete, hasShare], [hadReader, hadPrompt, hadMCPConfig, hadRename, hadDelete, hadShare]) => {
+  const shouldLock = Boolean(hasReader || hasPrompt || hasMCPConfig || hasRename || hasDelete || hasShare)
+  const wasLocked = Boolean(hadReader || hadPrompt || hadMCPConfig || hadRename || hadDelete || hadShare)
   if (shouldLock && !wasLocked) {
     previousFocus = document.activeElement
     lockedScrollY = window.scrollY
@@ -626,6 +762,10 @@ watch([selected, promptOpen, mcpConfigOpen, renameTarget, pendingDeletion], asyn
     await nextTick()
     deleteConfirmationDialog.value?.querySelector('button:not(:disabled)')?.focus({ preventScroll: true })
   }
+  if (hasShare && !hadShare) {
+    await nextTick()
+    shareDialog.value?.querySelector('button:not(:disabled), input:not(:disabled), select:not(:disabled)')?.focus({ preventScroll: true })
+  }
 })
 function updateNarrowReader() { narrowReader.value = window.matchMedia('(max-width: 800px)').matches }
 function updateSystemTheme(event) { systemPrefersDark.value = event.matches }
@@ -634,6 +774,11 @@ onMounted(async () => {
   window.addEventListener('click', closeActionMenusOnOutsideClick)
   window.addEventListener('resize', updateNarrowReader)
   systemThemeQuery.addEventListener('change', updateSystemTheme)
+  if (isPublicShare) {
+    document.addEventListener('visibilitychange', onShareVisibilityChange)
+    await loadPublicShare()
+    return
+  }
   if ('BroadcastChannel' in window) {
     authChannel = new BroadcastChannel('bolt-dock-auth')
     authChannel.onmessage = event => { if (event.data?.type === 'logout') expireSession(false) }
@@ -648,7 +793,7 @@ onMounted(async () => {
   } catch {}
   authReady.value = true
 })
-onUnmounted(() => { window.removeEventListener('keydown', onKey); window.removeEventListener('click', closeActionMenusOnOutsideClick); window.removeEventListener('resize', updateNarrowReader); systemThemeQuery.removeEventListener('change', updateSystemTheme); authChannel?.close(); streamAbort?.abort(); clearTimeout(refreshTimer); clearTimeout(copyFeedbackTimer); document.body.style.overflow = previousBodyOverflow; document.body.style.paddingRight = previousBodyPaddingRight })
+onUnmounted(() => { window.removeEventListener('keydown', onKey); window.removeEventListener('click', closeActionMenusOnOutsideClick); window.removeEventListener('resize', updateNarrowReader); document.removeEventListener('visibilitychange', onShareVisibilityChange); systemThemeQuery.removeEventListener('change', updateSystemTheme); authChannel?.close(); streamAbort?.abort(); clearTimeout(refreshTimer); clearTimeout(copyFeedbackTimer); clearTimeout(shareExpiryTimer); document.body.style.overflow = previousBodyOverflow; document.body.style.paddingRight = previousBodyPaddingRight })
 
 function trapReaderFocus(event) {
   const focusable = [...readerDialog.value.querySelectorAll('a[href], button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])')]
@@ -660,7 +805,22 @@ function trapReaderFocus(event) {
 </script>
 
 <template>
-  <main v-if="!authReady" class="gate" aria-live="polite"><div class="gate-card"><div class="brand-mark"><img src="/brand/bolt-dock.svg" alt=""></div><p class="eyebrow">PERSONAL REPORT SPACE</p><h1>正在连接 <em>Bolt Dock</em></h1><p class="gate-copy">正在恢复安全会话…</p></div></main>
+  <main v-if="isPublicShare" class="share-page">
+    <div v-if="copyFeedback" class="copy-feedback-toast" :class="`copy-feedback-toast--${copyFeedback.kind}`" role="status" aria-live="polite">{{ copyFeedback.message }}</div>
+    <header class="share-header"><span class="wordmark" aria-label="Bolt Dock"><span class="brand-mark small"><img src="/brand/bolt-dock.svg" alt=""></span><span>Bolt <b>Dock</b></span></span><span>报告分享</span></header>
+    <div v-if="publicShareLoading" class="share-state" role="status">正在打开分享内容…</div>
+    <div v-else-if="publicShareUnavailable || !publicShareReport" class="share-state" role="status"><span class="share-state-mark">↗</span><h1>分享链接已过期或不可用</h1><p>链接可能已到期、被撤销，或对应报告已删除。</p></div>
+    <article v-else class="share-document">
+      <div class="share-report-meta"><span class="source-pill">{{ publicShareReport.source }}</span><span>{{ publicShareReport.bot_name }}</span><time>{{ formatShareDate(publicShareReport.executed_at) }}</time></div>
+      <h1>{{ publicShareReport.title || '运行报告' }}</h1>
+      <p v-if="publicShareReport.summary" class="document-summary">{{ publicShareReport.summary }}</p>
+      <div v-if="publicShareReport.tags?.length" class="tag-row"><span v-for="tag in publicShareReport.tags" :key="tag"># {{ tag }}</span></div>
+      <hr><div class="markdown-body" v-html="renderedPublicMarkdown"></div>
+      <footer class="share-document-footer"><span>此链接有效期至 {{ formatShareDate(publicShareReport.expires_at) }}</span><button class="secondary-button" @click="copyPublicShareUrl">复制分享链接</button></footer>
+    </article>
+    <footer class="share-page-footer">Bolt Dock · 持有链接者可在有效期内阅读此报告</footer>
+  </main>
+  <main v-else-if="!authReady" class="gate" aria-live="polite"><div class="gate-card"><div class="brand-mark"><img src="/brand/bolt-dock.svg" alt=""></div><p class="eyebrow">PERSONAL REPORT SPACE</p><h1>正在连接 <em>Bolt Dock</em></h1><p class="gate-copy">正在恢复安全会话…</p></div></main>
   <main v-else-if="!isLoggedIn" class="gate">
     <div class="gate-card">
       <div class="brand-mark"><img src="/brand/bolt-dock.svg" alt="Bolt Dock"></div>
@@ -691,8 +851,9 @@ function trapReaderFocus(event) {
         <button v-else class="clear-search" type="button" aria-label="清除搜索" @click="clearSearch">×</button>
       </form>
       <div class="top-actions">
+        <div class="top-primary-controls">
         <label class="source-select-wrap"><span class="sr-only">选择来源</span>
-          <select v-model="source" aria-label="按来源筛选未读报告"><option value="">全部来源 · {{ totalUnreadCount }} 未读</option><option v-for="item in filteredSources" :key="item.source" :value="item.source">{{ item.source }} · {{ item.unread_count }} 未读</option></select><span class="select-caret">⌄</span>
+          <select v-model="source" :title="source || `全部来源 · ${totalUnreadCount} 未读`" aria-label="按来源筛选未读报告"><option value="">全部来源 · {{ totalUnreadCount }} 未读</option><option v-for="item in filteredSources" :key="item.source" :value="item.source">{{ item.source }} · {{ item.unread_count }} 未读</option></select><span class="select-caret">⌄</span>
         </label>
         <div class="theme-control" @click.stop>
           <button id="theme-trigger" class="icon-button theme-trigger" type="button" :aria-label="`外观：${themeMode === 'system' ? '跟随系统' : themeMode === 'dark' ? '深色' : '浅色'}`" :aria-expanded="themeMenuOpen" aria-controls="theme-menu" title="外观设置" @click="themeMenuOpen = !themeMenuOpen">{{ themeIcon }}</button>
@@ -703,6 +864,8 @@ function trapReaderFocus(event) {
             <p class="theme-description">{{ themeDescription }}</p>
           </div>
         </div>
+        </div>
+        <div class="top-secondary-controls">
         <button class="copy-prompt-button" aria-label="打开 REST API 推送指令" title="REST API 推送指令" @click="openPrompt"><span>＋</span> REST 推送</button>
         <button class="mcp-access-button" aria-label="打开 MCP 接入" title="MCP 接入" @click="openMCPAccess"><span>⌁</span><span class="mcp-access-label">MCP 接入</span></button>
         <div class="top-divider"></div>
@@ -711,6 +874,7 @@ function trapReaderFocus(event) {
         <div class="stat database-stat"><span class="stat-value">{{ formatBytes(stats.database_bytes) }}</span><span class="stat-label">全库</span></div>
         <button class="icon-button notify-button" title="启用桌面通知" aria-label="启用桌面通知" @click="enableNotifications">◉</button>
         <button class="icon-button logout-button" title="退出登录" aria-label="退出登录" @click="logout">↗</button>
+        </div>
       </div>
     </header>
 
@@ -727,7 +891,7 @@ function trapReaderFocus(event) {
         <div v-if="searching" class="result-grid">
           <div v-for="item in searchResults" :key="item.id" class="result-row">
             <button class="result-card" @click="openSearchResult(item)">
-              <div class="result-top"><span class="source-pill">{{ item.source }}</span><span>{{ formatDate(item.executed_at) }}</span></div>
+              <div class="result-top"><span class="source-pill" :title="item.source">{{ item.source }}</span><span>{{ formatDate(item.executed_at) }}</span></div>
               <h2><template v-for="(part, index) in highlightParts(item.title || item.display_name || item.bot_name, query)" :key="index"><mark v-if="part.match">{{ part.text }}</mark><span v-else>{{ part.text }}</span></template></h2>
               <p><template v-for="(part, index) in highlightParts(searchSnippet(item, query), query)" :key="index"><mark v-if="part.match">{{ part.text }}</mark><span v-else>{{ part.text }}</span></template></p>
               <div class="result-foot"><span>{{ item.display_name || item.bot_name }}</span><span>打开报告 ↗</span></div>
@@ -744,7 +908,7 @@ function trapReaderFocus(event) {
         <div v-else class="bot-grid">
           <div v-for="bot in visibleBots" :key="`${bot.source}:${bot.bot_id}`" class="bot-card-shell">
             <button class="bot-card" :class="{ selected: selected?.source === bot.source && selected?.bot_id === bot.bot_id }" @click="openBot(bot)">
-              <div class="card-topline"><span class="source-pill">{{ bot.source }}</span><span v-if="bot.unread_count" class="unread-pill"><i></i> 未读 {{ bot.unread_count }} 份</span><span v-else class="report-number">{{ bot.report_count }} 份报告</span></div>
+              <div class="card-topline"><span class="source-pill" :title="bot.source">{{ bot.source }}</span><span v-if="bot.unread_count" class="unread-pill"><i></i> 未读 {{ bot.unread_count }} 份</span><span v-else class="report-number">{{ bot.report_count }} 份报告</span></div>
               <div class="bot-identity"><div class="avatar-wrap"><img v-if="bot.avatar_url" :src="bot.avatar_url" alt="" @error="avatarFailed"><span class="avatar-fallback" :class="{ hidden: bot.avatar_url }">✳</span></div><div class="bot-titles"><h2>{{ effectiveBotName(bot) }}</h2><p>{{ bot.bot_id }}</p></div><span class="card-arrow">↗</span></div>
               <div class="card-preview"><span class="preview-label">LATEST REPORT</span><strong>{{ bot.latest_report?.title || '暂无报告' }}</strong><p>{{ bot.latest_report?.summary || '新报告将显示在这里。' }}</p></div>
               <div class="card-footer"><span><i class="time-icon">◷</i> {{ formatDate(bot.last_report_at) }}</span><span class="view-link">浏览报告 <b>→</b></span></div>
@@ -777,7 +941,7 @@ function trapReaderFocus(event) {
           <article v-if="selectedReport" class="report-document" :style="{ '--reader-font-size': `${readerFontSize}px` }">
             <div class="document-meta"><span class="source-pill">{{ selectedReport.source }}</span><span>{{ selectedReport.display_name || selectedReport.bot_name }}</span><span>·</span><time>{{ formatDate(selectedReport.executed_at) }}</time></div>
             <div v-if="selectedReport.tags?.length" class="tag-row"><span v-for="tag in selectedReport.tags" :key="tag"># {{ tag }}</span></div>
-            <div class="document-heading"><h1>{{ selectedReport.title || '运行报告' }}</h1><details class="card-actions-menu document-actions-menu" @toggle="closeOtherActionMenus"><summary aria-label="报告操作" title="报告操作">⋯</summary><div class="card-action-menu-items"><button @click="closeActionMenu($event); deleteReport(selectedReport)">删除报告…</button></div></details></div>
+            <div class="document-heading"><h1>{{ selectedReport.title || '运行报告' }}</h1><button class="share-report-button" @click="openShareDialog">分享</button><details class="card-actions-menu document-actions-menu" @toggle="closeOtherActionMenus"><summary aria-label="报告操作" title="报告操作">⋯</summary><div class="card-action-menu-items"><button @click="closeActionMenu($event); deleteReport(selectedReport)">删除报告…</button></div></details></div>
             <p v-if="selectedReport.summary" class="document-summary">{{ selectedReport.summary }}</p>
             <hr><div class="markdown-body" v-html="renderedMarkdown"></div>
             <footer class="document-end"><span></span> 报告正文结束 <span></span></footer>
@@ -926,6 +1090,22 @@ function trapReaderFocus(event) {
           此操作无法撤销。
         </p>
         <footer class="confirm-actions"><button class="secondary-button" :disabled="Boolean(deleting)" @click="pendingDeletion = null">取消</button><button class="danger-confirm-button" :disabled="Boolean(deleting)" @click="confirmDeletion">{{ deleting ? '删除中…' : '永久删除' }}</button></footer>
+      </section>
+    </div>
+      <div v-if="shareDialogOpen" class="modal-scrim" @click.self="shareDialogOpen = false">
+      <section ref="shareDialog" class="share-modal" role="dialog" aria-modal="true" aria-labelledby="share-title" tabindex="-1" @keydown="trapShareFocus">
+        <header class="modal-heading"><div><p class="eyebrow">EXPIRING REPORT LINK</p><h2 id="share-title">分享这份报告</h2></div><button class="icon-button" aria-label="关闭" @click="shareDialogOpen = false">×</button></header>
+        <p class="modal-intro">拥有链接的人无需登录即可阅读此报告。请确认报告内容适合公开分享；链接到期或撤销后将立即失效。</p>
+        <div v-if="!createdSharePath" class="share-create-row">
+          <label>有效期单位<select v-model="shareTTLUnit"><option value="day">天</option><option value="hour">小时</option></select></label>
+          <label>有效期<input v-model.number="shareTTLValue" type="number" min="1" :max="shareTTLUnit === 'day' ? 7 : 168" inputmode="numeric"></label>
+          <span class="share-expiry-preview">到期时间（本地时区）：{{ shareExpiryPreview }}</span>
+          <button class="primary-button" :disabled="shareBusy || !shareTTLValid" @click="createShare">{{ shareBusy ? '创建中…' : '创建分享链接' }} <span>↗</span></button>
+        </div>
+        <div v-else class="share-created-box"><label>本次生成的链接（关闭后无法再次查看）<input class="share-copy-fallback" readonly :value="createdShareURL"></label><button class="primary-button" @click="copyShareLink">复制分享链接 <span>⧉</span></button></div>
+        <textarea v-if="shareFallback" class="share-copy-fallback-text" readonly :value="shareFallbackText" aria-label="手动复制分享链接"></textarea>
+        <p v-if="shareError" class="form-error" role="alert">{{ shareError }}</p>
+        <section class="share-list"><h3>此报告的链接</h3><p v-if="!reportShares.length" class="share-list-empty">还没有创建过分享链接。</p><ul v-else><li v-for="share in reportShares" :key="share.share_id"><div><strong>{{ share.status === 'active' ? '有效' : share.status === 'expired' ? '已过期' : '已撤销' }}</strong><span>到期：{{ formatShareDate(share.expires_at) }}</span></div><button v-if="share.status === 'active'" class="text-button" @click="revokeShare(share)">撤销</button></li></ul></section>
       </section>
     </div>
   </div>

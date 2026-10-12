@@ -29,23 +29,24 @@ import (
 )
 
 type Server struct {
-	store     *store.Store
-	hub       *events.Hub
-	token     string
-	maxBytes  int64
-	static    embed.FS
-	rateMu    sync.Mutex
-	rate      map[string]rateWindow
-	sessionMu sync.Mutex
-	sessions  map[string]time.Time
-	streams   map[string]map[chan struct{}]struct{}
-	oauth     OAuthConfig
-	consentMu sync.Mutex
-	consents  map[string]pendingConsent
-	cimdMu    sync.Mutex
-	cimdCache map[string]cimdCacheEntry
-	cimdFetch chan struct{}
-	fetchCIMD func(context.Context, string) (cimdDocument, time.Duration, error)
+	store            *store.Store
+	hub              *events.Hub
+	token            string
+	maxBytes         int64
+	static           embed.FS
+	rateMu           sync.Mutex
+	rate             map[string]rateWindow
+	sessionMu        sync.Mutex
+	sessions         map[string]time.Time
+	streams          map[string]map[chan struct{}]struct{}
+	oauth            OAuthConfig
+	consentMu        sync.Mutex
+	consents         map[string]pendingConsent
+	cimdMu           sync.Mutex
+	cimdCache        map[string]cimdCacheEntry
+	cimdFetch        chan struct{}
+	fetchCIMD        func(context.Context, string) (cimdDocument, time.Duration, error)
+	shareCleanupOnce sync.Once
 }
 
 const (
@@ -67,10 +68,29 @@ func NewWithOAuth(s *store.Store, h *events.Hub, token string, maxBytes int64, s
 	return &Server{store: s, hub: h, token: token, maxBytes: maxBytes, static: static, rate: make(map[string]rateWindow), sessions: make(map[string]time.Time), streams: make(map[string]map[chan struct{}]struct{}), oauth: oauth, consents: make(map[string]pendingConsent), cimdCache: make(map[string]cimdCacheEntry), cimdFetch: make(chan struct{}, 8), fetchCIMD: fetchCIMDMetadata}
 }
 func (s *Server) Handler() http.Handler {
+	s.shareCleanupOnce.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if _, err := s.store.CleanupReportShares(ctx, time.Now().UTC(), 200); err != nil {
+			log.Printf("report share startup cleanup failed: %v", err)
+		}
+		cancel()
+		go func() {
+			ticker := time.NewTicker(time.Hour)
+			defer ticker.Stop()
+			for range ticker.C {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				if _, err := s.store.CleanupReportShares(ctx, time.Now().UTC(), 200); err != nil {
+					log.Printf("report share scheduled cleanup failed: %v", err)
+				}
+				cancel()
+			}
+		}()
+	})
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
 	mux.HandleFunc("POST /api/v1/auth/login", s.login)
 	mux.HandleFunc("GET /api/v1/auth/session", s.sessionStatus)
+	mux.HandleFunc("GET /api/v1/public/shares/", s.publicShare)
 	mux.Handle("/api/", s.auth(http.HandlerFunc(s.api)))
 	mux.Handle("/mcp", s.newMCPHandler())
 	if s.oauth.Enabled {
@@ -291,6 +311,8 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		})
 	case strings.HasPrefix(r.URL.Path, "/api/v1/oauth/"):
 		s.ownerOAuthAPI(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/v1/reports/") && strings.Contains(r.URL.Path, "/shares"):
+		s.manageReportShares(w, r)
 	case r.Method == "POST" && r.URL.Path == "/api/v1/reports":
 		s.createReport(w, r)
 	case r.Method == "GET" && r.URL.Path == "/api/v1/reports":
@@ -758,6 +780,9 @@ func (s *Server) sse(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/share/") {
+		setShareResponseHeaders(w)
+	}
 	name := path.Clean(strings.TrimPrefix(r.URL.Path, "/"))
 	if name == "." || name == "" {
 		name = "index.html"
@@ -780,7 +805,13 @@ func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		next.ServeHTTP(w, r)
-		log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start).Round(time.Millisecond))
+		requestPath := r.URL.Path
+		if strings.HasPrefix(requestPath, "/share/") {
+			requestPath = "/share/[REDACTED]"
+		} else if strings.HasPrefix(requestPath, "/api/v1/public/shares/") {
+			requestPath = "/api/v1/public/shares/[REDACTED]"
+		}
+		log.Printf("%s %s %s", r.Method, requestPath, time.Since(start).Round(time.Millisecond))
 	})
 }
 func firstHeading(s string) string {

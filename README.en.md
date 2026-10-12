@@ -12,6 +12,7 @@ Bolt Dock collects, searches, and displays completed reports from AI agents. Age
 ## Features
 
 - Automatically groups reports by source and bot, with a responsive dashboard, history, filters, and full-text search (including Chinese). Cards and source filters show live unread counts: opening a report clears its unread count, and new reports increase it again.
+- Mobile controls are grouped by priority; individual reports can be shared anonymously for 1 hour to 7 days, with immediate revocation.
 - Renders Markdown with raw HTML disabled and sanitized output.
 - Streams updates to open dashboards with Server-Sent Events (SSE).
 - Stores data in SQLite with WAL and FTS5 search.
@@ -66,6 +67,16 @@ curl -X POST "https://YOUR_DOMAIN/api/v1/reports" \
 ```
 
 Only publish completed, reviewed reports. Do not put the access token in prompts, report bodies, URLs, logs, or screenshots. The dashboard includes a copyable agent prompt template with additional reporting and credential guidance.
+
+## Expiring report shares
+
+Open a report and choose **Share**. Select an integer lifetime in hours (1–168) or days (1–7); the default is one day. Each report can have at most 20 active links. The link is shown once at creation and cannot be recovered after the dialog closes. Share management requires the owner's browser session; the shared `ACCESS_TOKEN` and OAuth MCP tokens cannot manage shares.
+
+Anyone with the link can read that single report without signing in until it expires. Tokens contain 32 bytes of cryptographic randomness; SQLite stores only their SHA-256 digests. Every read checks expiry, revocation, and whether the report still exists. Revoking a link or deleting its report blocks future reads immediately. Expired and revoked rows are cleaned in small batches at startup and hourly; cleanup is not part of the expiration check. The share page exposes no dashboard, search, bot, or administration APIs, sends `no-store`, `no-referrer`, and `noindex` headers, and does not load remote Markdown images.
+
+Treat each link as a bearer credential. Review reports for sensitive content before sharing; content already read, copied, or screenshotted cannot be remotely erased. Bolt Dock redacts share tokens from its application request logs. If reverse-proxy access logging is enabled, exclude `/share/` and `/api/v1/public/shares/` paths or redact their full URIs. For Nginx, add dedicated locations with `access_log off` before a general proxy location.
+
+SQLite migration v4 adds an additive `report_shares` table and indexes. Existing reports and OAuth/MCP data are unchanged. Back up the database before deployment and do not use `docker compose down -v` as a rollback step.
 
 ## Remote MCP
 

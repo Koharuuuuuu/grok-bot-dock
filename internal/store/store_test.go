@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -346,5 +347,152 @@ func TestConcurrentWrites(t *testing.T) {
 	}
 	if len(bots) != 20 {
 		t.Fatalf("got %d concurrent bots, want 20", len(bots))
+	}
+}
+
+func TestReportSharesDigestExpiryRevocationAndCascade(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	createdReport, _, err := s.CreateReport(ctx, report("grok", "daily", "share-1", "# Shared"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 12, 10, 0, 0, 0, time.UTC)
+	expires := now.Add(time.Hour)
+	digest := "digest:opaque-token"
+	share, err := s.CreateReportShare(ctx, createdReport.ID, digest, now, expires)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if share.ID == 0 || share.ReportID != createdReport.ID || share.ExpiresAt == "" {
+		t.Fatalf("unexpected share metadata: %#v", share)
+	}
+	public, err := s.PublicShareReport(ctx, digest, now)
+	if err != nil || public.Title != "今日 AI 动态" || public.BotName != "共享名称" || len(public.Tags) != 1 || public.Content != "# Shared" {
+		t.Fatalf("public projection failed: %#v err=%v", public, err)
+	}
+	if _, err := s.PublicShareReport(ctx, digest, expires); err != sql.ErrNoRows {
+		t.Fatalf("share remained valid at expiry: %v", err)
+	}
+	items, err := s.ListReportShares(ctx, createdReport.ID)
+	if err != nil || len(items) != 1 || items[0].ID != share.ID {
+		t.Fatalf("share listing failed: %#v err=%v", items, err)
+	}
+	if changed, err := s.RevokeReportShare(ctx, createdReport.ID, share.ID, now.Add(2*time.Minute)); err != nil || !changed {
+		t.Fatalf("share revoke failed: changed=%v err=%v", changed, err)
+	}
+	if changed, err := s.RevokeReportShare(ctx, createdReport.ID, share.ID, now.Add(3*time.Minute)); err != nil || changed {
+		t.Fatalf("revoke should be idempotent: changed=%v err=%v", changed, err)
+	}
+	if _, err := s.PublicShareReport(ctx, digest, now); err != sql.ErrNoRows {
+		t.Fatalf("revoked share remained readable: %v", err)
+	}
+	if _, err := s.DeleteReport(ctx, createdReport.ID); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM report_shares WHERE report_id=?`, createdReport.ID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("report deletion did not cascade share metadata: count=%d err=%v", count, err)
+	}
+}
+
+func TestReportShareConcurrentLimitAndCleanup(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	createdReport, _, err := s.CreateReport(ctx, report("grok", "daily", "share-limit", "# Shared"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	created := 0
+	for i := 0; i < 28; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, err := s.CreateReportShare(ctx, createdReport.ID, fmt.Sprintf("digest-%d", i), now, now.Add(time.Hour))
+			if err == nil {
+				mu.Lock()
+				created++
+				mu.Unlock()
+			} else if err != ErrShareLimit {
+				t.Errorf("concurrent create: %v", err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	if created != 20 {
+		t.Fatalf("concurrent creation admitted %d links, want exactly 20", created)
+	}
+	items, err := s.ListReportShares(ctx, createdReport.ID)
+	if err != nil || len(items) != 20 {
+		t.Fatalf("share list count=%d err=%v", len(items), err)
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE report_shares SET expires_at=? WHERE id=?`, now.Add(-time.Second).Format(timestampFormat), items[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := s.CleanupReportShares(ctx, now, 200)
+	if err != nil || removed != 1 {
+		t.Fatalf("cleanup removed=%d err=%v, want 1", removed, err)
+	}
+}
+
+func TestReportShareMigrationAndSQLiteBackupRestore(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "legacy.db")
+	s, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	created, _, err := s.CreateReport(ctx, report("grok", "daily", "preserve", "# Existing report"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `DROP TABLE report_shares; DELETE FROM schema_migrations WHERE version=4`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(dbPath)
+	if err != nil {
+		t.Fatalf("additive v4 migration failed: %v", err)
+	}
+	var versionCount int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version=4`).Scan(&versionCount); err != nil || versionCount != 1 {
+		t.Fatalf("schema v4 migration count=%d err=%v", versionCount, err)
+	}
+	if _, err := s.GetReport(ctx, created.ID); err != nil {
+		t.Fatalf("existing report did not survive additive migration: %v", err)
+	}
+	now := time.Now().UTC()
+	digest := "backup-digest-only"
+	if _, err := s.CreateReportShare(ctx, created.ID, digest, now, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `PRAGMA wal_checkpoint(FULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	backupPath := filepath.Join(dir, "restored.db")
+	backup, err := os.ReadFile(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(backupPath, backup, 0600); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := Open(backupPath)
+	if err != nil {
+		t.Fatalf("restored database open: %v", err)
+	}
+	defer restored.Close()
+	public, err := restored.PublicShareReport(ctx, digest, now)
+	if err != nil || public.Content != "# Existing report" {
+		t.Fatalf("restored backup lost share/report: %#v err=%v", public, err)
 	}
 }

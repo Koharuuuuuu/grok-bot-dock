@@ -22,7 +22,7 @@ reports: id, bot_pk(FK), external_id(NULLABLE), executed_at(固定精度 UTC ISO
 缺少 `ACCESS_TOKEN` 时服务拒绝启动；外部推送保留 Bearer Token 常量时间比较。网页登录把密钥只提交到登录接口，服务端生成 256-bit 随机会话 ID，在进程内保存 12 小时到期时间，仅经 `HttpOnly; Path=/; SameSite=Lax` Cookie 交给浏览器；不设置持久期限。OAuth 已启用且 `PUBLIC_BASE_URL` 有效时，浏览器会话写请求的 Origin 必须匹配该固定公网 origin，Cookie 的 `Secure` 属性也由其 HTTPS scheme 决定；这使 TLS 终止反代的内部 Host/HTTP scheme 不会错误拒绝合法请求，也不会依赖客户端可控的转发头放宽来源校验。OAuth 未启用时，Origin 对比请求 Host 与 TLS/`X-Forwarded-Proto`，Cookie Secure 也沿用 TLS/该转发头判断。反向代理须覆盖而非透传用户提供的 X-Forwarded-Proto。注销会撤销会话并用同属性清除 Cookie；会话写请求必须有匹配 Origin。登出还会立即关闭该会话的 SSE；前端通过 BroadcastChannel 同步其他标签退出并清空缓存。进程重启会使活动会话失效。浏览器可能通过会话恢复保留无持久期限的 Cookie，网页无法可靠判断整个浏览器进程已经关闭，因此“关闭浏览器即登出”不作保证。请求体默认上限 1 MiB，可配置；推送接口限制每客户端地址每分钟 120 次，登录另限每客户端地址每分钟 10 次。CORS 默认同源；Markdown 原始 HTML 禁用，DOMPurify 清理输出。浏览器通知需要 HTTPS/localhost、用户授权与浏览器/系统允许。SSE 支持页面内重连、25 秒心跳及断线连接清理；浏览器离线期间不保证收到事件。
 
 ## 6. 前端交互
-桌面与移动端自适应；首页卡片网格按最后更新时间排序。每张卡展示 Bot 的自定义展示名（若设置）或原始 bot_name、最新报告摘要、执行时间、未读状态。点击卡片打开不参与主页面布局的悬浮 dialog，底层尺寸不变；对话框内滚动 Markdown，历史日期筛选、分页；支持 Esc、焦点管理和关闭后恢复焦点/滚动位置。最大化阅读偏好和 Markdown 字号分别存入版本化 localStorage 键，默认普通模式和 16px，字号范围 12–24px；移动端详情强制全屏但不更改桌面最大化偏好。移动端历史列表与正文纵向排列，表格和代码块局部横向滚动。顶部全局搜索，搜索结果高亮关键词并可直达原文。通知权限由明确的用户操作触发，不在页面初次加载时强制弹窗。卡片列表不加载历史全文，避免性能浪费。
+桌面与移动端自适应；首页卡片网格按最后更新时间排序。每张卡展示 Bot 的自定义展示名（若设置）或原始 bot_name、最新报告摘要、执行时间、未读状态。点击卡片打开不参与主页面布局的悬浮 dialog，底层尺寸不变；对话框内滚动 Markdown，历史日期筛选、分页；支持 Esc、焦点管理和关闭后恢复焦点/滚动位置。最大化阅读偏好和 Markdown 字号分别存入版本化 localStorage 键，默认普通模式和 16px，字号范围 13–24px；移动端详情强制全屏但不更改桌面最大化偏好。移动端历史列表与正文纵向排列，表格和代码块局部横向滚动。顶部全局搜索，搜索结果高亮关键词并可直达原文。通知权限由明确的用户操作触发，不在页面初次加载时强制弹窗。卡片列表不加载历史全文，避免性能浪费。
 
 ## 7. 质量保障
 Go 单测覆盖验证、幂等、并发写入、FTS 同步、分页、鉴权；前端测试覆盖 Markdown XSS、卡片更新、检索与通知降级；端到端测试使用 curl POST → SQLite → Web/SSE。Docker 重启后数据不丢失。提供 curl 示例、.env.example、docker-compose.yml、Makefile、部署与备份说明；CI 运行 Go 测试和前端构建。默认 master 分支，提交前检查现有内容并避免破坏性覆盖。
@@ -82,3 +82,17 @@ P8 在 P7 `/mcp` 上可选启用 OAuth Authorization Code + PKCE S256。`OAUTH_E
 授权码绑定 client、redirect URI、PKCE S256 challenge、resource、scope，5 分钟过期且事务一次性兑换。Access token 是随机不透明值，摘要存储、15 分钟过期；每个 MCP 请求检查 token、grant、client 状态及 resource。授权有效期 30 天；撤销 grant/client 即时撤销现存 access token。`reports:read` 只允许 `search_reports`，`reports:write` 只允许 `publish_report`，MCP HTTP 层对缺 scope 的调用返回 403；OAuth token 不通过 REST Bearer 鉴权。未实现 refresh token、CIMD、DCR、JWKS。
 
 SQLite schema v3 包含 `oauth_clients`、`oauth_grants`、`oauth_authorization_codes`、`oauth_access_tokens`、`oauth_audit_events`；v3 为 OAuth client 增加注册来源字段，以区分手动预注册与 CIMD。启动迁移不依赖 feature flag，关闭功能不删除表。持久授权主体固定为单所有者 `owner`；读 scope 可访问整个报告库，写 scope 可声明 source/Bot 标识，不构成多租户或来源隔离。生产启用、实际 TLS/反代、数据库备份、镜像发布与 Grok/Claude/Cursor OAuth 联调不在本地代码验收范围内，状态见 P8 验收报告。
+
+## 13. P9 移动端适配与限时报告分享
+
+移动端 540px 以下将来源筛选和外观切换放在主控行，REST/MCP、统计与退出放在独立次级行；来源 select 允许省略长标签但保留完整 option 和 `title`。320px 起控件有独立触摸区域。桌面布局继续由原顶栏 flex 规则控制。
+
+分享为单条报告当前内容的临时引用。`report_shares` 使用 additive schema migration v4，字段为内部 `id`、`report_id`（报告删除时外键级联）、唯一 `token_hash`、`created_at`、`expires_at` 和 `revoked_at`，按报告和有效期建立索引。token 由 `crypto/rand` 生成 32 bytes，使用无填充 base64url；数据库只存其 SHA-256 hex digest。每份报告最多 20 个未撤销且未过期链接，创建通过单条原子 `INSERT ... SELECT` 校验，避免并发突破上限。
+
+创建/列出/撤销 API 分别为 `POST/GET /api/v1/reports/{id}/shares` 和 `DELETE /api/v1/reports/{id}/shares/{share_id}`。这些操作要求所有者 Cookie 会话，POST/DELETE 继续受全局 Origin 校验保护；Legacy REST Bearer 与 OAuth MCP access token 均不具备分享管理权限。创建请求只接受整数小时 1–168 或整数天 1–7；服务端以 UTC 当前时刻计算绝对过期时间，默认 1 天由 UI 设定。创建响应只一次性返回 `share_path` 和到期时间，列表只含内部 share ID、创建/到期时间和状态。
+
+匿名 `GET /api/v1/public/shares/{token}` 在路径格式校验后摘要查找，并在每次查询的 SQL 条件中同时检查 `revoked_at=''` 与 `expires_at > now`。统一返回窄白名单 DTO（来源、展示名、标题、摘要、标签、执行时间、Markdown 和到期时间），不返回内部 ID、Bot ID、头像 URL、访问密钥、授权或管理信息。无效、格式错误、过期、撤销、已删除报告使用相同 404 JSON。公开读取按远端连接地址做进程内限流；不信任任意 `X-Forwarded-For`。
+
+分享页 `/share/{token}` 使用 SPA fallback，但跳过登录探测及工作台 API，不渲染导航、搜索、历史或 Bot 管理。分享响应设置 `Cache-Control: no-store`、`Referrer-Policy: no-referrer`、`X-Robots-Tag: noindex, nofollow, noarchive`、CSP 与 `nosniff`。分享 Markdown 继续走 markdown-it + DOMPurify，且禁止 `img` 标签和外部图像源。请求 logger 对 `/share/*` 与 `/api/v1/public/shares/*` 路径替换 token；反代 access log 必须单独排除或脱敏这些 URI。
+
+启动时立即执行一次最多 200 行的到期/撤销清理，此后每小时重复；清理不参与实时授权判断，也不删除报告本体。报告删除通过外键级联同步清除 share 行。容器或主机回退镜像时，保留 `/data` 中的 additive 表；恢复旧数据库备份可能丢失之后写入的报告与授权记录，操作前须单独评估并取得所有者确认。反向代理需继续将 `/share/*`、`/api/v1/public/shares/*` 原样转发到同一服务，且不记录完整 URI。

@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -655,5 +658,150 @@ func TestWriteRateLimitResetsAfterOneMinute(t *testing.T) {
 	server.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") == "" {
 		t.Fatalf("rate limited invalid request status=%d Retry-After=%q body=%s", response.Code, response.Header().Get("Retry-After"), response.Body.String())
+	}
+}
+
+func TestReportShareSessionBoundaryAndAnonymousRead(t *testing.T) {
+	var requestLog bytes.Buffer
+	previousLogWriter := log.Writer()
+	log.SetOutput(&requestLog)
+	defer log.SetOutput(previousLogWriter)
+	h, db, _ := testHandler(t, 1<<20)
+	created := request(h, http.MethodPost, "/api/v1/reports", postBody("grok", "# share secret report", "share-api-1"), "test-secret")
+	if created.Code != http.StatusCreated {
+		t.Fatalf("report create: %d %s", created.Code, created.Body.String())
+	}
+	var reportResult struct {
+		ReportID int64 `json:"report_id"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &reportResult); err != nil || reportResult.ReportID == 0 {
+		t.Fatalf("report id response: %v %s", err, created.Body.String())
+	}
+	login := httptest.NewRecorder()
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"token":"test-secret"}`))
+	h.ServeHTTP(login, loginReq)
+	cookie := login.Result().Cookies()[0]
+	managePath := "/api/v1/reports/" + strconv.FormatInt(reportResult.ReportID, 10) + "/shares"
+	if got := request(h, http.MethodGet, managePath, "", ""); got.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous share management must be rejected: %d %s", got.Code, got.Body.String())
+	}
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		bearer := request(h, method, managePath, `{"ttl_unit":"day","ttl_value":1}`, "test-secret")
+		if bearer.Code != http.StatusForbidden {
+			t.Fatalf("legacy bearer must not manage shares: %s %d %s", method, bearer.Code, bearer.Body.String())
+		}
+	}
+	foreignOrigin := httptest.NewRequest(http.MethodPost, managePath, strings.NewReader(`{"ttl_unit":"day","ttl_value":1}`))
+	foreignOrigin.AddCookie(cookie)
+	foreignOrigin.Header.Set("Origin", "https://attacker.invalid")
+	foreignOrigin.Header.Set("Host", "example.com")
+	foreignOriginResponse := httptest.NewRecorder()
+	h.ServeHTTP(foreignOriginResponse, foreignOrigin)
+	if foreignOriginResponse.Code != http.StatusForbidden {
+		t.Fatalf("cross-site share creation was not rejected: %d %s", foreignOriginResponse.Code, foreignOriginResponse.Body.String())
+	}
+	for _, body := range []string{`{"ttl_unit":"hour","ttl_value":0}`, `{"ttl_unit":"hour","ttl_value":169}`, `{"ttl_unit":"day","ttl_value":8}`, `{"ttl_unit":"week","ttl_value":1}`, `{"ttl_unit":"hour","ttl_value":1.5}`, `{"ttl_unit":"hour","ttl_value":1,"extra":true}`} {
+		req := httptest.NewRequest(http.MethodPost, managePath, strings.NewReader(body))
+		req.AddCookie(cookie)
+		req.Header.Set("Origin", "http://example.com")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("invalid TTL accepted: %s -> %d %s", body, w.Code, w.Body.String())
+		}
+	}
+	tooLarge := httptest.NewRequest(http.MethodPost, managePath, strings.NewReader(strings.Repeat(" ", (1<<20)+1)))
+	tooLarge.AddCookie(cookie)
+	tooLarge.Header.Set("Origin", "http://example.com")
+	tooLargeResponse := httptest.NewRecorder()
+	h.ServeHTTP(tooLargeResponse, tooLarge)
+	if tooLargeResponse.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized share request status=%d body=%s", tooLargeResponse.Code, tooLargeResponse.Body.String())
+	}
+	createReq := httptest.NewRequest(http.MethodPost, managePath, strings.NewReader(`{"ttl_unit":"hour","ttl_value":1}`))
+	createReq.AddCookie(cookie)
+	createReq.Header.Set("Origin", "http://example.com")
+	createRecorder := httptest.NewRecorder()
+	h.ServeHTTP(createRecorder, createReq)
+	if createRecorder.Code != http.StatusCreated {
+		t.Fatalf("create share: %d %s", createRecorder.Code, createRecorder.Body.String())
+	}
+	var shareResult struct {
+		ShareID   int64  `json:"share_id"`
+		SharePath string `json:"share_path"`
+		ExpiresAt string `json:"expires_at"`
+	}
+	if err := json.Unmarshal(createRecorder.Body.Bytes(), &shareResult); err != nil || shareResult.ShareID == 0 || shareResult.ExpiresAt == "" {
+		t.Fatalf("share response malformed: %v %s", err, createRecorder.Body.String())
+	}
+	parts := strings.Split(shareResult.SharePath, "/")
+	token := parts[len(parts)-1]
+	if !shareTokenPattern.MatchString(token) {
+		t.Fatalf("unexpected token format: %q", token)
+	}
+	secondCreate := httptest.NewRequest(http.MethodPost, managePath, strings.NewReader(`{"ttl_unit":"day","ttl_value":7}`))
+	secondCreate.AddCookie(cookie)
+	secondCreate.Header.Set("Origin", "http://example.com")
+	secondRecorder := httptest.NewRecorder()
+	h.ServeHTTP(secondRecorder, secondCreate)
+	if secondRecorder.Code != http.StatusCreated {
+		t.Fatalf("7-day share boundary: %d %s", secondRecorder.Code, secondRecorder.Body.String())
+	}
+	var secondResult struct {
+		SharePath string `json:"share_path"`
+	}
+	if err := json.Unmarshal(secondRecorder.Body.Bytes(), &secondResult); err != nil || secondResult.SharePath == shareResult.SharePath {
+		t.Fatalf("share tokens must be unique: %s / %s err=%v", shareResult.SharePath, secondResult.SharePath, err)
+	}
+	for _, body := range []string{`{"ttl_unit":"hour","ttl_value":168}`, `{"ttl_unit":"day","ttl_value":1}`} {
+		validBoundary := httptest.NewRequest(http.MethodPost, managePath, strings.NewReader(body))
+		validBoundary.AddCookie(cookie)
+		validBoundary.Header.Set("Origin", "http://example.com")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, validBoundary)
+		if w.Code != http.StatusCreated {
+			t.Errorf("valid TTL boundary rejected: %s -> %d %s", body, w.Code, w.Body.String())
+		}
+	}
+	digest := sha256.Sum256([]byte(token))
+	public, err := db.PublicShareReport(context.Background(), hex.EncodeToString(digest[:]), time.Now().UTC())
+	if err != nil || public.Content != "# share secret report" {
+		t.Fatalf("public share content unavailable: %#v err=%v", public, err)
+	}
+	listReq := httptest.NewRequest(http.MethodGet, managePath, nil)
+	listReq.AddCookie(cookie)
+	listResp := httptest.NewRecorder()
+	h.ServeHTTP(listResp, listReq)
+	if listResp.Code != http.StatusOK || strings.Contains(listResp.Body.String(), token) || strings.Contains(listResp.Body.String(), "token_hash") || strings.Contains(listResp.Body.String(), `"report_id"`) {
+		t.Fatalf("share list leaked capability: %d %s", listResp.Code, listResp.Body.String())
+	}
+	publicPath := "/api/v1/public/shares/" + token
+	publicResp := request(h, http.MethodGet, publicPath, "", "")
+	if publicResp.Code != http.StatusOK || publicResp.Header().Get("Cache-Control") == "" || publicResp.Header().Get("Referrer-Policy") != "no-referrer" || publicResp.Header().Get("X-Robots-Tag") != "noindex, nofollow, noarchive" || strings.Contains(publicResp.Body.String(), "bot_id") || strings.Contains(publicResp.Body.String(), "report_id") {
+		t.Fatalf("public response failed boundary/header checks: %d headers=%v body=%s", publicResp.Code, publicResp.Header(), publicResp.Body.String())
+	}
+	if got := request(h, http.MethodGet, "/api/v1/reports/"+strconv.FormatInt(reportResult.ReportID, 10), "", ""); got.Code != http.StatusUnauthorized {
+		t.Fatalf("public share auth leaked into old report API: %d", got.Code)
+	}
+	shareHTML := request(h, http.MethodGet, "/share/"+token, "", "")
+	if shareHTML.Code != http.StatusOK || shareHTML.Header().Get("Referrer-Policy") != "no-referrer" || !strings.Contains(shareHTML.Header().Get("Content-Security-Policy"), "img-src 'self'") || shareHTML.Header().Get("X-Robots-Tag") == "" {
+		t.Fatalf("share SPA headers missing: %d %v", shareHTML.Code, shareHTML.Header())
+	}
+	revokePath := managePath + "/" + strconv.FormatInt(shareResult.ShareID, 10)
+	revokeReq := httptest.NewRequest(http.MethodDelete, revokePath, nil)
+	revokeReq.AddCookie(cookie)
+	revokeReq.Header.Set("Origin", "http://example.com")
+	revokeRecorder := httptest.NewRecorder()
+	h.ServeHTTP(revokeRecorder, revokeReq)
+	if revokeRecorder.Code != http.StatusNoContent {
+		t.Fatalf("revoke share: %d %s", revokeRecorder.Code, revokeRecorder.Body.String())
+	}
+	revoked := request(h, http.MethodGet, publicPath, "", "")
+	invalid := request(h, http.MethodGet, "/api/v1/public/shares/not-a-valid-token", "", "")
+	if revoked.Code != http.StatusNotFound || revoked.Body.String() != invalid.Body.String() {
+		t.Fatalf("revoked link did not use fixed unavailable response: %d %s", revoked.Code, revoked.Body.String())
+	}
+	if bytes.Contains(requestLog.Bytes(), []byte(token)) {
+		t.Fatalf("share token leaked into request log: %s", requestLog.String())
 	}
 }
