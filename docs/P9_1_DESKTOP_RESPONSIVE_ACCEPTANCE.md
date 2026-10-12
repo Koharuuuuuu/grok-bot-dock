@@ -1,8 +1,8 @@
 # P9.1 · PC 顶栏响应式回归验收
 
-日期：2026-10-12  
-基线：`bac9adc`（最新 `master`，执行前同步）  
-P9 响应式实现基线：`96a563b`  
+日期：2026-10-12
+基线：`bac9adc`（最新 `master`，执行前同步）
+P9 响应式实现基线：`96a563b`
 实现分支：`fix/p9-1-desktop-header-layout`
 
 ## 结果
@@ -27,16 +27,16 @@ P9 将来源/主题和 REST/MCP/统计分别包进 `.top-primary-controls` 与 `
 
 ## 自动化与交互验证
 
-`scripts/p9-1-topbar-geometry.sh` 使用 Playwright CLI 对实时页面读取 `getBoundingClientRect()`、计算样式、控件命中目标与整页宽度，并对横向分组、最小统计宽度、来源选择框边界及页面溢出执行断言。通过命令：
+`scripts/p9-1-topbar-geometry.sh` 使用 Playwright CLI 对实时页面读取 `getBoundingClientRect()`、计算样式、控件命中目标与整页宽度，并对横向分组、最小统计宽度、来源选择框边界及页面溢出执行断言。另验证 768px 下长来源的完整 `title`，并以隔离 DOM 值替换模拟统计变化。通过命令：
 
 ```bash
 PLAYWRIGHT_CLI=/path/to/playwright_cli.sh scripts/p9-1-topbar-geometry.sh
 ```
 
-浏览器应先打开已登录的本地 Bolt Dock 页面。最终嵌入式 Go 服务运行结果：23 个视口全部通过：
+浏览器应先打开已登录的本地 Bolt Dock 页面。最终嵌入式 Go 服务运行结果：24 个视口全部通过：
 
 - PC：1024、1280、1366、1440、1600、1839、1920px。
-- 平板/过渡：640、720、768、800、801、820、853、900、901、960px。
+- 平板/过渡：640、720、768、800、801、820、853、900、901、960、1023px。
 - 手机：320、360、375、390、414、430px。
 
 另外用 1280px 的等效 CSS 视口宽度 1024/853/640 模拟 125%/150%/200% 缩放后的布局宽度，结果均通过。Playwright CLI 无法设置 Chromium 浏览器原生缩放；这些视口仿真不等同于原生缩放验收。已尝试页面键盘缩放快捷键，浏览器 CSS 视口和 DPR 均未变化，因此真实 125%/150%/200% 缩放保留为未验收。
@@ -45,6 +45,8 @@ PLAYWRIGHT_CLI=/path/to/playwright_cli.sh scripts/p9-1-topbar-geometry.sh
 
 - 登录、刷新后恢复工作台、退出后返回登录页。
 - 在 1024/1839px 选择长来源；来源框 220px、ellipsis 生效、完整名称可从 `title` 读取，页面无横向溢出。
+- 在 768px 平板视口选择超长来源；完整 `title` 与省略样式均通过断言，页面无横向溢出。
+- 在 1280px Chromium 页面中将三项统计值替换为 `128`、`12,345`、`1.2 GB` 做布局仿真；三项保持可见、在视口内且页面无横向溢出。该操作仅改变隔离浏览器 DOM，不写入应用数据。
 - 切换来源后搜索并显示 1 条结果；清除搜索后卡片恢复。
 - 主题菜单键盘可达；来源、主题、搜索的 Tab 顺序正确；主题菜单完整落在视口内；明暗主题切换有效。
 - 实时同步状态、统计标签和按钮在桌面均可见；平板/手机来源选择及主题控件可命中，手机热区 44×44px。
@@ -67,7 +69,7 @@ PLAYWRIGHT_CLI=/path/to/playwright_cli.sh scripts/p9-1-topbar-geometry.sh
 | `cd frontend && npm test` | 通过：2 个测试文件、17 项 |
 | `cd frontend && npm run build` | 通过：Vite 生产构建完成，更新 Go embed 静态文件 |
 | `go build -o /tmp/bolt-dock-p9-1 ./cmd/server` | 通过 |
-| Playwright 几何断言脚本 | 23/23 视口通过 |
+| Playwright 几何断言脚本 | 24/24 视口通过；平板长来源与统计值变化仿真通过 |
 | `git diff --check` | 通过 |
 
 ## 限制与交付边界
