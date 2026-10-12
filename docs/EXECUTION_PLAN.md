@@ -195,4 +195,4 @@ GHCR 首次发布及后续多架构修复均已验收：PR #1–#3 已合并至 
 
 ## P9.1 PC 顶栏响应式回归修复（2026-10-12，优先执行）
 
-> [P9.1 PC 顶栏响应式回归修复执行计划](./P9_1_DESKTOP_RESPONSIVE_REGRESSION.md)：已合并并推送到 `master`（`f8b9de5`）。Go 测试、前端 17 项测试、构建及 Chromium 24 视口几何断言通过；平板超长来源、统计值变化仿真、PC/平板/手机亮暗主题截图及同源登录、退出、搜索和分享弹窗抽查已记录。GitHub Actions run [38217249438](https://github.com/Nyakooo/grok-bot-dock/actions/runs/38217249438) 验证与 GHCR `master` 多架构发布通过，匿名镜像索引 digest 为 `sha256:63189eceeacadff58c3400ae1e50b25b51a8503eb9e0a40decb14d8566096d8c`。详见 [P9.1 验收报告](./P9_1_DESKTOP_RESPONSIVE_ACCEPTANCE.md)。真实浏览器 125%/150%/200% 缩放与真实手机仍未验证；未部署生产。
+> [P9.1 PC 顶栏响应式回归修复执行计划](./P9_1_DESKTOP_RESPONSIVE_REGRESSION.md)：已合并并推送到 `master`（代码提交 `f8b9de5`）。Go 测试、前端 17 项测试、构建及 Chromium 24 视口几何断言通过；平板超长来源、统计值变化仿真、PC/平板/手机亮暗主题截图及同源登录、退出、搜索和分享弹窗抽查已记录。GitHub Actions run [38217666501](https://github.com/Nyakooo/grok-bot-dock/actions/runs/38217666501) 在 master `1dac711` 上验证并重建 GHCR `master` 多架构镜像通过，匿名镜像索引 digest 为 `sha256:bc227074fd33086acbbefd53b218acbf22de29393deea04fb62989bce51ace48`。详见 [P9.1 验收报告](./P9_1_DESKTOP_RESPONSIVE_ACCEPTANCE.md)。真实浏览器 125%/150%/200% 缩放与真实手机仍未验证；未部署生产。
