@@ -43,7 +43,7 @@
 - [x] `go test ./...`、前端测试、Vite 构建和 Go 二进制构建通过。
 - [x] 新增 `docs/P9_1_DESKTOP_RESPONSIVE_ACCEPTANCE.md`，记录根因、文件、结果、视口、截图、限制与基线 SHA。
 - [x] 不改动 P9 状态；在 `docs/EXECUTION_PLAN.md` 更新 P9.1 实际进度，未验证原生缩放保持未完成。
-- [x] 汇报实现与未验收环境；本轮仅本地提交，没有部署生产或推送远端。
+- [x] 实现与未验收环境已写入报告；P9.1 已合并并推送 master，Actions run `38217249438` 验证及 GHCR 多架构发布通过。未部署生产。
 
 ## 3. 强制验收条件
 

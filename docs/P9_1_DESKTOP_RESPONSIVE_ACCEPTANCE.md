@@ -7,7 +7,7 @@ P9 响应式实现基线：`96a563b`
 
 ## 结果
 
-已修复 P9 移动端分组后桌面顶栏右侧控件纵向堆叠、统计项被压窄的问题。修复只涉及顶栏 CSS；未改动卡片栅格、报告/分享业务、MCP/OAuth、后端接口或数据库。P9.1 的 Chromium 浏览器仿真和同源 Go 内嵌构建验收通过。真实 Chrome 原生缩放倍率、iOS Safari/Android 实机仍未验证；未部署、未推送、未合并。
+已修复 P9 移动端分组后桌面顶栏右侧控件纵向堆叠、统计项被压窄的问题。修复只涉及顶栏 CSS；未改动卡片栅格、报告/分享业务、MCP/OAuth、后端接口或数据库。P9.1 的 Chromium 浏览器仿真和同源 Go 内嵌构建验收通过，已合并并推送到 `master`。GitHub Actions run [38217249438](https://github.com/Nyakooo/grok-bot-dock/actions/runs/38217249438) 验证与 GHCR 发布均成功；`ghcr.io/nyakooo/grok-bot-dock:master` 索引 digest 为 `sha256:63189eceeacadff58c3400ae1e50b25b51a8503eb9e0a40decb14d8566096d8c`，匿名镜像清单确认包含 amd64 与 arm64。真实 Chrome 原生缩放倍率、iOS Safari/Android 实机仍未验证；未部署生产。
 
 ## 根因与修改
 
@@ -77,5 +77,5 @@ PLAYWRIGHT_CLI=/path/to/playwright_cli.sh scripts/p9-1-topbar-geometry.sh
 - 原生浏览器缩放 125%/150%/200%、真实 iOS Safari/Android Chrome、触摸旋转和软键盘尚未验收。
 - 桌面页面在 1024px 及以下继续按既有样式将 REST/MCP 长标签收纳为图标；这次只修复控件布局和压缩，不调整其产品文案或收纳策略。
 - 所有浏览器数据在 `/tmp/bolt-dock-p9-1-review` 中，仅为合成报告；没有使用生产数据或访问生产服务。
-- 本次只提交本地功能分支；未推送、合并 master 或部署生产。需要发布时再按用户后续指示处理。
-- 完成实现的代码快照 SHA：`584e762f4db40c15816840d07b5056e3caa8f44e`；验收报告与计划状态更新随后单独提交。
+- P9.1 代码已合并并推送到 `master`，最终 master SHA：`f8b9de55604877704314700b2d5aecb3c7d9cca7`。Actions run `38217249438` 验证与镜像发布通过；GHCR 索引 digest 和多架构信息见本报告开头。未部署生产。
+- 初始修复代码提交 SHA：`584e762f4db40c15816840d07b5056e3caa8f44e`；最终 master 还包含验收记录与补充覆盖提交。
