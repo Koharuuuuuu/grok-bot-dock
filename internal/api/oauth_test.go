@@ -964,7 +964,7 @@ func TestOAuthPrincipalPermissionMatrixAcrossMCPTools(t *testing.T) {
 			}
 			defer session.Close()
 			listed, err := session.ListTools(ctx, nil)
-			if err != nil || len(listed.Tools) != 3 {
+			if err != nil || len(listed.Tools) != 4 {
 				t.Fatalf("tools/list=%#v err=%v", listed, err)
 			}
 			searched, searchErr := session.CallTool(ctx, &mcp.CallToolParams{Name: "search_reports", Arguments: map[string]any{"query": "oauth matrix searchable marker"}})

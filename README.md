@@ -133,7 +133,7 @@ location ^~ /api/v1/public/shares/ {
 
 Bolt Dock 是独立自托管 MCP Server，不依赖 Codex、本机 Agent 进程或额外容器。现有 Go 服务在 `/mcp` 提供无状态 **Streamable HTTP**；MCP 与 REST 共用报告校验、SQLite、幂等及 SSE，REST API 保持不变。支持自定义远程 MCP、Streamable HTTP 与 Bearer 凭据的客户端可连接服务，并按客户端能力发现和调用工具。具体产品、版本和托管环境的支持情况须单独验证，不能由协议本身推断。
 
-当前工具为 `publish_report`（正式报告）、`search_reports`（历史检索）和 `sync_topic_state`（停止状态同步）；不提供删除、改名或管理凭据工具。工作台的「MCP 接入」面板从服务端读取真实工具能力，并显示当前页面地址推导出的 `/mcp` URL。若 HTTPS 反向代理使用了其他公开域名或路径，可在面板覆盖地址；该覆盖仅保存在当前浏览器，不会配置服务器。localhost 或内网地址只对能访问相应网络的客户端可用，不代表公网地址。
+当前工具为 `publish_report`（正式报告）、`search_reports`（历史检索）、`sync_topic_state`（停止状态同步）和 OAuth 客户端专用的 `sync_connection_state`（定向断开握手）；MCP 工具不提供删除主题或管理凭据的入口。工作台的「MCP 接入」面板从服务端读取真实工具能力，并显示当前页面地址推导出的 `/mcp` URL。若 HTTPS 反向代理使用了其他公开域名或路径，可在面板覆盖地址；该覆盖仅保存在当前浏览器，不会配置服务器。localhost 或内网地址只对能访问相应网络的客户端可用，不代表公网地址。
 
 客户端连接字段：MCP URL 为 `https://<你的公开域名>/mcp`，传输为 Streamable HTTP，认证头为 `Authorization: Bearer <由服务管理员安全提供>`。协议没有统一的客户端配置文件格式；在客户端自身的安全凭据设置中配置密钥，不要将 `ACCESS_TOKEN` 放进 URL、配置模板、页面、报告、日志或剪贴板。可在工作台复制不含密钥的服务 URL 或通用接入说明。
 

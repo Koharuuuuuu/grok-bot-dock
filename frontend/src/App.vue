@@ -93,6 +93,7 @@ let previousBodyOverflow = ''
 let previousBodyPaddingRight = ''
 let streamAbort
 let refreshTimer
+let oauthRefreshTimer
 let authChannel
 let copyFeedbackTimer
 const isPublicShare = window.location.pathname.startsWith('/share/')
@@ -560,12 +561,28 @@ async function createOAuthClient() {
   } catch (e) { oauthManagementError.value = e.message }
   finally { oauthManagementBusy.value = false }
 }
-async function disableOAuthClient(client) {
-  if (!window.confirm(`停用 ${client.client_name}？相关授权和 Token 会立即失效。`)) return
+async function requestOAuthClientDeletion(client) {
+  if (!window.confirm(`请求删除 ${client.client_name}？Bolt Dock 会立即限制它只能确认断开；对接方下次连接并检查时会收到删除通知。访问令牌过期的客户端可以重新授权后检查。客户端确认后，本端才会移除客户端和授权记录。若对方始终不再连接，可强制删除，但对方将无法收到通知。`)) return
   oauthManagementError.value = ''
   oauthManagementNotice.value = ''
-  try { await api(`/api/v1/oauth/clients/${encodeURIComponent(client.client_id)}`, { method: 'DELETE' }); await loadOAuthManagement() }
+  try {
+    const result = await api(`/api/v1/oauth/clients/${encodeURIComponent(client.client_id)}`, { method: 'DELETE' })
+    await loadOAuthManagement()
+    oauthManagementNotice.value = `${client.client_name}：删除通知已登记；对接方下次连接并检查时会收到通知。若访问令牌已过期，对方可重新授权后检查。服务端无法向离线客户端主动推送。版本 ${result.revision}。`
+  }
   catch (e) { oauthManagementError.value = e.message }
+}
+async function forceDeleteOAuthClient(client) {
+  if (!window.confirm(`对接方尚未确认断开。强制删除 ${client.client_name} 会立即清除本端客户端和授权记录；离线的对接方无法收到通知，需要你在对应客户端手动移除该连接。继续强制删除？`)) return
+  oauthManagementBusy.value = true
+  oauthManagementError.value = ''
+  oauthManagementNotice.value = ''
+  try {
+    await api('/api/v1/oauth/clients/force-delete', { method: 'POST', body: JSON.stringify({ client_id: client.client_id }) })
+    await loadOAuthManagement()
+    oauthManagementNotice.value = `${client.client_name} 已从本端删除并吊销全部授权；对接方未确认，请手动删除其客户端配置。`
+  } catch (e) { oauthManagementError.value = e.message }
+  finally { oauthManagementBusy.value = false }
 }
 async function enableOAuthClient(client) {
   if (oauthManagementBusy.value) return
@@ -706,6 +723,14 @@ async function startStream() {
                 } catch {}
               }, 120)
             }
+            if (event === 'oauth.client.deleted' && mcpConfigOpen.value && mcpCapabilities.value?.oauth_enabled) {
+              const deletedClient = oauthClients.value.find(client => client.client_id === payload.client_id)
+              oauthManagementNotice.value = payload.status === 'forced'
+                ? `${deletedClient?.client_name || 'OAuth 客户端'} 已从本端强制删除；对接方未确认，请手动检查其客户端配置。`
+                : `${deletedClient?.client_name || 'OAuth 客户端'} 已确认断开，并从本端移除。`
+              clearTimeout(oauthRefreshTimer)
+              oauthRefreshTimer = setTimeout(() => loadOAuthManagement().catch(e => { oauthManagementError.value = e.message }), 120)
+            }
           }
         }
       }
@@ -798,7 +823,7 @@ onMounted(async () => {
   } catch {}
   authReady.value = true
 })
-onUnmounted(() => { window.removeEventListener('keydown', onKey); window.removeEventListener('click', closeActionMenusOnOutsideClick); window.removeEventListener('resize', updateNarrowReader); document.removeEventListener('visibilitychange', onShareVisibilityChange); systemThemeQuery.removeEventListener('change', updateSystemTheme); authChannel?.close(); streamAbort?.abort(); clearTimeout(refreshTimer); clearTimeout(copyFeedbackTimer); clearTimeout(shareExpiryTimer); document.body.style.overflow = previousBodyOverflow; document.body.style.paddingRight = previousBodyPaddingRight })
+onUnmounted(() => { window.removeEventListener('keydown', onKey); window.removeEventListener('click', closeActionMenusOnOutsideClick); window.removeEventListener('resize', updateNarrowReader); document.removeEventListener('visibilitychange', onShareVisibilityChange); systemThemeQuery.removeEventListener('change', updateSystemTheme); authChannel?.close(); streamAbort?.abort(); clearTimeout(refreshTimer); clearTimeout(oauthRefreshTimer); clearTimeout(copyFeedbackTimer); clearTimeout(shareExpiryTimer); document.body.style.overflow = previousBodyOverflow; document.body.style.paddingRight = previousBodyPaddingRight })
 
 function trapReaderFocus(event) {
   const focusable = [...readerDialog.value.querySelectorAll('a[href], button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])')]
@@ -1009,6 +1034,7 @@ function trapReaderFocus(event) {
         <section v-if="mcpCapabilities?.oauth_enabled" class="mcp-access-section" aria-labelledby="oauth-owner-heading">
           <div class="mcp-section-heading"><h3 id="oauth-owner-heading">OAuth 客户端与授权</h3><span class="mcp-protocol-badge">PKCE · 独立凭据</span></div>
           <p class="mcp-field-help">可预登记客户端 ID 和精确回调 URI，也可让支持 CIMD 的公开客户端提交元数据地址。若客户端元数据地址无法被服务器直接访问，可在此手动固定其 HTTPS Client ID 与回调 URI；必须逐字匹配客户端请求。机密客户端的 Client Secret 仅在创建或轮换时显示一次；OAuth 默认无刷新令牌，Token 有效期 15 分钟，授权最长 30 天。</p>
+          <p class="mcp-field-help">独立 OAuth 客户端支持定向删除握手；访问令牌过期后可重新授权并完成握手。共享 Bearer Token 无法区分具体对接方，不能单独通知或删除。要管理单个客户端，请让它使用独立 OAuth 授权。</p>
           <form class="oauth-client-form" @submit.prevent="createOAuthClient">
             <label>客户端名称<input v-model="oauthClientName" maxlength="120" required autocomplete="off"></label>
             <label>客户端 ID（可选）<input v-model="oauthClientID" maxlength="2048" autocomplete="off" spellcheck="false" placeholder="留空自动生成；或填 https://grok.com/oauth/mcp-client.json"></label>
@@ -1019,7 +1045,7 @@ function trapReaderFocus(event) {
           <p v-if="oauthManagementError" class="form-error" role="alert">{{ oauthManagementError }}</p>
           <p v-if="oauthManagementNotice" class="oauth-management-notice" role="status" aria-live="polite">{{ oauthManagementNotice }}</p>
           <div v-if="oauthCreatedClient" class="oauth-created-client" role="status"><strong>{{ oauthCreatedClient.notice || '客户端已登记' }}：{{ oauthCreatedClient.client_id }}</strong><p v-if="oauthCreatedClient.client_secret">Client Secret（只显示本次）：<code>{{ oauthCreatedClient.client_secret }}</code> <button class="secondary-button" @click="copyOAuthClientSecret">复制 Secret</button></p><p v-else>此客户端为公开客户端，不签发 Client Secret。</p></div>
-          <ul v-if="oauthClients.length" class="oauth-managed-list"><li v-for="client in oauthClients" :key="client.client_id"><div><strong>{{ client.client_name }}</strong><code>{{ client.client_id }}</code><small v-if="client.registration_type === 'cimd'">Client ID Metadata Document（公开客户端）</small><small v-else>管理员预注册客户端</small><small>{{ client.redirect_uris.join(' · ') }}</small><small v-if="client.disabled_at">已停用 · 启用后需重新授权</small></div><button v-if="!client.disabled_at && client.confidential" class="text-button" @click="rotateOAuthClientSecret(client)">轮换 Secret</button><button v-if="!client.disabled_at" class="text-button" @click="disableOAuthClient(client)">停用</button><button v-else class="text-button" :disabled="oauthManagementBusy" @click="enableOAuthClient(client)">启用</button></li></ul>
+          <ul v-if="oauthClients.length" class="oauth-managed-list"><li v-for="client in oauthClients" :key="client.client_id"><div><strong>{{ client.client_name }}</strong><code>{{ client.client_id }}</code><small v-if="client.registration_type === 'cimd'">Client ID Metadata Document（公开客户端）</small><small v-else>管理员预注册客户端</small><small>{{ client.redirect_uris.join(' · ') }}</small><small v-if="client.disconnect_requested_at">删除通知已登记，等待对接方下次连接确认（版本 {{ client.disconnect_revision }}）</small><small v-else-if="client.disabled_at">已停用 · 启用后需重新授权</small></div><button v-if="!client.disabled_at && !client.disconnect_requested_at && client.confidential" class="text-button" @click="rotateOAuthClientSecret(client)">轮换 Secret</button><button v-if="!client.disabled_at && !client.disconnect_requested_at" class="text-button" @click="requestOAuthClientDeletion(client)">请求删除并通知</button><button v-if="client.disconnect_requested_at" class="text-button danger-button" :disabled="oauthManagementBusy" @click="forceDeleteOAuthClient(client)">强制删除…</button><button v-if="client.disabled_at && !client.disconnect_requested_at" class="text-button" :disabled="oauthManagementBusy" @click="enableOAuthClient(client)">启用</button></li></ul>
           <h4>已授权记录</h4>
           <ul v-if="oauthGrants.length" class="oauth-managed-list"><li v-for="grant in oauthGrants" :key="grant.id"><div><strong>{{ grant.client_name }} <small>授权 #{{ grant.id }}</small></strong><small>{{ grant.scopes.join(' · ') }} · {{ grant.resource }}</small><small>{{ grant.revoked_at ? '已撤销' : `有效期至 ${grant.expires_at}` }}</small></div><button v-if="!grant.revoked_at" class="text-button" @click="revokeOAuthGrant(grant)">撤销</button></li></ul>
           <p v-else class="mcp-field-help">目前没有 OAuth 授权记录。</p>

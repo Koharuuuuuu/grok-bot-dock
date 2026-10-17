@@ -37,7 +37,12 @@ type OAuthConfig struct {
 }
 
 type oauthPrincipalKey struct{}
-type oauthPrincipal struct{ scopes map[string]bool }
+type oauthPrincipal struct {
+	clientID            string
+	scopes              map[string]bool
+	disconnectRevision  int64
+	disconnectRequested bool
+}
 type oauthState struct {
 	value   string
 	present bool
@@ -147,6 +152,9 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 	}
 	client, err := s.resolveOAuthAuthorizationClient(r.Context(), clientID)
 	redirect := q.Get("redirect_uri")
+	// A client with a pending deletion may reauthorize after its access token
+	// expires. Its bearer token remains limited to sync_connection_state by
+	// the MCP middleware until it acknowledges deletion.
 	if err != nil || client.DisabledAt != "" {
 		oauthError(w, r, "invalid_request", "invalid client or redirect_uri")
 		return
@@ -669,13 +677,19 @@ func (s *Server) oauthBearer(r *http.Request) (oauthPrincipal, bool) {
 	if token == s.token {
 		return oauthPrincipal{}, false
 	}
-	scopes, err := s.store.OAuthToken(r.Context(), oauthHash(token), s.oauthResource())
+	clientID, scopes, err := s.store.OAuthTokenClient(r.Context(), oauthHash(token), s.oauthResource())
 	if err != nil {
 		return oauthPrincipal{}, false
 	}
-	principal := oauthPrincipal{scopes: map[string]bool{}}
+	principal := oauthPrincipal{clientID: clientID, scopes: map[string]bool{}}
 	for _, scope := range scopes {
 		principal.scopes[scope] = true
+	}
+	principal.disconnectRevision, _, err = s.store.OAuthClientDisconnect(r.Context(), clientID)
+	if err == nil {
+		principal.disconnectRequested = true
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return oauthPrincipal{}, false
 	}
 	return principal, true
 }
@@ -831,9 +845,18 @@ func (s *Server) ownerOAuthAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, 200, map[string]any{"items": items})
-	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/oauth/clients/"):
-		id := strings.TrimPrefix(r.URL.Path, "/api/v1/oauth/clients/")
-		if err := s.store.DisableOAuthClient(r.Context(), id); err != nil {
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/oauth/clients/force-delete":
+		var in struct {
+			ClientID string `json:"client_id"`
+		}
+		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&in); err != nil || in.ClientID == "" {
+			writeError(w, 400, "invalid_request", "client_id is required")
+			return
+		}
+		id := in.ClientID
+		if err := s.forceDeleteOAuthClient(r.Context(), id); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				writeError(w, 404, "not_found", "client not found")
 				return
@@ -841,8 +864,19 @@ func (s *Server) ownerOAuthAPI(w http.ResponseWriter, r *http.Request) {
 			serverError(w, err)
 			return
 		}
-		_ = s.store.OAuthAudit(r.Context(), "client_disabled", id, "success")
-		writeJSON(w, 200, map[string]bool{"ok": true})
+		writeJSON(w, 200, map[string]any{"ok": true, "status": "deleted_without_ack", "client_id": id})
+	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/oauth/clients/"):
+		id := strings.TrimPrefix(r.URL.Path, "/api/v1/oauth/clients/")
+		result, err := s.requestOAuthClientDeletion(r.Context(), id)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, 404, "not_found", "client not found")
+				return
+			}
+			serverError(w, err)
+			return
+		}
+		writeJSON(w, 200, result)
 	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/oauth/grants/"):
 		var id int64
 		if _, err := fmt.Sscan(strings.TrimPrefix(r.URL.Path, "/api/v1/oauth/grants/"), &id); err != nil || id < 1 {

@@ -85,7 +85,7 @@ SQLite migration v4 adds an additive `report_shares` table and indexes. Existing
 
 ## Remote MCP
 
-The Go service exposes `/mcp` over stateless Streamable HTTP. Current tools are `publish_report`, read-only `search_reports`, and `sync_topic_state` for the versioned stop handshake. Configure the URL and credentials using the MCP client’s secure settings; never place a token in a URL or a shared configuration file.
+The Go service exposes `/mcp` over stateless Streamable HTTP. Current tools are `publish_report`, read-only `search_reports`, `sync_topic_state` for the versioned stop handshake, and OAuth-only `sync_connection_state` for client-specific disconnect requests. Configure the URL and credentials using the MCP client’s secure settings; never place a token in a URL or a shared configuration file.
 
 By default, MCP reuses the administrator’s `ACCESS_TOKEN` as a shared Bearer credential. This is suitable only for the owner or trusted single-user access. The service does not provide tenant isolation. OAuth is optional and is a limited Authorization Code + PKCE S256 implementation; OAuth defaults to off. Real integrations with individual Grok, Codex, Claude, or Cursor clients must be verified separately. Protocol tests alone do not establish client compatibility.
 
@@ -112,3 +112,6 @@ Please report suspected vulnerabilities privately through GitHub's security advi
 ## License
 
 Bolt Dock is licensed under the [MIT License](LICENSE). Keep the copyright and license notice with copies or substantial portions of the software. The software is provided “as is,” without warranty.
+
+
+In MCP access settings, the selected OAuth client can be deleted through a client-specific handshake. The client is restricted to the disconnect acknowledgment tool until it removes its local connection and confirms the request revision; after access-token expiry, it can reauthorize to resume the handshake. Bolt Dock then deletes its registration and grants. Offline clients remain pending. Forced deletion removes the local record immediately and tells the owner to remove the offline client manually; the event distinguishes forced deletion from client acknowledgment. Shared Bearer clients have no distinct identity and cannot be individually notified or deleted.

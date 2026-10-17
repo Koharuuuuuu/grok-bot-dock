@@ -43,6 +43,7 @@ var mcpToolCapabilities = []mcpToolCapability{
 		ProtocolDescription: "Search stored report history by full-text query, including Chinese, with optional source, Bot, date, and cursor filters. Read-only; returns report metadata and summaries, never full Markdown.",
 	},
 	topicSyncCapability,
+	connectionSyncCapability,
 }
 
 type publishReportInput struct {
@@ -93,6 +94,10 @@ func capabilityMetadata(maxBytes int64) []mcpToolCapability {
 	control.Fields = schemaFieldDescriptions(topicSyncSchema())
 	control.Example = `{"source":"grok","stable_task_id":"airport-watch"}`
 	capabilities[2] = control
+	connection := connectionSyncCapability
+	connection.Fields = schemaFieldDescriptions(syncConnectionSchema())
+	connection.Example = schemaExample(syncConnectionSchema())
+	capabilities[3] = connection
 	return capabilities
 }
 
@@ -240,6 +245,7 @@ func (s *Server) newMCPHandler() http.Handler {
 		Instructions: "Bolt Dock publishes and searches self-hosted execution reports. Only publish completed, confirmed final reports. Use a stable bot_id or stable_task_id; reuse external_id for retries. Client call strategy is not a security boundary.",
 	})
 	nonDestructive := false
+	destructive := true
 	closedWorld := false
 	publishSchema, searchSchema := buildMCPInputSchemas(s.maxBytes)
 	mcp.AddTool(server, &mcp.Tool{
@@ -257,6 +263,7 @@ func (s *Server) newMCPHandler() http.Handler {
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: &nonDestructive, IdempotentHint: true, OpenWorldHint: &closedWorld},
 	}, s.handleMCPSearchReports)
 	mcp.AddTool(server, &mcp.Tool{Name: topicSyncCapability.Name, Title: topicSyncCapability.Title, Description: topicSyncCapability.ProtocolDescription, InputSchema: topicSyncSchema(), Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &nonDestructive, IdempotentHint: true, OpenWorldHint: &closedWorld}}, s.handleMCPSyncTopic)
+	mcp.AddTool(server, &mcp.Tool{Name: connectionSyncCapability.Name, Title: connectionSyncCapability.Title, Description: connectionSyncCapability.ProtocolDescription, InputSchema: syncConnectionSchema(), Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &destructive, IdempotentHint: true, OpenWorldHint: &closedWorld}}, s.handleMCPSyncConnection)
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{
 		MaxRequestBodyBytes:          s.maxBytes,
 		Stateless:                    true,
@@ -319,6 +326,10 @@ func (s *Server) mcpAuth(next http.Handler) http.Handler {
 					}
 					if request.Params.Name == "publish_report" || request.Params.Name == "sync_topic_state" {
 						required = oauthWriteScope
+					}
+					if principal.disconnectRequested && request.Params.Name != "sync_connection_state" {
+						writeJSON(w, http.StatusForbidden, map[string]any{"jsonrpc": "2.0", "id": request.ID, "error": map[string]any{"code": -32001, "message": "client_disconnect_requested", "data": map[string]any{"revision": principal.disconnectRevision, "next_step": "call sync_connection_state with disconnected=true"}}})
+						return
 					}
 					if required != "" && !principal.scopes[required] {
 						w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer error="insufficient_scope", scope="%s", resource_metadata="%s/.well-known/oauth-protected-resource/mcp"`, required, s.oauthBase()))
