@@ -1,5 +1,6 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { notifyReport } from './notifications'
 import TopicWorkspace from './components/TopicWorkspace.vue'
 import { renderSanitizedMarkdown } from './markdown'
 import { buildMCPServiceURL, classifyMCPAddress, highlightParts, loginFailureMessage, makeCodexMCPConfig, makeMCPGenericGuide, makeSearchParams, normalizeMCPAddressBase, notificationStatus, readMCPAddressOverride, refreshesSelectedBot, searchSnippet, sessionExpiredMessage, writeMCPAddressOverride } from './ui-model'
@@ -680,9 +681,11 @@ async function enableNotifications() {
   setTimeout(() => { notificationState.value = '' }, 2600)
 }
 function notify(report) {
-  if (!('Notification' in window) || Notification.permission !== 'granted' || document.visibilityState === 'visible') return
-  const note = new Notification(report.bot_name || 'Bolt Dock', { body: report.title || report.summary || '收到新报告', tag: `${report.source}:${report.bot_id}` })
-  note.onclick = () => { window.focus(); const bot = bots.value.find(x => x.source === report.source && x.bot_id === report.bot_id); if (bot) openBot(bot) }
+  notifyReport(report, window.Notification, () => {
+    window.focus()
+    const bot = bots.value.find(x => x.source === report.source && x.bot_id === report.bot_id)
+    if (bot) openBot(bot)
+  })
 }
 async function startStream() {
   streamAbort?.abort(); streamAbort = new AbortController()

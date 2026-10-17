@@ -124,8 +124,8 @@ export function searchSnippet(report, query, maxLength = 180) {
 
 export function notificationStatus(supported, permission) {
   if (!supported) return '当前浏览器不支持通知'
-  if (permission === 'granted') return '通知已开启'
-  if (permission === 'denied') return '通知未获授权'
+  if (permission === 'granted') return '通知已开启；需保持此页面在浏览器中打开'
+  if (permission === 'denied') return '通知未获授权，请在浏览器站点设置中允许通知'
   return '通知不可用'
 }
 

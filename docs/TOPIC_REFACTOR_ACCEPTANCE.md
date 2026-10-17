@@ -15,15 +15,15 @@
 
 以下检查均在最终前端资源生成后执行或针对相同最终源码执行：
 
-- `cd frontend && npm test -- --run`：4 个测试文件、24 项测试通过。
-- `cd frontend && npm run build`：通过，Vite 7.3.7；生成 `index-DMXm2d7g.js` 和 `index-BfYZEzHK.css`，嵌入 Go 服务。
-- `go test -json ./...`：125 项测试通过、0 失败；API 与 Store 两个测试包通过。
+- `cd frontend && npm test`：5 个测试文件、27 项测试通过。
+- `cd frontend && npm run build`：通过，Vite 7.3.7；生成 `index-3Z9gCa-h.js` 和 `index-C3Ezl-re.css`，嵌入 Go 服务。
+- `go test ./...`：127 项测试通过、0 失败；API 与 Store 两个测试包通过。
 - `go vet ./...`：通过。
 - `go build -o output/topic-acceptance.exe ./cmd/server`：通过。
 
 Go 测试包含真实 SQLite 迁移、重启幂等、旧数据阅读状态、事务回滚、主题身份冲突、共享主题贡献任务、停止版本冲突、所有者证据确认、归档拒绝与恢复、逐篇未读一致性、搜索在分页前应用范围、完整匹配主题集合、REST 鉴权和严格 JSON、真实 MCP SDK Streamable HTTP 调用，以及原有 OAuth 与分享回归。
 
-前端覆盖主题筛选、接入文案、真实组件事件与接口参数、过期异步结果保护、停止确认的主题与版本绑定、点击入口自动复制。测试证据概要见 `output/topic-acceptance/test-summary.json`；完整本地运行日志 `output/topic-final-tests.log` 被 Git 忽略。
+前端覆盖主题筛选、接入文案、真实组件事件与接口参数、过期异步结果保护、停止确认的主题与版本绑定、点击入口自动复制，以及已授权时前台报告通知、未授权降级和通知 API 异常隔离。浏览器通知需要用户授权且已登录的页面保持打开并连接 SSE；浏览器关闭或离线期间不保证补发。测试证据概要见 `output/topic-acceptance/test-summary.json`；完整本地运行日志 `output/topic-final-tests.log` 被 Git 忽略。
 
 ## 浏览器到数据库的验收
 

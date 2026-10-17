@@ -1,12 +1,12 @@
 ﻿{
     "date":  "2026-10-17",
-    "go_test_pass":  125,
+    "go_test_pass":  127,
     "go_test_fail":  0,
-    "frontend_test_pass":  24,
-    "frontend_test_files":  4,
+    "frontend_test_pass":  27,
+    "frontend_test_files":  5,
     "go_vet":  "passed",
     "frontend_build":  "passed",
     "server_build":  "passed",
-    "frontend_js":  "index-DMXm2d7g.js",
-    "frontend_css":  "index-BfYZEzHK.css"
+    "frontend_js":  "index-3Z9gCa-h.js",
+    "frontend_css":  "index-C3Ezl-re.css"
 }

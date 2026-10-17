@@ -57,7 +57,7 @@ html{scrollbar-gutter:stable}
 .font-tools{display:flex;align-items:center;gap:4px;color:#777e73;font-family:'DM Mono',monospace;font-size:13px;white-space:nowrap}
 
 .mcp-access-modal{display:flex;flex-direction:column;gap:16px;width:min(780px,100%);max-height:calc(100dvh - 40px);overflow:auto}
-.mcp-access-modal .modal-heading{position:sticky;top:-1px;z-index:1;padding:2px 0 9px;background:#fff}
+.mcp-access-modal .modal-heading{padding:2px 0 9px;background:#fff}
 .mcp-access-modal .modal-intro{margin:0;line-height:1.55}
 .mcp-access-modal h3{margin:0;font-size:15px}
 .mcp-access-section{display:flex;flex-direction:column;gap:9px;padding:13px 0;border-top:1px solid #e8ebe3}
