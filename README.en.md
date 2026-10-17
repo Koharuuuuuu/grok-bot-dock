@@ -11,7 +11,12 @@ Bolt Dock collects, searches, and displays completed reports from AI agents. Age
 
 ## Features
 
-- Automatically groups reports by source and bot, with a responsive dashboard, history, filters, and full-text search (including Chinese). Cards and source filters show live unread counts: opening a report clears its unread count, and new reports increase it again.
+- The default workspace organizes topics into Following, Updates, All topics, and Archived. It supports groups, bulk organization, pins, per-report unread state, and full-text search. Agents contribute to topics; the legacy source view remains available in settings.
+- First publication creates a topic. Stable task identity and `topic_id` keep later runs together; multiple tasks share a topic only through an explicit ID.
+- Copy connection instructions discovers actual MCP capabilities and attempts to copy a complete onboarding prompt. Clients still need remote MCP support and authorization. The prompt contains no administrator secret.
+- Archiving requires a versioned stop request and acknowledgments from all contributors, or explicit owner confirmation with evidence. Restoring preserves history but does not restart external schedules.
+- See [acceptance evidence and migration notes](docs/TOPIC_REFACTOR_ACCEPTANCE.md).
+- The legacy source view retains source and bot cards, history, filters, and counts. Topic reading marks only the opened report as read; new reports increase unread counts.
 - Mobile controls are grouped by priority; individual reports can be shared anonymously for 1 hour to 7 days, with immediate revocation.
 - Renders Markdown with raw HTML disabled and sanitized output.
 - Streams updates to open dashboards with Server-Sent Events (SSE).
@@ -80,7 +85,7 @@ SQLite migration v4 adds an additive `report_shares` table and indexes. Existing
 
 ## Remote MCP
 
-The Go service exposes `/mcp` over stateless Streamable HTTP. Current tools are `publish_report` and read-only `search_reports`. Configure the URL and credentials using the MCP client’s secure settings; never place a token in a URL or a shared configuration file.
+The Go service exposes `/mcp` over stateless Streamable HTTP. Current tools are `publish_report`, read-only `search_reports`, and `sync_topic_state` for the versioned stop handshake. Configure the URL and credentials using the MCP client’s secure settings; never place a token in a URL or a shared configuration file.
 
 By default, MCP reuses the administrator’s `ACCESS_TOKEN` as a shared Bearer credential. This is suitable only for the owner or trusted single-user access. The service does not provide tenant isolation. OAuth is optional and is a limited Authorization Code + PKCE S256 implementation; OAuth defaults to off. Real integrations with individual Grok, Codex, Claude, or Cursor clients must be verified separately. Protocol tests alone do not establish client compatibility.
 

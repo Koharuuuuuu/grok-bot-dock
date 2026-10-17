@@ -1,11 +1,15 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import TopicWorkspace from './components/TopicWorkspace.vue'
 import { renderSanitizedMarkdown } from './markdown'
 import { buildMCPServiceURL, classifyMCPAddress, highlightParts, loginFailureMessage, makeCodexMCPConfig, makeMCPGenericGuide, makeSearchParams, normalizeMCPAddressBase, notificationStatus, readMCPAddressOverride, refreshesSelectedBot, searchSnippet, sessionExpiredMessage, writeMCPAddressOverride } from './ui-model'
 import { readImmersivePreference, readReaderFontSize, writeImmersivePreference, writeReaderFontSize } from './reader-preferences'
 import { readThemePreference, writeThemePreference } from './theme-preferences'
 
 const authenticated = ref(false)
+const legacyWorkspace = ref(false)
+const topicRefreshKey = ref(0)
+async function shareTopicReport(report) { selectedReport.value = report; await openShareDialog() }
 const authReady = ref(false)
 const tokenInput = ref('')
 const tokenError = ref('')
@@ -236,6 +240,7 @@ async function loadData() {
     if (source.value && !sources.value.some(item => item.source === source.value)) source.value = ''
     bots.value = botData.items || []
     stats.value = botData.stats || stats.value
+    topicRefreshKey.value++
     if (selected.value) {
       const updated = bots.value.find(bot => bot.source === selected.value.source && bot.bot_id === selected.value.bot_id)
       if (updated) selected.value = updated
@@ -688,7 +693,7 @@ async function startStream() {
           if (data) {
             const payload = JSON.parse(data)
             if (event === 'report.created') notify(payload)
-            if (['report.created', 'report.deleted', 'bot.deleted', 'bot.updated'].includes(event)) {
+            if (['report.created', 'report.deleted', 'bot.deleted', 'bot.updated', 'topic.updated'].includes(event)) {
               clearTimeout(refreshTimer)
               refreshTimer = setTimeout(async () => {
                 try {
@@ -842,7 +847,10 @@ function trapReaderFocus(event) {
     <div v-if="copyFeedback" class="copy-feedback-toast" :class="`copy-feedback-toast--${copyFeedback.kind}`" role="status" aria-live="polite" aria-atomic="true">
       <span class="copy-feedback-icon" aria-hidden="true">{{ copyFeedback.kind === 'warning' ? '!' : '✓' }}</span>{{ copyFeedback.message }}
     </div>
-    <header class="topbar">
+    <TopicWorkspace v-if="!legacyWorkspace" :refresh-key="topicRefreshKey" :theme-mode="effectiveTheme" @expired="expireSession" @connect="openMCPAccess" @rest="openPrompt" @legacy="legacyWorkspace = true" @notifications="enableNotifications" @logout="logout" @theme="themeMode = effectiveTheme === 'dark' ? 'light' : 'dark'" @share="shareTopicReport" @delete="deleteReport" />
+    <div v-if="!legacyWorkspace && error" class="error-banner" role="alert">{{ error }}<button aria-label="关闭错误" @click="error = ''">×</button></div>
+    <button v-if="legacyWorkspace" class="secondary-button" @click="legacyWorkspace = false; closeReader()">← 返回主题空间</button>
+    <header v-if="legacyWorkspace" class="topbar">
       <a class="wordmark" href="#" @click.prevent="closeReader(); clearSearch()"><span class="brand-mark small"><img src="/brand/bolt-dock.svg" alt=""></span><span>Bolt <b>Dock</b></span></a>
       <form class="search-box" @submit.prevent="runSearch()">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5"/></svg>
@@ -879,7 +887,7 @@ function trapReaderFocus(event) {
     </header>
 
     <div v-if="notificationState" class="toast">{{ notificationState }}</div>
-    <div class="content-area">
+    <div v-if="legacyWorkspace" class="content-area">
       <section class="main-column">
         <div class="page-heading">
           <div><p class="eyebrow">{{ source ? source.toUpperCase() + ' · REPORTS' : 'YOUR SOURCES · LIVE' }}</p><h1>{{ searching ? '搜索结果' : '报告工作台' }}<span class="heading-count">{{ activeCount }}</span></h1></div>
@@ -950,7 +958,7 @@ function trapReaderFocus(event) {
         </div>
       </section>
     </div>
-    <footer class="app-footer"><span>BOLT DOCK <i>·</i> PERSONAL REPORT SPACE</span><span>数据只保存在你的服务端 <b>↗</b></span></footer>
+    <footer v-if="legacyWorkspace" class="app-footer"><span>BOLT DOCK <i>·</i> PERSONAL REPORT SPACE</span><span>数据只保存在你的服务端 <b>↗</b></span></footer>
     <div v-if="promptOpen" class="modal-scrim" @click.self="promptOpen = false">
       <section class="prompt-modal" role="dialog" aria-modal="true" aria-labelledby="prompt-title">
         <header class="modal-heading"><div><p class="eyebrow">REST API · REPORT DELIVERY</p><h2 id="prompt-title">REST API 推送指令</h2></div><button class="icon-button" aria-label="关闭 REST API 推送指令" @click="promptOpen = false">×</button></header>

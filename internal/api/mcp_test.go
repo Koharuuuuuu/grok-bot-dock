@@ -137,8 +137,8 @@ func TestMCPStreamableToolsShareRESTStorageAndIdempotency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tools/list: %v", err)
 	}
-	if len(listed.Tools) != 2 {
-		t.Fatalf("listed %d tools, want 2", len(listed.Tools))
+	if len(listed.Tools) != 3 {
+		t.Fatalf("listed %d tools, want 3", len(listed.Tools))
 	}
 	serializedTools, err := json.Marshal(listed.Tools)
 	if err != nil {
@@ -148,7 +148,7 @@ func TestMCPStreamableToolsShareRESTStorageAndIdempotency(t *testing.T) {
 		t.Fatalf("tool schemas omit documented length constraints: %s", serializedTools)
 	}
 	for _, tool := range listed.Tools {
-		if tool.Name != "publish_report" && tool.Name != "search_reports" {
+		if tool.Name != "publish_report" && tool.Name != "search_reports" && tool.Name != "sync_topic_state" {
 			t.Errorf("unexpected MCP tool %q", tool.Name)
 		}
 	}
@@ -448,7 +448,7 @@ func TestMCPStatelessCurrentProtocolNegotiation(t *testing.T) {
 	}
 	defer session.Close()
 	listed, err := session.ListTools(ctx, nil)
-	if err != nil || len(listed.Tools) != 2 {
+	if err != nil || len(listed.Tools) != 3 {
 		t.Fatalf("current protocol tool discovery: tools=%#v err=%v", listed, err)
 	}
 }
