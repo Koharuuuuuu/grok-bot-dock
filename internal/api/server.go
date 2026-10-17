@@ -67,6 +67,10 @@ func New(s *store.Store, h *events.Hub, token string, maxBytes int64, static emb
 func NewWithOAuth(s *store.Store, h *events.Hub, token string, maxBytes int64, static embed.FS, oauth OAuthConfig) *Server {
 	return &Server{store: s, hub: h, token: token, maxBytes: maxBytes, static: static, rate: make(map[string]rateWindow), sessions: make(map[string]time.Time), streams: make(map[string]map[chan struct{}]struct{}), oauth: oauth, consents: make(map[string]pendingConsent), cimdCache: make(map[string]cimdCacheEntry), cimdFetch: make(chan struct{}, 8), fetchCIMD: fetchCIMDMetadata}
 }
+
+// ShutdownStreams closes active SSE subscriptions so HTTP graceful shutdown can finish.
+func (s *Server) ShutdownStreams() { s.hub.Close() }
+
 func (s *Server) Handler() http.Handler {
 	s.shareCleanupOnce.Do(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

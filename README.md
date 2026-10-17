@@ -246,7 +246,7 @@ docker compose cp bolt-dock:/data/bolt-dock.db ./bolt-dock-backup.db
 docker compose start bolt-dock
 ```
 
-确认日志包含上述 checkpoint 成功信息后再复制。恢复时同样先正常停止服务，再替换 `/data/bolt-dock.db` 并启动；若正常停机未完成，不要将单文件备份覆盖到可能仍有 WAL 内容的数据目录。本地构建配置将上面的 Compose 文件名改为 `compose.local.yml`、服务容器名改为 `bolt-dock-local`，数据库路径仍为 `/data/bolt-dock.db`。
+确认日志包含上述 checkpoint 成功信息后再复制。恢复时同样先正常停止服务，再替换 `/data/bolt-dock.db` 并启动；若正常停机未完成，不要将单文件备份覆盖到可能仍有 WAL 内容的数据目录。使用本地构建配置时，为每条命令添加 `-f compose.local.yml`；Compose 服务名仍是 `bolt-dock`（`bolt-dock-local` 是容器名）。例如，备份命令为 `docker compose -f compose.local.yml cp bolt-dock:/data/bolt-dock.db ./bolt-dock-backup.db`，恢复命令为 `docker compose -f compose.local.yml cp ./bolt-dock-backup.db bolt-dock:/data/bolt-dock.db`。
 
 ## HTTPS 反向代理与故障排查
 

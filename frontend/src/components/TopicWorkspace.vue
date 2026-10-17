@@ -120,7 +120,7 @@ async function search(append = false) {
     searchCursor.value = data.next_cursor || ''
   } catch (e) { if (e.name !== 'AbortError' && version === searchVersion) error.value = e.message }
 }
-watch([query,tab,group], () => { clearTimeout(searchTimer); searchAbort?.abort(); ++searchVersion; searchMatches.value = []; searchCursor.value = ''; matchedTopicIDs.value=[]; searchTimer = setTimeout(() => search(), 250) })
+watch([query,tab,group], () => { selectedIDs.value = []; clearTimeout(searchTimer); searchAbort?.abort(); ++searchVersion; searchMatches.value = []; searchCursor.value = ''; matchedTopicIDs.value=[]; searchTimer = setTimeout(() => search(), 250) })
 watch(() => props.refreshKey, async () => {
   try { await loadTopics(); if (selected.value) await loadReports(); else if (query.value.trim()) await search() } catch (e) { error.value = e.message }
 })

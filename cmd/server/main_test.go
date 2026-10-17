@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/http"
 	"testing"
+
+	"github.com/Nyakooo/grok-bot-dock/internal/events"
 )
 
 func TestGracefulShutdownStopsHTTPBeforeCheckpoint(t *testing.T) {
@@ -13,17 +15,25 @@ func TestGracefulShutdownStopsHTTPBeforeCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })}
+	hub := events.New()
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		stream := hub.Subscribe()
+		defer hub.Unsubscribe(stream)
+		flusher := w.(http.Flusher)
+		_, _ = w.Write([]byte(": connected\n\n"))
+		flusher.Flush()
+		for range stream {
+		}
+	})}
 	serveResult := make(chan error, 1)
 	go func() { serveResult <- srv.Serve(listener) }()
 	response, err := http.Get("http://" + listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
-	response.Body.Close()
 
 	checkpointCalled := false
-	err = gracefulShutdown(srv, func(context.Context) error {
+	err = gracefulShutdown(srv, hub.Close, func(context.Context) error {
 		select {
 		case serveErr := <-serveResult:
 			if !errors.Is(serveErr, http.ErrServerClosed) {
@@ -41,12 +51,13 @@ func TestGracefulShutdownStopsHTTPBeforeCheckpoint(t *testing.T) {
 	if !checkpointCalled {
 		t.Fatal("checkpoint was not called")
 	}
+	response.Body.Close()
 }
 
 func TestGracefulShutdownReturnsCheckpointError(t *testing.T) {
 	srv := &http.Server{}
 	wantErr := errors.New("checkpoint failed")
-	err := gracefulShutdown(srv, func(context.Context) error { return wantErr })
+	err := gracefulShutdown(srv, func() {}, func(context.Context) error { return wantErr })
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("gracefulShutdown error = %v, want wrapped %v", err, wantErr)
 	}

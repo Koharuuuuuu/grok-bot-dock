@@ -2,23 +2,26 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import TopicWorkspace from './TopicWorkspace.vue'
 
-let topic, reports, requests, wrapper
+let topic, topicList, reports, requests, wrapper
 function response(data, status = 200) { return { ok: status < 400, status, json: async () => structuredClone(data) } }
 beforeEach(() => {
   window.history.replaceState({}, '', '/')
   HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', '') }
   HTMLDialogElement.prototype.close = function () { this.removeAttribute('open') }
   topic = { id: 'airport', name: '机场情报监控', group: '', followed: false, pinned: false, status: 'active', revision: 0, report_count: 1, unread_count: 1, last_report_at: '2026-10-17T09:00:00Z', summary: '正式报告摘要', agents: [{ source: 'grok', bot_id: 'task-airport', stopped: false }] }
+  topicList = [topic]
   reports = [{ id: 1, topic_id: 'airport', source: 'grok', bot_name: '机场任务', title: '候选情报', summary: '正式报告摘要', executed_at: '2026-10-17T09:00:00Z', content: '# 候选情报\n\n## 原始证据\n\n完整报告。' }]
   requests = []
   vi.stubGlobal('fetch', vi.fn(async (path, options = {}) => {
     requests.push({ path, ...options })
-    if (path === '/api/v1/topics') return response({ items: [topic] })
-    if (path === '/api/v1/topics/airport' && options.method === 'PATCH') {
+    if (path === '/api/v1/topics') return response({ items: topicList })
+    if (path.startsWith('/api/v1/topics/') && options.method === 'PATCH') {
+      const target = topicList.find(item => path === `/api/v1/topics/${item.id}`)
       const patch = JSON.parse(options.body)
-      if (patch.action === 'request_stop') { topic.status = 'stop_requested'; topic.revision++ }
-      else if (patch.action === 'confirm_stopped') { topic.status = 'archived'; topic.stop_evidence = patch.evidence }
-      else Object.assign(topic, patch)
+      if (!target) return response({ error: { message: 'missing topic' } }, 404)
+      if (patch.action === 'request_stop') { target.status = 'stop_requested'; target.revision++ }
+      else if (patch.action === 'confirm_stopped') { target.status = 'archived'; target.stop_evidence = patch.evidence }
+      else Object.assign(target, patch)
       return response({ ok: true })
     }
     if (path.startsWith('/api/v1/topics/airport/reports')) return response({ items: reports })
@@ -75,6 +78,26 @@ describe('real topic workspace interactions', () => {
     await mountWorkspace();await clickText('复制接入指令')
     expect(writeText).toHaveBeenCalledTimes(1)
     expect(wrapper.text()).toContain('已复制')
+  })
+  it('clears selected topics when the group filter changes before a batch operation', async () => {
+    topic.group = 'A'
+    const other = { ...topic, id: 'topic-b', name: '主题 B', group: 'B', agents: [] }
+    topicList = [topic, other]
+    await mountWorkspace()
+    await wrapper.find('[aria-label="选择机场情报监控"]').setValue(true)
+    expect(wrapper.find('.ts-batch').text()).toContain('已选 1 个')
+
+    await wrapper.find('[aria-label="按分组筛选"]').setValue('B')
+    await flushPromises()
+    expect(wrapper.find('.ts-batch').exists()).toBe(false)
+
+    await wrapper.find('[aria-label="选择主题 B"]').setValue(true)
+    await wrapper.find('.ts-batch input').setValue('B-next')
+    await clickText('归组')
+    expect(topic.group).toBe('A')
+    expect(other.group).toBe('B-next')
+    const patchedIDs = requests.filter(r => r.method === 'PATCH').map(r => r.path)
+    expect(patchedIDs).toEqual(['/api/v1/topics/topic-b'])
   })
   it('emits session expiry instead of showing private data after unauthorized response', async () => {
     fetch.mockResolvedValue(response({ error: { message: 'unauthorized' } }, 401))

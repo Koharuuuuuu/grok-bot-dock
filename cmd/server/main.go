@@ -61,9 +61,10 @@ func run() error {
 		return errors.New("when OAUTH_ENABLED=true, PUBLIC_BASE_URL must be a canonical HTTPS origin (HTTP is allowed only on localhost)")
 	}
 
+	application := api.NewWithOAuth(db, events.New(), token, max, webui.Files, oauthConfig)
 	srv := &http.Server{
 		Addr:    "0.0.0.0:" + port,
-		Handler: api.NewWithOAuth(db, events.New(), token, max, webui.Files, oauthConfig).Handler(),
+		Handler: application.Handler(),
 	}
 	stop, stopSignal := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignal()
@@ -81,21 +82,26 @@ func run() error {
 		log.Printf("shutdown signal received; draining requests and checkpointing SQLite WAL")
 	}
 
-	if err := gracefulShutdown(srv, db.Checkpoint); err != nil {
+	if err := gracefulShutdown(srv, application.ShutdownStreams, db.Checkpoint); err != nil {
 		return err
 	}
 	log.Printf("shutdown complete; SQLite WAL checkpointed")
 	return nil
 }
 
-func gracefulShutdown(srv *http.Server, checkpoint func(context.Context) error) error {
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
-	defer cancel()
+func gracefulShutdown(srv *http.Server, closeStreams func(), checkpoint func(context.Context) error) error {
+	closeStreams()
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 20*time.Second)
 	if err := srv.Shutdown(shutdownCtx); err != nil {
+		cancelShutdown()
 		_ = srv.Close()
 		return fmt.Errorf("graceful HTTP shutdown: %w", err)
 	}
-	if err := checkpoint(shutdownCtx); err != nil {
+	cancelShutdown()
+
+	checkpointCtx, cancelCheckpoint := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelCheckpoint()
+	if err := checkpoint(checkpointCtx); err != nil {
 		return fmt.Errorf("checkpoint database before exit: %w", err)
 	}
 	return nil
