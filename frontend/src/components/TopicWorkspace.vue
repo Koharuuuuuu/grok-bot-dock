@@ -171,14 +171,13 @@ onUnmounted(() => { active = false; ++reportVersion; ++searchVersion; clearTimeo
       <nav aria-label="主题导航"><button v-for="item in topicTabs" :key="item.key" :class="{ active: tab === item.key && !selected }" @click="showTab(item.key)">{{ item.label }}<span>{{ counts[item.key] }}</span></button></nav>
       <div class="ts-caption">我的分组</div>
       <nav aria-label="分组导航"><button v-for="name in groups" :key="name" :class="{ active: group === name }" @click="showGroup(name)">{{ name }}</button><button @click="showGroup('__ungrouped')">未分组</button></nav>
-      <div class="ts-sidebar-bottom"><button class="ts-button" @click="connect">复制接入指令</button><button class="ts-text" @click="openDialog('settings')">接入与设置</button><p>私有空间 · 自托管</p></div>
     </aside>
     <main class="ts-main">
-      <header class="ts-top"><span>个人空间 / {{ selected ? selected.name : '主题空间' }}</span><div><button class="ts-button" @click="$emit('theme')">{{ themeMode === 'dark' ? '浅色' : '深色' }}</button><button class="ts-button" @click="connect">复制接入指令</button><button class="ts-text" @click="openDialog('settings')">设置</button></div></header>
+      <header class="ts-top"><span>个人空间 / {{ selected ? selected.name : '主题空间' }}</span><div><button class="ts-button" @click="$emit('theme')">{{ themeMode === 'dark' ? '浅色' : '深色' }}</button><button class="ts-button ts-connect-button" @click="connect">复制接入指令</button><button class="ts-text" @click="openDialog('settings')">设置</button></div></header>
       <div v-if="error && !dialog" class="ts-error" role="alert">{{ error }}<button @click="error = ''" aria-label="关闭错误">×</button></div>
       <template v-if="!selected">
         <div class="ts-heading"><div><h1>{{ group && group !== '__ungrouped' ? group : '你的主题空间' }}</h1><p>想法交给 Agent，成果在这里持续积累。</p></div><span class="ts-meta">{{ topics.length }} 个主题</span></div>
-        <div v-if="!topics.length" class="ts-welcome"><h2>从一个想法开始</h2><p>在 Grok 等外部平台下发任务，首次正式报告推送后，主题会自动出现。</p><button class="ts-button ts-primary" @click="connect">复制接入指令</button></div>
+        <div v-if="!topics.length" class="ts-welcome"><h2>从一个想法开始</h2><p>在 Grok 等外部平台下发任务，首次正式报告推送后，主题会自动出现。</p></div>
         <div v-if="tab === 'follow' && pinned.length && !query && !group" class="ts-pins"><button v-for="topic in pinned" :key="topic.id" @click="openTopic(topic)"><span class="ts-meta">{{ topic.group || '未分组' }} · 置顶</span><h3>{{ topic.name }}</h3><p>{{ topic.summary }}</p><span v-if="topic.unread_count" class="ts-accent">{{ topic.unread_count }} 条未读</span></button></div>
         <nav class="ts-tabs" aria-label="列表筛选"><button v-for="item in topicTabs" :key="item.key" :class="{ active: tab === item.key }" @click="showTab(item.key)">{{ item.label }} <span>{{ counts[item.key] }}</span></button></nav>
         <form class="ts-search-tools" @submit.prevent="search()"><input v-model="query" aria-label="搜索主题和内容" placeholder="搜索主题、关注点或报告内容…"><select v-model="group" aria-label="按分组筛选"><option value="">所有分组</option><option value="__ungrouped">未分组</option><option v-for="name in groups" :key="name">{{ name }}</option></select><button class="ts-button">搜索</button></form>
@@ -201,13 +200,13 @@ onUnmounted(() => { active = false; ++reportVersion; ++searchVersion; clearTimeo
       </template>
       <p v-if="notice" class="ts-notice" role="status">{{ notice }}</p>
       <footer class="ts-footer">Bolt Dock · 私有主题空间 <span>数据保存在你的服务器</span></footer>
-      <nav class="ts-mobile-nav" aria-label="手机主题导航"><button v-for="item in topicTabs" :key="item.key" :class="{ active: tab === item.key }" @click="showTab(item.key)">{{ item.label }}</button></nav>
+      <nav class="ts-mobile-nav" aria-label="主题导航"><button v-for="item in topicTabs" :key="item.key" :class="{ active: tab === item.key }" :aria-current="tab === item.key ? 'page' : undefined" @click="showTab(item.key)"><span>{{ item.label }}</span><small>{{ counts[item.key] }}</small></button></nav>
     </main>
     <dialog v-if="dialog" ref="actionDialog" class="ts-dialog" @cancel.prevent="closeDialog">
       <header><h2>{{ { connect: '复制一条指令，让 Agent 接入', settings: '接入与设置', stop: '停止跟踪并归档', confirm: '确认外部任务已停止', restore: '恢复主题', rename: '重命名主题', group: '主题归组', 'stop-guide': '停止跟踪指令' }[dialog] }}</h2><button class="ts-text" aria-label="关闭对话框" @click="closeDialog">×</button></header>
       <p v-if="error" class="ts-error" role="alert">{{ error }}</p>
       <template v-if="dialog === 'connect' || dialog === 'stop-guide'"><p>{{ dialog === 'connect' ? '把下面这段话交给外部 Agent。它会识别平台能力；需要授权或人工配置时会提示你。' : '请交给该主题的贡献任务；实际停止外部调度后，Agent 才能确认。' }}</p><textarea ref="copyField" :value="guide" readonly rows="12" aria-label="可复制的 Agent 指令"></textarea><button class="ts-button ts-primary" @click="copy(guide)">{{ copied ? '已复制' : '复制完整指令' }}</button><p v-if="copyFallback" role="status">剪贴板不可用，文本已选中，请手动复制。</p><p class="ts-meta">不包含管理员密钥。接入能力取决于外部平台，复制不等于已经连接。</p><button v-if="dialog === 'connect'" class="ts-text" @click="closeDialog(); $emit('connect')">高级 MCP / OAuth 配置</button></template>
-      <template v-else-if="dialog === 'settings'"><div class="ts-settings"><button class="ts-button" @click="closeDialog(); connect()">复制 Agent 接入指令</button><button class="ts-button" @click="closeDialog(); $emit('connect')">MCP 与 OAuth 管理</button><button class="ts-button" @click="closeDialog(); $emit('rest')">REST 推送指令</button><button class="ts-button" @click="$emit('notifications')">启用桌面通知</button><button class="ts-button" @click="closeDialog(); $emit('legacy')">来源与旧版任务管理</button><button class="ts-button" @click="closeDialog(); $emit('logout')">退出登录</button></div></template>
+      <template v-else-if="dialog === 'settings'"><div class="ts-settings"><button class="ts-button" @click="closeDialog(); $emit('connect')">MCP 与 OAuth 管理</button><button class="ts-button" @click="closeDialog(); $emit('rest')">REST 推送指令</button><button class="ts-button" @click="$emit('notifications')">启用桌面通知</button><button class="ts-button" @click="closeDialog(); $emit('legacy')">来源与旧版任务管理</button><button class="ts-button" @click="closeDialog(); $emit('logout')">退出登录</button></div></template>
       <form v-else @submit.prevent="submitDialog">
         <template v-if="dialog === 'rename'"><label>主题名称<input v-model="draftName" required maxlength="256"></label></template>
         <template v-else-if="dialog === 'group'"><label>分组名称<input v-model="draftGroup" maxlength="128" list="topic-groups" placeholder="留空为未分组"></label></template>
