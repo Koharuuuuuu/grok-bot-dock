@@ -472,7 +472,7 @@ func TestReportShareMigrationAndSQLiteBackupRestore(t *testing.T) {
 	if _, err := s.CreateReportShare(ctx, created.ID, digest, now, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.ExecContext(ctx, `PRAGMA wal_checkpoint(FULL)`); err != nil {
+	if err := s.Checkpoint(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Close(); err != nil {

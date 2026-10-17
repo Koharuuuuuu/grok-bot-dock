@@ -237,15 +237,16 @@ docker image prune -f
 
 ## 备份与恢复
 
-暂停服务后将 SQLite 文件复制到受保护的备份位置，再启动服务。恢复时也先停止服务，替换 `bolt-dock.db` 后启动。停服可保证 WAL 检查点完成；不要在数据库正在写入时仅复制主 `.db` 文件。
+备份前先让服务正常停机。收到 Docker 的 SIGTERM 后，Bolt Dock 会停止接收新请求、等待进行中的请求结束，并将 SQLite WAL 检查点写入主数据库；Compose 为此预留 30 秒。只有日志明确出现 `shutdown complete; SQLite WAL checkpointed` 后，才可只复制 `bolt-dock.db`。若容器被强制终止、检查点报错或没有这条日志，请勿只备份主 `.db` 文件；应先恢复服务，再使用 SQLite 一致性备份方式，或在服务完全停止时一并保留数据库及其 `-wal`、`-shm` 文件。
 
 ```sh
-docker compose stop bolt-dock
+docker compose stop --timeout 30 bolt-dock
+docker compose logs --tail=50 bolt-dock
 docker compose cp bolt-dock:/data/bolt-dock.db ./bolt-dock-backup.db
 docker compose start bolt-dock
 ```
 
-本地构建配置将上面的 Compose 文件名改为 `compose.local.yml`、服务容器名改为 `bolt-dock-local`，数据库路径仍为 `/data/bolt-dock.db`。恢复前把容器停下，用 `docker compose cp ./bolt-dock-backup.db bolt-dock:/data/bolt-dock.db` 复制回去，再启动。
+确认日志包含上述 checkpoint 成功信息后再复制。恢复时同样先正常停止服务，再替换 `/data/bolt-dock.db` 并启动；若正常停机未完成，不要将单文件备份覆盖到可能仍有 WAL 内容的数据目录。本地构建配置将上面的 Compose 文件名改为 `compose.local.yml`、服务容器名改为 `bolt-dock-local`，数据库路径仍为 `/data/bolt-dock.db`。
 
 ## HTTPS 反向代理与故障排查
 

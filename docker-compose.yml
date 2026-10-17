@@ -3,6 +3,7 @@ services:
     image: ghcr.io/nyakooo/grok-bot-dock:${BOLT_DOCK_TAG:-master}
     container_name: bolt-dock
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       PORT: 18765
       DATA_DIR: /data

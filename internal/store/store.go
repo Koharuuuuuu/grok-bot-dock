@@ -99,6 +99,19 @@ func Open(path string) (*Store, error) {
 }
 func (s *Store) Close() error { return s.db.Close() }
 
+// Checkpoint commits WAL contents into the main database file so it can be
+// copied on its own after the application has stopped writing.
+func (s *Store) Checkpoint(ctx context.Context) error {
+	var busy, logFrames, checkpointed int
+	if err := s.db.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &logFrames, &checkpointed); err != nil {
+		return fmt.Errorf("checkpoint SQLite WAL: %w", err)
+	}
+	if busy != 0 {
+		return fmt.Errorf("checkpoint SQLite WAL: database remained busy (%d frames, %d checkpointed)", logFrames, checkpointed)
+	}
+	return nil
+}
+
 func (s *Store) migrate(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sources(source TEXT PRIMARY KEY, created_at TEXT NOT NULL);
