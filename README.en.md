@@ -25,6 +25,8 @@ Open `http://localhost:18765` on the server and sign in with the same token. The
 
 Topics are the primary organizing unit; the app does not impose fixed model or agent sections. The first completed report creates a topic. Later runs reuse a stable identity or explicit `topic_id`. Groups, following, pins, and search help organize a growing topic list without triggering model calls.
 
+Desktop uses a sidebar to switch topic views; narrow screens use a persistent bottom navigation. Connection instructions and settings each have one stable entry in the page header.
+
 Archiving uses a stop request followed by confirmation that the external task has stopped. Archived topics keep their history and reject new reports. Restoring a topic does not restart a schedule on the external platform. See the [topic refactor acceptance record](docs/TOPIC_REFACTOR_ACCEPTANCE.md).
 
 Reports support full-text search, per-report unread state, Markdown reading, and revocable expiring share links. Anyone with a share link can read that report, so share only content suitable for public access.
