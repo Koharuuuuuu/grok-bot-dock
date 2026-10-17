@@ -24,11 +24,16 @@
 
 ## 能力
 
-- Bot 首次推送后自动出现响应式卡片；按来源筛选卡片和搜索结果，并展示 Bot/报告总量及动态未读数。打开报告后相应未读数清零，新报告到达后重新增加。
+- 默认工作台以主题为核心：关注、有更新、全部主题、已归档；支持分组、批量整理、置顶、逐篇未读和正文检索。来源与 Agent 是主题的贡献者，不再占用固定内容板块。旧版来源视图保留在设置中。
+- 首次正式发布自动创建主题；后续执行复用稳定任务身份和 `topic_id`。多个任务只有显式使用相同 `topic_id` 才合并，不根据标题猜测。
+- 顶部「复制接入指令」会读取真实 MCP 能力并尝试直接复制完整文案；客户端仍需具备远程 MCP 能力并完成授权。文案不包含管理密钥。
+- 停止归档采用请求、确认两阶段：全部贡献任务确认停止，或所有者提供证据并确认当前版本后才归档。恢复主题保留历史，但不会自动重启外部定时任务。
+- 重构范围、迁移注意事项和验证记录见 [验收记录](docs/TOPIC_REFACTOR_ACCEPTANCE.md)。
+- 旧版来源视图仍提供 Bot 卡片、来源筛选与数量统计；新主题视图打开一篇报告只清除该篇未读，新报告到达后继续增加。
 - 移动端顶栏按主要筛选/主题与次级操作分组；报告可创建 1 小时至 7 天的匿名限时分享，并可随时撤销。
 - 全局搜索支持中文；历史报告提供日期过滤、游标分页及 Markdown 阅读。
 - Markdown 支持表格、代码、引用、链接和图片；原始 HTML 禁用，渲染结果由 DOMPurify 消毒。
-- SSE 实时更新；用户主动允许后可显示浏览器通知。
+- SSE 实时更新；用户授权后，新报告即使在工作台前台打开时也会触发浏览器通知。通知依赖已登录页面保持打开并连接 SSE；浏览器离线期间不补发。
 - SQLite WAL 持久化、FTS5 trigram 搜索、Go 服务与 Vue 前端嵌入同一容器。
 - 多来源使用 `(source, bot_id)` 隔离身份；来源只能由收到的推送自动产生。
 
@@ -77,7 +82,7 @@ curl -X POST "https://YOUR_DOMAIN/api/v1/reports" \
 | `POST /api/v1/auth/login` | 使用 `ACCESS_TOKEN` 创建浏览器会话 |
 | `GET /api/v1/auth/session` | 探测当前浏览器会话，不泄露凭据 |
 | `POST /api/v1/auth/logout` | 立即撤销浏览器会话并清除 Cookie |
-| `GET /api/v1/sources` | 已推送来源及计数（`report_count` 为总报告数，`unread_count` 为按 Bot 阅读游标汇总的未读数） |
+| `GET /api/v1/sources` | 已推送来源及计数（`report_count` 为总报告数，`unread_count` 为按逐篇阅读记录汇总的未读数） |
 | `GET /api/v1/bots?source=` | Bot 卡片、未读状态和统计 |
 | `PATCH /api/v1/bots?source=&bot_id=` | 浏览器会话修改或清除 Bot 展示名称（`display_name`）；Bearer-only 推送客户端不可调用 |
 | `GET /api/v1/reports?source=&bot_id=&date=&cursor=` | 报告列表和历史分页 |
@@ -128,7 +133,7 @@ location ^~ /api/v1/public/shares/ {
 
 Bolt Dock 是独立自托管 MCP Server，不依赖 Codex、本机 Agent 进程或额外容器。现有 Go 服务在 `/mcp` 提供无状态 **Streamable HTTP**；MCP 与 REST 共用报告校验、SQLite、幂等及 SSE，REST API 保持不变。支持自定义远程 MCP、Streamable HTTP 与 Bearer 凭据的客户端可连接服务，并按客户端能力发现和调用工具。具体产品、版本和托管环境的支持情况须单独验证，不能由协议本身推断。
 
-当前工具为 `publish_report`（写入已完成的正式报告）和 `search_reports`（只读历史检索）；不提供删除、改名或管理凭据工具。工作台的「MCP 接入」面板从服务端读取真实工具能力，并显示当前页面地址推导出的 `/mcp` URL。若 HTTPS 反向代理使用了其他公开域名或路径，可在面板覆盖地址；该覆盖仅保存在当前浏览器，不会配置服务器。localhost 或内网地址只对能访问相应网络的客户端可用，不代表公网地址。
+当前工具为 `publish_report`（正式报告）、`search_reports`（历史检索）、`sync_topic_state`（停止状态同步）和 OAuth 客户端专用的 `sync_connection_state`（定向断开握手）；MCP 工具不提供删除主题或管理凭据的入口。工作台的「MCP 接入」面板从服务端读取真实工具能力，并显示当前页面地址推导出的 `/mcp` URL。若 HTTPS 反向代理使用了其他公开域名或路径，可在面板覆盖地址；该覆盖仅保存在当前浏览器，不会配置服务器。localhost 或内网地址只对能访问相应网络的客户端可用，不代表公网地址。
 
 客户端连接字段：MCP URL 为 `https://<你的公开域名>/mcp`，传输为 Streamable HTTP，认证头为 `Authorization: Bearer <由服务管理员安全提供>`。协议没有统一的客户端配置文件格式；在客户端自身的安全凭据设置中配置密钥，不要将 `ACCESS_TOKEN` 放进 URL、配置模板、页面、报告、日志或剪贴板。可在工作台复制不含密钥的服务 URL 或通用接入说明。
 
@@ -176,7 +181,7 @@ Legacy MCP Bearer 仍使用共享 `ACCESS_TOKEN`；OAuth 另行按 P8 配置启�
 
 P8 已合入 `master` 并发布到 GHCR（2026-10-11）；镜像包含可选 OAuth Authorization Code + PKCE S256，原共享 Bearer 和 REST API 保持兼容。OAuth 默认关闭。启用前配置 `OAUTH_ENABLED=true` 与 `PUBLIC_BASE_URL=https://<canonical-public-host>`；该值必须是固定 HTTPS origin，不支持 URL 子路径，不能由请求 `Host` 或 `X-Forwarded-*` 推导。仅 `localhost` / loopback 可用 HTTP 做本地隔离测试。OAuth 启用而 URL 缺失或不合规则会拒绝启动。首次先在测试/灰度环境部署并核对反向代理和数据库备份；真实 Grok/Claude 等客户端尚未验收，不能据此宣称客户端兼容。
 
-服务支持资源元数据 `/.well-known/oauth-protected-resource/mcp`、AS 元数据 `/.well-known/oauth-authorization-server`、授权/同意、Token、撤销端点。管理员在工作台「MCP 接入」中登记客户端名称和精确回调 URI；可选签发一次性展示的 confidential client secret。若公开客户端提供 HTTPS CIMD `client_id`，管理员也可手动登记该精确 ID 与回调 URI，避免服务端无法访问受 Cloudflare 挑战保护的元数据文档；回调仍逐字比对，授权仍要求 PKCE 与管理员 consent。授权码有效 5 分钟，PKCE 必须为 S256；access token 为不透明随机值，数据库仅存 SHA-256 摘要，有效 15 分钟；授权最长 30 天，可按授权或客户端撤销。权限为 `reports:read`（仅 `search_reports`）与 `reports:write`（仅 `publish_report`），有效但缺少工具 scope 的请求返回 403。OAuth token 不可访问 REST API。未手动固定的 CIMD 客户端仍通过 SSRF 防护 HTTPS 抓取和验证元数据；匿名 DCR 和 refresh token 未实现。
+服务支持资源元数据 `/.well-known/oauth-protected-resource/mcp`、AS 元数据 `/.well-known/oauth-authorization-server`、授权/同意、Token、撤销端点。管理员在工作台「MCP 接入」中登记客户端名称和精确回调 URI；可选签发一次性展示的 confidential client secret。若公开客户端提供 HTTPS CIMD `client_id`，管理员也可手动登记该精确 ID 与回调 URI，避免服务端无法访问受 Cloudflare 挑战保护的元数据文档；回调仍逐字比对，授权仍要求 PKCE 与管理员 consent。授权码有效 5 分钟，PKCE 必须为 S256；access token 为不透明随机值，数据库仅存 SHA-256 摘要，有效 15 分钟；授权最长 30 天，可按授权或客户端撤销。权限为 `reports:read`（仅 `search_reports`）与 `reports:write`（`publish_report` 与 `sync_topic_state`），有效但缺少工具 scope 的请求返回 403。OAuth token 不可访问 REST API。未手动固定的 CIMD 客户端仍通过 SSRF 防护 HTTPS 抓取和验证元数据；匿名 DCR 和 refresh token 未实现。
 
 OAuth 使用增量 SQLite v3 迁移，不修改既有报告/Bot/FTS 表；禁用 OAuth 不删授权表。公开启用前须验证实际反向代理原样转发 well-known、`/oauth/*`、`/mcp` 与 `WWW-Authenticate`，并完成数据库备份。**未在真实 Grok、Codex OAuth、Cursor 或 Claude 平台完成授权与工具调用实测；协议测试通过不等于这些客户端已验收。** 服务仍是单所有者模型；`reports:read` 可检索全库，写入者可声明 source/Bot 身份，不构成租户隔离。
 
@@ -232,15 +237,16 @@ docker image prune -f
 
 ## 备份与恢复
 
-暂停服务后将 SQLite 文件复制到受保护的备份位置，再启动服务。恢复时也先停止服务，替换 `bolt-dock.db` 后启动。停服可保证 WAL 检查点完成；不要在数据库正在写入时仅复制主 `.db` 文件。
+备份前先让服务正常停机。收到 Docker 的 SIGTERM 后，Bolt Dock 会停止接收新请求、等待进行中的请求结束，并将 SQLite WAL 检查点写入主数据库；Compose 为此预留 30 秒。只有日志明确出现 `shutdown complete; SQLite WAL checkpointed` 后，才可只复制 `bolt-dock.db`。若容器被强制终止、检查点报错或没有这条日志，请勿只备份主 `.db` 文件；应先恢复服务，再使用 SQLite 一致性备份方式，或在服务完全停止时一并保留数据库及其 `-wal`、`-shm` 文件。
 
 ```sh
-docker compose stop bolt-dock
+docker compose stop --timeout 30 bolt-dock
+docker compose logs --tail=50 bolt-dock
 docker compose cp bolt-dock:/data/bolt-dock.db ./bolt-dock-backup.db
 docker compose start bolt-dock
 ```
 
-本地构建配置将上面的 Compose 文件名改为 `compose.local.yml`、服务容器名改为 `bolt-dock-local`，数据库路径仍为 `/data/bolt-dock.db`。恢复前把容器停下，用 `docker compose cp ./bolt-dock-backup.db bolt-dock:/data/bolt-dock.db` 复制回去，再启动。
+确认日志包含上述 checkpoint 成功信息后再复制。恢复时同样先正常停止服务，再替换 `/data/bolt-dock.db` 并启动；若正常停机未完成，不要将单文件备份覆盖到可能仍有 WAL 内容的数据目录。使用本地构建配置时，为每条命令添加 `-f compose.local.yml`；Compose 服务名仍是 `bolt-dock`（`bolt-dock-local` 是容器名）。例如，备份命令为 `docker compose -f compose.local.yml cp bolt-dock:/data/bolt-dock.db ./bolt-dock-backup.db`，恢复命令为 `docker compose -f compose.local.yml cp ./bolt-dock-backup.db bolt-dock:/data/bolt-dock.db`。
 
 ## HTTPS 反向代理与故障排查
 

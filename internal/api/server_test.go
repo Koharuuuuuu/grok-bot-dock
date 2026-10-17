@@ -82,8 +82,12 @@ func TestMCPCapabilitiesRequireAuthenticationAndMatchRegisteredTools(t *testing.
 		var schema *jsonschema.Schema
 		if index == 0 {
 			schema, _ = jsonschema.For[publishReportInput](nil)
-		} else {
+		} else if index == 1 {
 			schema, _ = jsonschema.For[searchReportsInput](nil)
+		} else if index == 2 {
+			schema = topicSyncSchema()
+		} else {
+			schema = syncConnectionSchema()
 		}
 		if len(capability.Fields) != len(schema.Properties) {
 			t.Errorf("%s exposes %d field descriptions for %d schema properties", capability.Name, len(capability.Fields), len(schema.Properties))

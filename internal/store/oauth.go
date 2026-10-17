@@ -9,14 +9,16 @@ import (
 )
 
 type OAuthClient struct {
-	ID           string   `json:"client_id"`
-	Name         string   `json:"client_name"`
-	Redirects    []string `json:"redirect_uris"`
-	Registration string   `json:"registration_type"`
-	Confidential bool     `json:"confidential"`
-	SecretHash   string   `json:"-"`
-	CreatedAt    string   `json:"created_at"`
-	DisabledAt   string   `json:"disabled_at,omitempty"`
+	ID                    string   `json:"client_id"`
+	Name                  string   `json:"client_name"`
+	Redirects             []string `json:"redirect_uris"`
+	Registration          string   `json:"registration_type"`
+	Confidential          bool     `json:"confidential"`
+	SecretHash            string   `json:"-"`
+	CreatedAt             string   `json:"created_at"`
+	DisabledAt            string   `json:"disabled_at,omitempty"`
+	DisconnectRevision    int64    `json:"disconnect_revision,omitempty"`
+	DisconnectRequestedAt string   `json:"disconnect_requested_at,omitempty"`
 }
 
 type OAuthCode struct {
@@ -61,6 +63,8 @@ func (s *Store) migrateOAuth(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS oauth_tokens_grant_idx ON oauth_access_tokens(grant_id, revoked_at)`,
 		`CREATE INDEX IF NOT EXISTS oauth_tokens_expiry_idx ON oauth_access_tokens(expires_at)`,
 		`CREATE TABLE IF NOT EXISTS oauth_audit_events (id INTEGER PRIMARY KEY, event_at TEXT NOT NULL, event_type TEXT NOT NULL, client_id TEXT NOT NULL DEFAULT '', result TEXT NOT NULL, subject_ref TEXT NOT NULL DEFAULT '')`,
+		`CREATE TABLE IF NOT EXISTS oauth_client_disconnects (client_id TEXT PRIMARY KEY REFERENCES oauth_clients(client_id) ON DELETE CASCADE, revision INTEGER NOT NULL, requested_at TEXT NOT NULL)`,
+		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(6, datetime('now'))`,
 		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(2, datetime('now'))`,
 	} {
 		if _, err = tx.ExecContext(ctx, statement); err != nil {
@@ -114,7 +118,7 @@ func (s *Store) RegisterOAuthClient(ctx context.Context, id, name string, redire
 func (s *Store) OAuthClient(ctx context.Context, id string) (OAuthClient, error) {
 	var c OAuthClient
 	var redirects string
-	err := s.db.QueryRowContext(ctx, `SELECT client_id,name,redirect_uris_json,client_secret_hash,created_at,disabled_at,registration_type FROM oauth_clients WHERE client_id=?`, id).Scan(&c.ID, &c.Name, &redirects, &c.SecretHash, &c.CreatedAt, &c.DisabledAt, &c.Registration)
+	err := s.db.QueryRowContext(ctx, `SELECT c.client_id,c.name,c.redirect_uris_json,c.client_secret_hash,c.created_at,c.disabled_at,c.registration_type,COALESCE(d.revision,0),COALESCE(d.requested_at,'') FROM oauth_clients c LEFT JOIN oauth_client_disconnects d ON d.client_id=c.client_id WHERE c.client_id=?`, id).Scan(&c.ID, &c.Name, &redirects, &c.SecretHash, &c.CreatedAt, &c.DisabledAt, &c.Registration, &c.DisconnectRevision, &c.DisconnectRequestedAt)
 	if err != nil {
 		return c, err
 	}
@@ -122,8 +126,102 @@ func (s *Store) OAuthClient(ctx context.Context, id string) (OAuthClient, error)
 	return c, err
 }
 
+func (s *Store) OAuthTokenClient(ctx context.Context, tokenHash, resource string) (string, []string, error) {
+	var id, raw string
+	now := time.Now().UTC().Format(timestampFormat)
+	err := s.db.QueryRowContext(ctx, `SELECT t.client_id,t.scopes_json FROM oauth_access_tokens t JOIN oauth_grants g ON g.id=t.grant_id JOIN oauth_clients c ON c.client_id=t.client_id WHERE t.token_hash=? AND t.resource=? AND t.expires_at>? AND g.expires_at>? AND t.revoked_at='' AND g.revoked_at='' AND c.disabled_at=''`, tokenHash, resource, now, now).Scan(&id, &raw)
+	if err != nil {
+		return "", nil, err
+	}
+	var scopes []string
+	err = json.Unmarshal([]byte(raw), &scopes)
+	return id, scopes, err
+}
+
+func (s *Store) OAuthClientDisconnect(ctx context.Context, id string) (int64, string, error) {
+	var revision int64
+	var requested string
+	err := s.db.QueryRowContext(ctx, `SELECT revision,requested_at FROM oauth_client_disconnects WHERE client_id=?`, id).Scan(&revision, &requested)
+	return revision, requested, err
+}
+
+// RequestOAuthClientDeletion keeps a narrowly restricted notification channel
+// alive so the named OAuth client can acknowledge removal on its next check-in.
+func (s *Store) RequestOAuthClientDeletion(ctx context.Context, id string) (int64, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	var exists int
+	if err = tx.QueryRowContext(ctx, `SELECT 1 FROM oauth_clients WHERE client_id=?`, id).Scan(&exists); err != nil {
+		return 0, err
+	}
+	now := time.Now().UTC().Format(timestampFormat)
+	_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO oauth_client_disconnects(client_id,revision,requested_at) VALUES(?,1,?)`, id, now)
+	if err != nil {
+		return 0, err
+	}
+	var revision int64
+	err = tx.QueryRowContext(ctx, `SELECT revision FROM oauth_client_disconnects WHERE client_id=?`, id).Scan(&revision)
+	if err != nil {
+		return 0, err
+	}
+	return revision, tx.Commit()
+}
+
+func (s *Store) AcknowledgeOAuthClientDeletion(ctx context.Context, id string, revision int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var current int64
+	if err = tx.QueryRowContext(ctx, `SELECT revision FROM oauth_client_disconnects WHERE client_id=?`, id).Scan(&current); err != nil {
+		return err
+	}
+	if current != revision {
+		return ErrOAuthDisconnectRevision
+	}
+	for _, stmt := range []string{
+		`DELETE FROM oauth_access_tokens WHERE client_id=?`,
+		`DELETE FROM oauth_grants WHERE client_id=?`,
+		`DELETE FROM oauth_clients WHERE client_id=?`,
+	} {
+		if _, err = tx.ExecContext(ctx, stmt, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) DeleteOAuthClientImmediately(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, stmt := range []string{
+		`DELETE FROM oauth_access_tokens WHERE client_id=?`,
+		`DELETE FROM oauth_grants WHERE client_id=?`,
+		`DELETE FROM oauth_clients WHERE client_id=?`,
+	} {
+		res, execErr := tx.ExecContext(ctx, stmt, id)
+		if execErr != nil {
+			return execErr
+		}
+		if stmt == `DELETE FROM oauth_clients WHERE client_id=?` {
+			n, _ := res.RowsAffected()
+			if n == 0 {
+				return sql.ErrNoRows
+			}
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *Store) OAuthClients(ctx context.Context) ([]OAuthClient, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT client_id,name,redirect_uris_json,client_secret_hash,created_at,disabled_at,registration_type FROM oauth_clients ORDER BY created_at DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT c.client_id,c.name,c.redirect_uris_json,c.client_secret_hash,c.created_at,c.disabled_at,c.registration_type,COALESCE(d.revision,0),COALESCE(d.requested_at,'') FROM oauth_clients c LEFT JOIN oauth_client_disconnects d ON d.client_id=c.client_id ORDER BY c.created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +230,7 @@ func (s *Store) OAuthClients(ctx context.Context) ([]OAuthClient, error) {
 	for rows.Next() {
 		var c OAuthClient
 		var redirects string
-		if err := rows.Scan(&c.ID, &c.Name, &redirects, &c.SecretHash, &c.CreatedAt, &c.DisabledAt, &c.Registration); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &redirects, &c.SecretHash, &c.CreatedAt, &c.DisabledAt, &c.Registration, &c.DisconnectRevision, &c.DisconnectRequestedAt); err != nil {
 			return nil, err
 		}
 		c.Confidential = c.SecretHash != ""
@@ -413,5 +511,6 @@ func (s *Store) OAuthAudit(ctx context.Context, eventType, clientID, result stri
 }
 
 var ErrOAuthDisabled = errors.New("oauth client disabled")
+var ErrOAuthDisconnectRevision = errors.New("oauth client disconnect revision conflict")
 var ErrOAuthPublicClient = errors.New("public OAuth client has no client secret")
 var ErrOAuthClientTypeConflict = errors.New("oauth client registration type conflict")

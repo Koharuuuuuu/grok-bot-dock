@@ -22,6 +22,8 @@ type Store struct {
 const timestampFormat = "2006-01-02T15:04:05.000000000Z"
 
 type ReportInput struct {
+	TopicID    string    `json:"topic_id"`
+	TopicName  string    `json:"topic_name"`
 	Source     string    `json:"source"`
 	BotID      string    `json:"bot_id"`
 	BotName    string    `json:"bot_name"`
@@ -35,6 +37,7 @@ type ReportInput struct {
 }
 
 type Report struct {
+	TopicID     string   `json:"topic_id"`
 	ID          int64    `json:"id"`
 	Source      string   `json:"source"`
 	BotID       string   `json:"bot_id"`
@@ -71,6 +74,7 @@ type Source struct {
 type Page struct {
 	Items      []Report `json:"items"`
 	NextCursor string   `json:"next_cursor,omitempty"`
+	TopicIDs   []string `json:"topic_ids,omitempty"`
 }
 
 func Open(path string) (*Store, error) {
@@ -94,6 +98,19 @@ func Open(path string) (*Store, error) {
 	return s, nil
 }
 func (s *Store) Close() error { return s.db.Close() }
+
+// Checkpoint commits WAL contents into the main database file so it can be
+// copied on its own after the application has stopped writing.
+func (s *Store) Checkpoint(ctx context.Context) error {
+	var busy, logFrames, checkpointed int
+	if err := s.db.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &logFrames, &checkpointed); err != nil {
+		return fmt.Errorf("checkpoint SQLite WAL: %w", err)
+	}
+	if busy != 0 {
+		return fmt.Errorf("checkpoint SQLite WAL: database remained busy (%d frames, %d checkpointed)", logFrames, checkpointed)
+	}
+	return nil
+}
 
 func (s *Store) migrate(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
@@ -147,7 +164,10 @@ INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(1,datetime('n
 	if err := s.migrateOAuth(ctx); err != nil {
 		return err
 	}
-	return s.migrateShares(ctx)
+	if err := s.migrateShares(ctx); err != nil {
+		return err
+	}
+	return s.migrateTopics(ctx)
 }
 
 func (s *Store) CreateReport(ctx context.Context, in ReportInput) (Report, bool, error) {
@@ -183,8 +203,12 @@ func (s *Store) CreateReport(ctx context.Context, in ReportInput) (Report, bool,
 			return Report{}, false, err
 		}
 	}
+	topicID, err := bindReportTopic(ctx, tx, in)
+	if err != nil {
+		return Report{}, false, err
+	}
 	tags, _ := json.Marshal(in.Tags)
-	res, err := tx.ExecContext(ctx, "INSERT INTO reports(bot_pk,external_id,executed_at,received_at,title,summary,tags_json,content_md) VALUES(?,?,?,?,?,?,?,?)", botPK, nullIfEmpty(in.ExternalID), executed, now, in.Title, in.Summary, string(tags), in.Content)
+	res, err := tx.ExecContext(ctx, "INSERT INTO reports(bot_pk,external_id,executed_at,received_at,title,summary,tags_json,content_md,topic_id) VALUES(?,?,?,?,?,?,?,?,?)", botPK, nullIfEmpty(in.ExternalID), executed, now, in.Title, in.Summary, string(tags), in.Content, topicID)
 	if err != nil {
 		return Report{}, false, err
 	}
@@ -208,14 +232,14 @@ func nullIfEmpty(v string) any {
 	return v
 }
 
-const reportSelect = `SELECT r.id,b.source,b.bot_id,b.bot_name,COALESCE(b.display_name,''),b.avatar_url,r.executed_at,r.received_at,r.title,r.summary,r.tags_json,r.content_md FROM reports r JOIN bots b ON b.id=r.bot_pk`
+const reportSelect = `SELECT r.id,b.source,b.bot_id,b.bot_name,COALESCE(b.display_name,''),b.avatar_url,r.executed_at,r.received_at,r.title,r.summary,r.tags_json,r.content_md,COALESCE(r.topic_id,'') FROM reports r JOIN bots b ON b.id=r.bot_pk`
 
 type rowScanner interface{ Scan(...any) error }
 
 func scanReport(row rowScanner, _ *Report) (Report, error) {
 	var r Report
 	var tags string
-	err := row.Scan(&r.ID, &r.Source, &r.BotID, &r.BotName, &r.DisplayName, &r.AvatarURL, &r.ExecutedAt, &r.ReceivedAt, &r.Title, &r.Summary, &tags, &r.Content)
+	err := row.Scan(&r.ID, &r.Source, &r.BotID, &r.BotName, &r.DisplayName, &r.AvatarURL, &r.ExecutedAt, &r.ReceivedAt, &r.Title, &r.Summary, &tags, &r.Content, &r.TopicID)
 	if err == nil {
 		_ = json.Unmarshal([]byte(tags), &r.Tags)
 	}
@@ -293,7 +317,7 @@ func (s *Store) RenameBot(ctx context.Context, source, botID, displayName string
 }
 
 func (s *Store) Sources(ctx context.Context) ([]Source, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT s.source,COUNT(DISTINCT b.id),COUNT(r.id),COUNT(CASE WHEN r.id>b.last_read_report_id THEN 1 END) FROM sources s LEFT JOIN bots b ON b.source=s.source LEFT JOIN reports r ON r.bot_pk=b.id GROUP BY s.source ORDER BY s.source`)
+	rows, err := s.db.QueryContext(ctx, `SELECT s.source,COUNT(DISTINCT b.id),COUNT(r.id),COUNT(CASE WHEN NOT EXISTS(SELECT 1 FROM report_reads rr WHERE rr.report_id=r.id) THEN r.id END) FROM sources s LEFT JOIN bots b ON b.source=s.source LEFT JOIN reports r ON r.bot_pk=b.id GROUP BY s.source ORDER BY s.source`)
 	if err != nil {
 		return nil, err
 	}
@@ -309,7 +333,7 @@ func (s *Store) Sources(ctx context.Context) ([]Source, error) {
 	return out, rows.Err()
 }
 func (s *Store) Bots(ctx context.Context, source string) ([]Bot, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT b.source,b.bot_id,b.bot_name,COALESCE(b.display_name,''),b.avatar_url,b.last_report_at,COUNT(r.id),COUNT(CASE WHEN r.id>b.last_read_report_id THEN 1 END),b.last_read_report_id FROM bots b LEFT JOIN reports r ON r.bot_pk=b.id WHERE (?='' OR b.source=?) GROUP BY b.id ORDER BY b.last_report_at DESC,b.id DESC`, source, source)
+	rows, err := s.db.QueryContext(ctx, `SELECT b.source,b.bot_id,b.bot_name,COALESCE(b.display_name,''),b.avatar_url,b.last_report_at,COUNT(r.id),COUNT(CASE WHEN NOT EXISTS(SELECT 1 FROM report_reads rr WHERE rr.report_id=r.id) THEN r.id END),b.last_read_report_id FROM bots b LEFT JOIN reports r ON r.bot_pk=b.id WHERE (?='' OR b.source=?) GROUP BY b.id ORDER BY b.last_report_at DESC,b.id DESC`, source, source)
 	if err != nil {
 		return nil, err
 	}
@@ -337,7 +361,12 @@ func (s *Store) LatestReport(ctx context.Context, source, botID string) (Report,
 	return scanReport(s.db.QueryRowContext(ctx, reportSelect+" WHERE b.source=? AND b.bot_id=? ORDER BY r.executed_at DESC,r.id DESC LIMIT 1", source, botID), nil)
 }
 func (s *Store) MarkRead(ctx context.Context, source, botID string, reportID int64) error {
-	result, err := s.db.ExecContext(ctx, `UPDATE bots SET last_read_report_id=MAX(last_read_report_id,?) WHERE source=? AND bot_id=? AND EXISTS(SELECT 1 FROM reports r WHERE r.id=? AND r.bot_pk=bots.id)`, reportID, source, botID, reportID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE bots SET last_read_report_id=MAX(last_read_report_id,?) WHERE source=? AND bot_id=? AND EXISTS(SELECT 1 FROM reports r WHERE r.id=? AND r.bot_pk=bots.id)`, reportID, source, botID, reportID)
 	if err != nil {
 		return err
 	}
@@ -348,7 +377,10 @@ func (s *Store) MarkRead(ctx context.Context, source, botID string, reportID int
 	if changed == 0 {
 		return sql.ErrNoRows
 	}
-	return nil
+	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO report_reads SELECT r.id FROM reports r JOIN bots b ON b.id=r.bot_pk WHERE b.source=? AND b.bot_id=? AND r.id<=b.last_read_report_id`, source, botID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func encodeCursor(t string, id int64) string {
@@ -410,11 +442,42 @@ func (s *Store) ListReports(ctx context.Context, source, botID, date, cursor str
 }
 
 func (s *Store) Search(ctx context.Context, q, source, botID, from, to, cursor string, limit int) (Page, error) {
+	return s.SearchScoped(ctx, q, source, botID, from, to, cursor, limit, TopicSearchScope{})
+}
+
+type TopicSearchScope struct{ Tab, Group, TopicID string }
+
+func (s *Store) SearchScoped(ctx context.Context, q, source, botID, from, to, cursor string, limit int, scope TopicSearchScope) (Page, error) {
 	if limit < 1 || limit > 100 {
 		limit = 20
 	}
 	base := reportSelect + ` JOIN report_fts_map fm ON fm.report_id=r.id JOIN report_fts f ON f.rowid=fm.fts_rowid WHERE (?='' OR b.source=?) AND (?='' OR b.bot_id=?) AND (?='' OR r.executed_at>=?) AND (?='' OR r.executed_at<?)`
 	args := []any{source, source, botID, botID, from, from, to, to}
+	if scope.TopicID != "" {
+		base += ` AND r.topic_id=?`
+		args = append(args, scope.TopicID)
+	}
+	if scope.Tab != "" || scope.Group != "" {
+		base += ` AND EXISTS(SELECT 1 FROM topics t WHERE t.id=r.topic_id`
+		if scope.Tab == "archived" {
+			base += ` AND t.status='archived'`
+		} else {
+			base += ` AND t.status<>'archived'`
+		}
+		if scope.Tab == "follow" {
+			base += ` AND t.followed=1`
+		}
+		if scope.Tab == "updates" {
+			base += ` AND EXISTS(SELECT 1 FROM reports unseen LEFT JOIN report_reads rr ON rr.report_id=unseen.id WHERE unseen.topic_id=t.id AND rr.report_id IS NULL)`
+		}
+		if scope.Group == "__ungrouped" {
+			base += ` AND t.group_name=''`
+		} else if scope.Group != "" {
+			base += ` AND t.group_name=?`
+			args = append(args, scope.Group)
+		}
+		base += `)`
+	}
 	if len([]rune(q)) >= 3 {
 		base += ` AND report_fts MATCH ?`
 		args = append(args, `"`+strings.ReplaceAll(q, `"`, `""`)+`"`)
@@ -422,6 +485,24 @@ func (s *Store) Search(ctx context.Context, q, source, botID, from, to, cursor s
 		base += ` AND (r.title LIKE ? ESCAPE '\' OR r.summary LIKE ? ESCAPE '\' OR r.content_md LIKE ? ESCAPE '\' OR r.tags_json LIKE ? ESCAPE '\')`
 		like := "%" + strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_").Replace(q) + "%"
 		args = append(args, like, like, like, like)
+	}
+	topicRows, err := s.db.QueryContext(ctx, `SELECT DISTINCT r.topic_id FROM reports r JOIN bots b ON b.id=r.bot_pk`+strings.TrimPrefix(base, reportSelect), args...)
+	if err != nil {
+		return Page{}, err
+	}
+	topicIDs := []string{}
+	for topicRows.Next() {
+		var id string
+		if err = topicRows.Scan(&id); err != nil {
+			topicRows.Close()
+			return Page{}, err
+		}
+		topicIDs = append(topicIDs, id)
+	}
+	err = topicRows.Err()
+	topicRows.Close()
+	if err != nil {
+		return Page{}, err
 	}
 	if cursor != "" {
 		t, id, e := decodeCursor(cursor)
@@ -448,7 +529,7 @@ func (s *Store) Search(ctx context.Context, q, source, botID, from, to, cursor s
 	if err = rows.Err(); err != nil {
 		return Page{}, err
 	}
-	page := Page{Items: items}
+	page := Page{Items: items, TopicIDs: topicIDs}
 	if len(items) > limit {
 		last := items[limit-1]
 		page.Items = items[:limit]

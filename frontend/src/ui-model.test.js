@@ -108,8 +108,8 @@ describe('Bolt Dock interface helpers', () => {
 
   it('degrades notifications when unsupported or permission is denied', () => {
     expect(notificationStatus(false, 'default')).toBe('当前浏览器不支持通知')
-    expect(notificationStatus(true, 'denied')).toBe('通知未获授权')
-    expect(notificationStatus(true, 'granted')).toBe('通知已开启')
+    expect(notificationStatus(true, 'denied')).toBe('通知未获授权，请在浏览器站点设置中允许通知')
+    expect(notificationStatus(true, 'granted')).toBe('通知已开启；需保持此页面在浏览器中打开')
   })
 
   it('keeps failed-login and expired-session messages independent of credentials and response bodies', () => {

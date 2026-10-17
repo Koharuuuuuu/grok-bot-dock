@@ -42,9 +42,13 @@ var mcpToolCapabilities = []mcpToolCapability{
 		Description:         "按全文关键词查询历史报告，可按来源、Bot、日期筛选并使用游标分页。仅返回元数据和摘要。",
 		ProtocolDescription: "Search stored report history by full-text query, including Chinese, with optional source, Bot, date, and cursor filters. Read-only; returns report metadata and summaries, never full Markdown.",
 	},
+	topicSyncCapability,
+	connectionSyncCapability,
 }
 
 type publishReportInput struct {
+	TopicID      *string  `json:"topic_id,omitempty" jsonschema:"Stable topic ID; reuse across runs and explicitly share across contributing tasks"`
+	TopicName    *string  `json:"topic_name,omitempty" jsonschema:"Name used only when creating a new topic"`
 	ExecutedAt   string   `json:"executed_at" jsonschema:"实际 RFC3339 完成时间"`
 	Content      string   `json:"content" jsonschema:"完整 Markdown 正文；仅发布已确认的最终报告"`
 	Source       *string  `json:"source,omitempty" jsonschema:"来源标识；省略或留空时记为 unknown"`
@@ -60,6 +64,7 @@ type publishReportInput struct {
 }
 
 type publishReportOutput struct {
+	TopicID    string `json:"topic_id"`
 	ReportID   int64  `json:"report_id"`
 	Created    bool   `json:"created"`
 	Duplicate  bool   `json:"duplicate"`
@@ -85,6 +90,14 @@ func capabilityMetadata(maxBytes int64) []mcpToolCapability {
 		capabilities[index].Fields = schemaFieldDescriptions(schema)
 		capabilities[index].Example = schemaExample(schema)
 	}
+	control := topicSyncCapability
+	control.Fields = schemaFieldDescriptions(topicSyncSchema())
+	control.Example = `{"source":"grok","stable_task_id":"airport-watch"}`
+	capabilities[2] = control
+	connection := connectionSyncCapability
+	connection.Fields = schemaFieldDescriptions(syncConnectionSchema())
+	connection.Example = schemaExample(syncConnectionSchema())
+	capabilities[3] = connection
 	return capabilities
 }
 
@@ -94,6 +107,8 @@ func buildMCPInputSchemas(maxBytes int64) (*jsonschema.Schema, *jsonschema.Schem
 		panic(fmt.Sprintf("build publish_report schema: %v", err))
 	}
 	setSchemaMaxLength(publishSchema, "source", 63)
+	setSchemaMaxLength(publishSchema, "topic_id", 128)
+	setSchemaMaxLength(publishSchema, "topic_name", 256)
 	setSchemaMaxLength(publishSchema, "bot_id", 128)
 	setSchemaMaxLength(publishSchema, "stable_task_id", 512)
 	setSchemaMaxLength(publishSchema, "bot_name", 256)
@@ -209,6 +224,7 @@ func schemaExample(schema *jsonschema.Schema) string {
 }
 
 type reportSearchItem struct {
+	TopicID    string   `json:"topic_id"`
 	ReportID   int64    `json:"report_id"`
 	Source     string   `json:"source"`
 	BotID      string   `json:"bot_id"`
@@ -229,6 +245,7 @@ func (s *Server) newMCPHandler() http.Handler {
 		Instructions: "Bolt Dock publishes and searches self-hosted execution reports. Only publish completed, confirmed final reports. Use a stable bot_id or stable_task_id; reuse external_id for retries. Client call strategy is not a security boundary.",
 	})
 	nonDestructive := false
+	destructive := true
 	closedWorld := false
 	publishSchema, searchSchema := buildMCPInputSchemas(s.maxBytes)
 	mcp.AddTool(server, &mcp.Tool{
@@ -245,6 +262,8 @@ func (s *Server) newMCPHandler() http.Handler {
 		InputSchema: searchSchema,
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: &nonDestructive, IdempotentHint: true, OpenWorldHint: &closedWorld},
 	}, s.handleMCPSearchReports)
+	mcp.AddTool(server, &mcp.Tool{Name: topicSyncCapability.Name, Title: topicSyncCapability.Title, Description: topicSyncCapability.ProtocolDescription, InputSchema: topicSyncSchema(), Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &nonDestructive, IdempotentHint: true, OpenWorldHint: &closedWorld}}, s.handleMCPSyncTopic)
+	mcp.AddTool(server, &mcp.Tool{Name: connectionSyncCapability.Name, Title: connectionSyncCapability.Title, Description: connectionSyncCapability.ProtocolDescription, InputSchema: syncConnectionSchema(), Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &destructive, IdempotentHint: true, OpenWorldHint: &closedWorld}}, s.handleMCPSyncConnection)
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{
 		MaxRequestBodyBytes:          s.maxBytes,
 		Stateless:                    true,
@@ -305,8 +324,12 @@ func (s *Server) mcpAuth(next http.Handler) http.Handler {
 					if request.Params.Name == "search_reports" {
 						required = oauthReadScope
 					}
-					if request.Params.Name == "publish_report" {
+					if request.Params.Name == "publish_report" || request.Params.Name == "sync_topic_state" {
 						required = oauthWriteScope
+					}
+					if principal.disconnectRequested && request.Params.Name != "sync_connection_state" {
+						writeJSON(w, http.StatusForbidden, map[string]any{"jsonrpc": "2.0", "id": request.ID, "error": map[string]any{"code": -32001, "message": "client_disconnect_requested", "data": map[string]any{"revision": principal.disconnectRevision, "next_step": "call sync_connection_state with disconnected=true"}}})
+						return
 					}
 					if required != "" && !principal.scopes[required] {
 						w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer error="insufficient_scope", scope="%s", resource_metadata="%s/.well-known/oauth-protected-resource/mcp"`, required, s.oauthBase()))
@@ -326,6 +349,12 @@ func (s *Server) handleMCPPublishReport(ctx context.Context, _ *mcp.CallToolRequ
 		return nil, publishReportOutput{}, errors.New("insufficient_scope: reports:write is required")
 	}
 	raw := reportRequest{ExecutedAt: input.ExecutedAt, Content: input.Content}
+	if input.TopicID != nil {
+		raw.TopicID = *input.TopicID
+	}
+	if input.TopicName != nil {
+		raw.TopicName = *input.TopicName
+	}
 	if input.Source != nil {
 		raw.Source = *input.Source
 	}
@@ -366,11 +395,15 @@ func (s *Server) handleMCPPublishReport(ctx context.Context, _ *mcp.CallToolRequ
 	}
 	report, duplicate, err := s.publishReport(ctx, in)
 	if err != nil {
+		var stateError *apiError
+		if errors.As(err, &stateError) {
+			return nil, publishReportOutput{}, stateError
+		}
 		return nil, publishReportOutput{}, fmt.Errorf("could not save report")
 	}
 	return nil, publishReportOutput{
 		ReportID: report.ID, Created: !duplicate, Duplicate: duplicate,
-		Source: report.Source, BotID: report.BotID, ExecutedAt: report.ExecutedAt,
+		Source: report.Source, BotID: report.BotID, ExecutedAt: report.ExecutedAt, TopicID: report.TopicID,
 	}, nil
 }
 
@@ -426,7 +459,7 @@ func (s *Server) handleMCPSearchReports(ctx context.Context, _ *mcp.CallToolRequ
 		if name == "" {
 			name = report.BotName
 		}
-		out.Items = append(out.Items, reportSearchItem{ReportID: report.ID, Source: report.Source, BotID: report.BotID, BotName: name, Title: report.Title, Summary: report.Summary, ExecutedAt: report.ExecutedAt, Tags: report.Tags})
+		out.Items = append(out.Items, reportSearchItem{TopicID: report.TopicID, ReportID: report.ID, Source: report.Source, BotID: report.BotID, BotName: name, Title: report.Title, Summary: report.Summary, ExecutedAt: report.ExecutedAt, Tags: report.Tags})
 	}
 	return nil, out, nil
 }

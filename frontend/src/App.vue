@@ -1,11 +1,16 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { notifyReport } from './notifications'
+import TopicWorkspace from './components/TopicWorkspace.vue'
 import { renderSanitizedMarkdown } from './markdown'
 import { buildMCPServiceURL, classifyMCPAddress, highlightParts, loginFailureMessage, makeCodexMCPConfig, makeMCPGenericGuide, makeSearchParams, normalizeMCPAddressBase, notificationStatus, readMCPAddressOverride, refreshesSelectedBot, searchSnippet, sessionExpiredMessage, writeMCPAddressOverride } from './ui-model'
 import { readImmersivePreference, readReaderFontSize, writeImmersivePreference, writeReaderFontSize } from './reader-preferences'
 import { readThemePreference, writeThemePreference } from './theme-preferences'
 
 const authenticated = ref(false)
+const legacyWorkspace = ref(false)
+const topicRefreshKey = ref(0)
+async function shareTopicReport(report) { selectedReport.value = report; await openShareDialog() }
 const authReady = ref(false)
 const tokenInput = ref('')
 const tokenError = ref('')
@@ -89,6 +94,7 @@ let previousBodyOverflow = ''
 let previousBodyPaddingRight = ''
 let streamAbort
 let refreshTimer
+let oauthRefreshTimer
 let authChannel
 let copyFeedbackTimer
 const isPublicShare = window.location.pathname.startsWith('/share/')
@@ -236,6 +242,7 @@ async function loadData() {
     if (source.value && !sources.value.some(item => item.source === source.value)) source.value = ''
     bots.value = botData.items || []
     stats.value = botData.stats || stats.value
+    topicRefreshKey.value++
     if (selected.value) {
       const updated = bots.value.find(bot => bot.source === selected.value.source && bot.bot_id === selected.value.bot_id)
       if (updated) selected.value = updated
@@ -555,12 +562,28 @@ async function createOAuthClient() {
   } catch (e) { oauthManagementError.value = e.message }
   finally { oauthManagementBusy.value = false }
 }
-async function disableOAuthClient(client) {
-  if (!window.confirm(`停用 ${client.client_name}？相关授权和 Token 会立即失效。`)) return
+async function requestOAuthClientDeletion(client) {
+  if (!window.confirm(`请求删除 ${client.client_name}？Bolt Dock 会立即限制它只能确认断开；对接方下次连接并检查时会收到删除通知。访问令牌过期的客户端可以重新授权后检查。客户端确认后，本端才会移除客户端和授权记录。若对方始终不再连接，可强制删除，但对方将无法收到通知。`)) return
   oauthManagementError.value = ''
   oauthManagementNotice.value = ''
-  try { await api(`/api/v1/oauth/clients/${encodeURIComponent(client.client_id)}`, { method: 'DELETE' }); await loadOAuthManagement() }
+  try {
+    const result = await api(`/api/v1/oauth/clients/${encodeURIComponent(client.client_id)}`, { method: 'DELETE' })
+    await loadOAuthManagement()
+    oauthManagementNotice.value = `${client.client_name}：删除通知已登记；对接方下次连接并检查时会收到通知。若访问令牌已过期，对方可重新授权后检查。服务端无法向离线客户端主动推送。版本 ${result.revision}。`
+  }
   catch (e) { oauthManagementError.value = e.message }
+}
+async function forceDeleteOAuthClient(client) {
+  if (!window.confirm(`对接方尚未确认断开。强制删除 ${client.client_name} 会立即清除本端客户端和授权记录；离线的对接方无法收到通知，需要你在对应客户端手动移除该连接。继续强制删除？`)) return
+  oauthManagementBusy.value = true
+  oauthManagementError.value = ''
+  oauthManagementNotice.value = ''
+  try {
+    await api('/api/v1/oauth/clients/force-delete', { method: 'POST', body: JSON.stringify({ client_id: client.client_id }) })
+    await loadOAuthManagement()
+    oauthManagementNotice.value = `${client.client_name} 已从本端删除并吊销全部授权；对接方未确认，请手动删除其客户端配置。`
+  } catch (e) { oauthManagementError.value = e.message }
+  finally { oauthManagementBusy.value = false }
 }
 async function enableOAuthClient(client) {
   if (oauthManagementBusy.value) return
@@ -658,9 +681,11 @@ async function enableNotifications() {
   setTimeout(() => { notificationState.value = '' }, 2600)
 }
 function notify(report) {
-  if (!('Notification' in window) || Notification.permission !== 'granted' || document.visibilityState === 'visible') return
-  const note = new Notification(report.bot_name || 'Bolt Dock', { body: report.title || report.summary || '收到新报告', tag: `${report.source}:${report.bot_id}` })
-  note.onclick = () => { window.focus(); const bot = bots.value.find(x => x.source === report.source && x.bot_id === report.bot_id); if (bot) openBot(bot) }
+  notifyReport(report, window.Notification, () => {
+    window.focus()
+    const bot = bots.value.find(x => x.source === report.source && x.bot_id === report.bot_id)
+    if (bot) openBot(bot)
+  })
 }
 async function startStream() {
   streamAbort?.abort(); streamAbort = new AbortController()
@@ -688,7 +713,7 @@ async function startStream() {
           if (data) {
             const payload = JSON.parse(data)
             if (event === 'report.created') notify(payload)
-            if (['report.created', 'report.deleted', 'bot.deleted', 'bot.updated'].includes(event)) {
+            if (['report.created', 'report.deleted', 'bot.deleted', 'bot.updated', 'topic.updated'].includes(event)) {
               clearTimeout(refreshTimer)
               refreshTimer = setTimeout(async () => {
                 try {
@@ -700,6 +725,14 @@ async function startStream() {
                   if (searching.value) await runSearch()
                 } catch {}
               }, 120)
+            }
+            if (event === 'oauth.client.deleted' && mcpConfigOpen.value && mcpCapabilities.value?.oauth_enabled) {
+              const deletedClient = oauthClients.value.find(client => client.client_id === payload.client_id)
+              oauthManagementNotice.value = payload.status === 'forced'
+                ? `${deletedClient?.client_name || 'OAuth 客户端'} 已从本端强制删除；对接方未确认，请手动检查其客户端配置。`
+                : `${deletedClient?.client_name || 'OAuth 客户端'} 已确认断开，并从本端移除。`
+              clearTimeout(oauthRefreshTimer)
+              oauthRefreshTimer = setTimeout(() => loadOAuthManagement().catch(e => { oauthManagementError.value = e.message }), 120)
             }
           }
         }
@@ -793,7 +826,7 @@ onMounted(async () => {
   } catch {}
   authReady.value = true
 })
-onUnmounted(() => { window.removeEventListener('keydown', onKey); window.removeEventListener('click', closeActionMenusOnOutsideClick); window.removeEventListener('resize', updateNarrowReader); document.removeEventListener('visibilitychange', onShareVisibilityChange); systemThemeQuery.removeEventListener('change', updateSystemTheme); authChannel?.close(); streamAbort?.abort(); clearTimeout(refreshTimer); clearTimeout(copyFeedbackTimer); clearTimeout(shareExpiryTimer); document.body.style.overflow = previousBodyOverflow; document.body.style.paddingRight = previousBodyPaddingRight })
+onUnmounted(() => { window.removeEventListener('keydown', onKey); window.removeEventListener('click', closeActionMenusOnOutsideClick); window.removeEventListener('resize', updateNarrowReader); document.removeEventListener('visibilitychange', onShareVisibilityChange); systemThemeQuery.removeEventListener('change', updateSystemTheme); authChannel?.close(); streamAbort?.abort(); clearTimeout(refreshTimer); clearTimeout(oauthRefreshTimer); clearTimeout(copyFeedbackTimer); clearTimeout(shareExpiryTimer); document.body.style.overflow = previousBodyOverflow; document.body.style.paddingRight = previousBodyPaddingRight })
 
 function trapReaderFocus(event) {
   const focusable = [...readerDialog.value.querySelectorAll('a[href], button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])')]
@@ -842,7 +875,10 @@ function trapReaderFocus(event) {
     <div v-if="copyFeedback" class="copy-feedback-toast" :class="`copy-feedback-toast--${copyFeedback.kind}`" role="status" aria-live="polite" aria-atomic="true">
       <span class="copy-feedback-icon" aria-hidden="true">{{ copyFeedback.kind === 'warning' ? '!' : '✓' }}</span>{{ copyFeedback.message }}
     </div>
-    <header class="topbar">
+    <TopicWorkspace v-if="!legacyWorkspace" :refresh-key="topicRefreshKey" :theme-mode="effectiveTheme" @expired="expireSession" @connect="openMCPAccess" @rest="openPrompt" @legacy="legacyWorkspace = true" @notifications="enableNotifications" @logout="logout" @theme="themeMode = effectiveTheme === 'dark' ? 'light' : 'dark'" @share="shareTopicReport" @delete="deleteReport" />
+    <div v-if="!legacyWorkspace && error" class="error-banner" role="alert">{{ error }}<button aria-label="关闭错误" @click="error = ''">×</button></div>
+    <button v-if="legacyWorkspace" class="secondary-button" @click="legacyWorkspace = false; closeReader()">← 返回主题空间</button>
+    <header v-if="legacyWorkspace" class="topbar">
       <a class="wordmark" href="#" @click.prevent="closeReader(); clearSearch()"><span class="brand-mark small"><img src="/brand/bolt-dock.svg" alt=""></span><span>Bolt <b>Dock</b></span></a>
       <form class="search-box" @submit.prevent="runSearch()">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5"/></svg>
@@ -879,7 +915,7 @@ function trapReaderFocus(event) {
     </header>
 
     <div v-if="notificationState" class="toast">{{ notificationState }}</div>
-    <div class="content-area">
+    <div v-if="legacyWorkspace" class="content-area">
       <section class="main-column">
         <div class="page-heading">
           <div><p class="eyebrow">{{ source ? source.toUpperCase() + ' · REPORTS' : 'YOUR SOURCES · LIVE' }}</p><h1>{{ searching ? '搜索结果' : '报告工作台' }}<span class="heading-count">{{ activeCount }}</span></h1></div>
@@ -950,7 +986,7 @@ function trapReaderFocus(event) {
         </div>
       </section>
     </div>
-    <footer class="app-footer"><span>BOLT DOCK <i>·</i> PERSONAL REPORT SPACE</span><span>数据只保存在你的服务端 <b>↗</b></span></footer>
+    <footer v-if="legacyWorkspace" class="app-footer"><span>BOLT DOCK <i>·</i> PERSONAL REPORT SPACE</span><span>数据只保存在你的服务端 <b>↗</b></span></footer>
     <div v-if="promptOpen" class="modal-scrim" @click.self="promptOpen = false">
       <section class="prompt-modal" role="dialog" aria-modal="true" aria-labelledby="prompt-title">
         <header class="modal-heading"><div><p class="eyebrow">REST API · REPORT DELIVERY</p><h2 id="prompt-title">REST API 推送指令</h2></div><button class="icon-button" aria-label="关闭 REST API 推送指令" @click="promptOpen = false">×</button></header>
@@ -1001,6 +1037,7 @@ function trapReaderFocus(event) {
         <section v-if="mcpCapabilities?.oauth_enabled" class="mcp-access-section" aria-labelledby="oauth-owner-heading">
           <div class="mcp-section-heading"><h3 id="oauth-owner-heading">OAuth 客户端与授权</h3><span class="mcp-protocol-badge">PKCE · 独立凭据</span></div>
           <p class="mcp-field-help">可预登记客户端 ID 和精确回调 URI，也可让支持 CIMD 的公开客户端提交元数据地址。若客户端元数据地址无法被服务器直接访问，可在此手动固定其 HTTPS Client ID 与回调 URI；必须逐字匹配客户端请求。机密客户端的 Client Secret 仅在创建或轮换时显示一次；OAuth 默认无刷新令牌，Token 有效期 15 分钟，授权最长 30 天。</p>
+          <p class="mcp-field-help">独立 OAuth 客户端支持定向删除握手；访问令牌过期后可重新授权并完成握手。共享 Bearer Token 无法区分具体对接方，不能单独通知或删除。要管理单个客户端，请让它使用独立 OAuth 授权。</p>
           <form class="oauth-client-form" @submit.prevent="createOAuthClient">
             <label>客户端名称<input v-model="oauthClientName" maxlength="120" required autocomplete="off"></label>
             <label>客户端 ID（可选）<input v-model="oauthClientID" maxlength="2048" autocomplete="off" spellcheck="false" placeholder="留空自动生成；或填 https://grok.com/oauth/mcp-client.json"></label>
@@ -1011,7 +1048,7 @@ function trapReaderFocus(event) {
           <p v-if="oauthManagementError" class="form-error" role="alert">{{ oauthManagementError }}</p>
           <p v-if="oauthManagementNotice" class="oauth-management-notice" role="status" aria-live="polite">{{ oauthManagementNotice }}</p>
           <div v-if="oauthCreatedClient" class="oauth-created-client" role="status"><strong>{{ oauthCreatedClient.notice || '客户端已登记' }}：{{ oauthCreatedClient.client_id }}</strong><p v-if="oauthCreatedClient.client_secret">Client Secret（只显示本次）：<code>{{ oauthCreatedClient.client_secret }}</code> <button class="secondary-button" @click="copyOAuthClientSecret">复制 Secret</button></p><p v-else>此客户端为公开客户端，不签发 Client Secret。</p></div>
-          <ul v-if="oauthClients.length" class="oauth-managed-list"><li v-for="client in oauthClients" :key="client.client_id"><div><strong>{{ client.client_name }}</strong><code>{{ client.client_id }}</code><small v-if="client.registration_type === 'cimd'">Client ID Metadata Document（公开客户端）</small><small v-else>管理员预注册客户端</small><small>{{ client.redirect_uris.join(' · ') }}</small><small v-if="client.disabled_at">已停用 · 启用后需重新授权</small></div><button v-if="!client.disabled_at && client.confidential" class="text-button" @click="rotateOAuthClientSecret(client)">轮换 Secret</button><button v-if="!client.disabled_at" class="text-button" @click="disableOAuthClient(client)">停用</button><button v-else class="text-button" :disabled="oauthManagementBusy" @click="enableOAuthClient(client)">启用</button></li></ul>
+          <ul v-if="oauthClients.length" class="oauth-managed-list"><li v-for="client in oauthClients" :key="client.client_id"><div><strong>{{ client.client_name }}</strong><code>{{ client.client_id }}</code><small v-if="client.registration_type === 'cimd'">Client ID Metadata Document（公开客户端）</small><small v-else>管理员预注册客户端</small><small>{{ client.redirect_uris.join(' · ') }}</small><small v-if="client.disconnect_requested_at">删除通知已登记，等待对接方下次连接确认（版本 {{ client.disconnect_revision }}）</small><small v-else-if="client.disabled_at">已停用 · 启用后需重新授权</small></div><button v-if="!client.disabled_at && !client.disconnect_requested_at && client.confidential" class="text-button" @click="rotateOAuthClientSecret(client)">轮换 Secret</button><button v-if="!client.disabled_at && !client.disconnect_requested_at" class="text-button" @click="requestOAuthClientDeletion(client)">请求删除并通知</button><button v-if="client.disconnect_requested_at" class="text-button danger-button" :disabled="oauthManagementBusy" @click="forceDeleteOAuthClient(client)">强制删除…</button><button v-if="client.disabled_at && !client.disconnect_requested_at" class="text-button" :disabled="oauthManagementBusy" @click="enableOAuthClient(client)">启用</button></li></ul>
           <h4>已授权记录</h4>
           <ul v-if="oauthGrants.length" class="oauth-managed-list"><li v-for="grant in oauthGrants" :key="grant.id"><div><strong>{{ grant.client_name }} <small>授权 #{{ grant.id }}</small></strong><small>{{ grant.scopes.join(' · ') }} · {{ grant.resource }}</small><small>{{ grant.revoked_at ? '已撤销' : `有效期至 ${grant.expires_at}` }}</small></div><button v-if="!grant.revoked_at" class="text-button" @click="revokeOAuthGrant(grant)">撤销</button></li></ul>
           <p v-else class="mcp-field-help">目前没有 OAuth 授权记录。</p>

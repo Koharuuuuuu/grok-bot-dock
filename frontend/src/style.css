@@ -57,7 +57,7 @@ html{scrollbar-gutter:stable}
 .font-tools{display:flex;align-items:center;gap:4px;color:#777e73;font-family:'DM Mono',monospace;font-size:13px;white-space:nowrap}
 
 .mcp-access-modal{display:flex;flex-direction:column;gap:16px;width:min(780px,100%);max-height:calc(100dvh - 40px);overflow:auto}
-.mcp-access-modal .modal-heading{position:sticky;top:-1px;z-index:1;padding:2px 0 9px;background:#fff}
+.mcp-access-modal .modal-heading{padding:2px 0 9px;background:#fff}
 .mcp-access-modal .modal-intro{margin:0;line-height:1.55}
 .mcp-access-modal h3{margin:0;font-size:15px}
 .mcp-access-section{display:flex;flex-direction:column;gap:9px;padding:13px 0;border-top:1px solid #e8ebe3}
@@ -89,6 +89,31 @@ html{scrollbar-gutter:stable}
 @keyframes copyfeedbackin{from{opacity:0;transform:translate(-50%,-5px)}to{opacity:1;transform:translate(-50%,0)}}
 @media(max-width:540px){.mcp-access-modal{max-height:calc(100dvh - 24px);gap:13px}.mcp-address-editor{grid-template-columns:1fr auto}.mcp-address-editor input{grid-column:1/-1}.mcp-address-editor .text-button{grid-column:1/-1;justify-self:start}.mcp-service-url{align-items:stretch;flex-direction:column}.mcp-service-url .primary-button{align-self:flex-start}.mcp-section-heading{align-items:flex-start}.mcp-security-note{padding:11px}}
 @media(max-width:360px){.mcp-access-modal{padding:17px 13px 13px}.mcp-address-editor{grid-template-columns:1fr}.mcp-address-editor input,.mcp-address-editor .text-button{grid-column:auto}.mcp-section-heading{flex-wrap:wrap}.mcp-section-heading .secondary-button{width:100%}.mcp-service-url .primary-button{width:100%}}
+:root[data-theme="dark"] .modal-scrim{background:#080d0acc;backdrop-filter:blur(8px)}
+:root[data-theme="dark"] .prompt-modal.mcp-access-modal{border-color:#354238;background:#171e19;color:#e4e9df;box-shadow:0 24px 90px #0009}
+:root[data-theme="dark"] .mcp-access-modal .modal-heading{background:#171e19}
+:root[data-theme="dark"] .mcp-access-modal .modal-intro,:root[data-theme="dark"] .mcp-access-modal .mcp-field-help,:root[data-theme="dark"] .mcp-access-modal .mcp-connection-steps,:root[data-theme="dark"] .mcp-access-modal .mcp-troubleshooting ul,:root[data-theme="dark"] .mcp-access-modal .mcp-managed-list small{color:#abb6aa}
+:root[data-theme="dark"] .mcp-access-section{border-top-color:#303c32}
+:root[data-theme="dark"] .mcp-protocol-badge,:root[data-theme="dark"] .mcp-tool-title>span{border-color:#46553d;background:#293425;color:#c8dda8}
+:root[data-theme="dark"] .mcp-address-editor input,:root[data-theme="dark"] .oauth-client-form input:not([type=checkbox]),:root[data-theme="dark"] .oauth-client-form textarea,:root[data-theme="dark"] .mcp-copy-fallback-field{border-color:#3a473c;background:#101612;color:#e4e9df;color-scheme:dark}
+:root[data-theme="dark"] .secondary-button,:root[data-theme="dark"] .mcp-access-button{border-color:#3b493d;background:#222d24;color:#d1dfc4}
+:root[data-theme="dark"] .secondary-button:hover,:root[data-theme="dark"] .mcp-access-button:hover{border-color:#60744f;background:#2b392c}
+:root[data-theme="dark"] .text-button{color:#bac7b5}
+:root[data-theme="dark"] .mcp-service-url,:root[data-theme="dark"] .mcp-tool-list li,:root[data-theme="dark"] .oauth-client-form,:root[data-theme="dark"] .oauth-managed-list li,:root[data-theme="dark"] .mcp-client-example{border-color:#354238;background:#1c251e}
+:root[data-theme="dark"] .mcp-service-url code,:root[data-theme="dark"] .mcp-tool-example code,:root[data-theme="dark"] .mcp-client-config{background:#111813;color:#cfddc3}
+:root[data-theme="dark"] .mcp-local-warning,:root[data-theme="dark"] .mcp-capability-error{border-color:#5a4d34;background:#2b271d;color:#d8c49a}
+:root[data-theme="dark"] .mcp-security-note{border-color:#524634;background:#24231d}
+:root[data-theme="dark"] .mcp-security-note h3{color:#dfc691}
+:root[data-theme="dark"] .mcp-security-note p{color:#c1baaa}
+:root[data-theme="dark"] .oauth-client-form>label,:root[data-theme="dark"] .mcp-address-label,:root[data-theme="dark"] .mcp-field-label{color:#bbc5b8}
+:root[data-theme="dark"] .oauth-created-client,:root[data-theme="dark"] .oauth-management-notice{border-color:#46553d;background:#242f23;color:#cbddb9}
+:root[data-theme="dark"] .oauth-managed-list code,:root[data-theme="dark"] .oauth-managed-list small{color:#aebaaa}
+:root[data-theme="dark"] .mcp-copy-fallback{color:#d8c49a}
+:root[data-theme="dark"] .text-button.danger-button{color:#e2a5a0}
+:root[data-theme="dark"] .text-button.danger-button:hover{background:#392726}
+:root[data-theme="dark"] .mcp-access-modal code{overflow-wrap:anywhere}
+.text-button.danger-button{color:#9c4f46}
+.text-button.danger-button:hover{background:#faece9}
 .font-tools .icon-button{width:28px;height:29px;font-size:14px}.font-tools .icon-button:disabled{opacity:.38;cursor:not-allowed}
 .font-reset{border:1px solid #e2e4dd;border-radius:7px;background:#fff;color:#70776b;padding:6px 7px;font-size:13px;white-space:nowrap;cursor:pointer}.font-reset:disabled{opacity:.5;cursor:not-allowed}
 .advanced-toggle{border:0;background:transparent;color:#60714f;padding:0;font-size:13px;text-decoration:underline;text-underline-offset:3px;cursor:pointer;margin-bottom:12px}

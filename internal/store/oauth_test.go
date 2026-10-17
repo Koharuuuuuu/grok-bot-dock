@@ -424,3 +424,36 @@ func TestSQLiteWriteWaitsForContextWhenBusyAndRecovers(t *testing.T) {
 		t.Fatalf("store did not recover after SQLite writer lock released: %v", err)
 	}
 }
+
+func TestOAuthClientDisconnectRequestIsIdempotentAndAcknowledgmentDeletesRegistration(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(filepath.Join(t.TempDir(), "disconnect.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err = db.RegisterOAuthClient(ctx, "disconnect-client", "Disconnect Client", []string{"https://client.example/callback"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	revision, err := db.RequestOAuthClientDeletion(ctx, "disconnect-client")
+	if err != nil || revision != 1 {
+		t.Fatalf("request deletion revision=%d err=%v", revision, err)
+	}
+	client, err := db.OAuthClient(ctx, "disconnect-client")
+	if err != nil || client.DisconnectRevision != revision || client.DisconnectRequestedAt == "" {
+		t.Fatalf("pending client state=%#v err=%v", client, err)
+	}
+	retry, err := db.RequestOAuthClientDeletion(ctx, "disconnect-client")
+	if err != nil || retry != revision {
+		t.Fatalf("retry changed active request revision=%d err=%v", retry, err)
+	}
+	if err = db.AcknowledgeOAuthClientDeletion(ctx, "disconnect-client", revision+1); !errors.Is(err, ErrOAuthDisconnectRevision) {
+		t.Fatalf("stale acknowledgment err=%v", err)
+	}
+	if err = db.AcknowledgeOAuthClientDeletion(ctx, "disconnect-client", revision); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.OAuthClient(ctx, "disconnect-client"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("acknowledged client remains: %v", err)
+	}
+}

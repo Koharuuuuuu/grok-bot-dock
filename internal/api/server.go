@@ -67,6 +67,10 @@ func New(s *store.Store, h *events.Hub, token string, maxBytes int64, static emb
 func NewWithOAuth(s *store.Store, h *events.Hub, token string, maxBytes int64, static embed.FS, oauth OAuthConfig) *Server {
 	return &Server{store: s, hub: h, token: token, maxBytes: maxBytes, static: static, rate: make(map[string]rateWindow), sessions: make(map[string]time.Time), streams: make(map[string]map[chan struct{}]struct{}), oauth: oauth, consents: make(map[string]pendingConsent), cimdCache: make(map[string]cimdCacheEntry), cimdFetch: make(chan struct{}, 8), fetchCIMD: fetchCIMDMetadata}
 }
+
+// ShutdownStreams closes active SSE subscriptions so HTTP graceful shutdown can finish.
+func (s *Server) ShutdownStreams() { s.hub.Close() }
+
 func (s *Server) Handler() http.Handler {
 	s.shareCleanupOnce.Do(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -287,6 +291,8 @@ func sameOrigin(r *http.Request) bool {
 }
 func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	switch {
+	case r.URL.Path == "/api/v1/topics" || strings.HasPrefix(r.URL.Path, "/api/v1/topics/"):
+		s.topicsAPI(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/logout":
 		w.Header().Set("Cache-Control", "no-store")
 		if id, _ := r.Context().Value(sessionContextKey{}).(string); id != "" {
@@ -386,10 +392,12 @@ func (s *Server) createReport(w http.ResponseWriter, r *http.Request) {
 	if duplicate {
 		status = 200
 	}
-	writeJSON(w, status, map[string]any{"report_id": report.ID, "source": report.Source, "bot_id": report.BotID, "duplicate": duplicate})
+	writeJSON(w, status, map[string]any{"report_id": report.ID, "source": report.Source, "bot_id": report.BotID, "topic_id": report.TopicID, "duplicate": duplicate})
 }
 
 type reportRequest struct {
+	TopicID      string   `json:"topic_id"`
+	TopicName    string   `json:"topic_name"`
 	Source       string   `json:"source"`
 	BotID        string   `json:"bot_id"`
 	BotName      string   `json:"bot_name"`
@@ -422,6 +430,11 @@ func writeValidationError(w http.ResponseWriter, err error) {
 }
 
 func normalizeReportRequest(raw reportRequest) (store.ReportInput, error) {
+	raw.TopicID = strings.TrimSpace(raw.TopicID)
+	raw.TopicName = strings.TrimSpace(raw.TopicName)
+	if (raw.TopicID != "" && !topicIDPattern.MatchString(raw.TopicID)) || len(raw.TopicName) > 256 {
+		return store.ReportInput{}, &apiError{status: 400, code: "invalid_topic", message: "topic_id must be a stable URL-safe identifier (1-128 bytes); topic_name is limited to 256 bytes"}
+	}
 	raw.Source = strings.TrimSpace(raw.Source)
 	if raw.Source == "" {
 		raw.Source = "unknown"
@@ -478,13 +491,16 @@ func normalizeReportRequest(raw reportRequest) (store.ReportInput, error) {
 	if raw.Summary == "" {
 		raw.Summary = firstText(raw.Content, 280)
 	}
-	in := store.ReportInput{Source: raw.Source, BotID: raw.BotID, BotName: raw.BotName, ExecutedAt: at, Title: raw.Title, Summary: raw.Summary, Tags: raw.Tags, ExternalID: raw.ExternalID, AvatarURL: raw.AvatarURL, Content: raw.Content}
+	in := store.ReportInput{TopicID: raw.TopicID, TopicName: raw.TopicName, Source: raw.Source, BotID: raw.BotID, BotName: raw.BotName, ExecutedAt: at, Title: raw.Title, Summary: raw.Summary, Tags: raw.Tags, ExternalID: raw.ExternalID, AvatarURL: raw.AvatarURL, Content: raw.Content}
 	return in, nil
 }
 
 func (s *Server) publishReport(ctx context.Context, in store.ReportInput) (store.Report, bool, error) {
 	report, duplicate, err := s.store.CreateReport(ctx, in)
 	if err != nil {
+		if errors.Is(err, store.ErrTopicConflict) || errors.Is(err, store.ErrTopicStopped) {
+			return store.Report{}, false, &apiError{status: 409, code: "topic_unavailable", message: err.Error()}
+		}
 		return store.Report{}, false, err
 	}
 	if !duplicate {
@@ -705,7 +721,16 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid_date", "to must be an ISO date (YYYY-MM-DD)")
 		return
 	}
-	p, e := s.store.Search(r.Context(), term, q.Get("source"), q.Get("bot_id"), from, to, q.Get("cursor"), queryInt(q.Get("limit"), 20))
+	tab := q.Get("topic_tab")
+	if tab != "" && tab != "all" && tab != "follow" && tab != "updates" && tab != "archived" {
+		writeError(w, 400, "invalid_query", "invalid topic_tab")
+		return
+	}
+	if len(q.Get("topic_group")) > 128 {
+		writeError(w, 400, "invalid_query", "topic_group too long")
+		return
+	}
+	p, e := s.store.SearchScoped(r.Context(), term, q.Get("source"), q.Get("bot_id"), from, to, q.Get("cursor"), queryInt(q.Get("limit"), 20), store.TopicSearchScope{Tab: tab, Group: q.Get("topic_group")})
 	if e != nil {
 		serverError(w, e)
 		return

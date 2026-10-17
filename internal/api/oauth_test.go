@@ -964,7 +964,7 @@ func TestOAuthPrincipalPermissionMatrixAcrossMCPTools(t *testing.T) {
 			}
 			defer session.Close()
 			listed, err := session.ListTools(ctx, nil)
-			if err != nil || len(listed.Tools) != 2 {
+			if err != nil || len(listed.Tools) != 4 {
 				t.Fatalf("tools/list=%#v err=%v", listed, err)
 			}
 			searched, searchErr := session.CallTool(ctx, &mcp.CallToolParams{Name: "search_reports", Arguments: map[string]any{"query": "oauth matrix searchable marker"}})
@@ -988,6 +988,14 @@ func TestOAuthPrincipalPermissionMatrixAcrossMCPTools(t *testing.T) {
 				t.Fatal("read-only token published a report")
 			} else if recorder.status != http.StatusForbidden || !strings.Contains(recorder.header.Get("WWW-Authenticate"), `error="insufficient_scope"`) || !strings.Contains(recorder.header.Get("WWW-Authenticate"), oauthWriteScope) {
 				t.Fatalf("write denial status=%d challenge=%q err=%v", recorder.status, recorder.header.Get("WWW-Authenticate"), publishErr)
+			}
+			synced, syncErr := session.CallTool(ctx, &mcp.CallToolParams{Name: "sync_topic_state", Arguments: map[string]any{"source": "matrix", "bot_id": strings.ReplaceAll(principal.name, " ", "-")}})
+			if principal.canPublish {
+				if syncErr != nil || synced.IsError {
+					t.Fatalf("allowed lifecycle sync: result=%#v err=%v", synced, syncErr)
+				}
+			} else if recorder.status != http.StatusForbidden || !strings.Contains(recorder.header.Get("WWW-Authenticate"), oauthWriteScope) {
+				t.Fatalf("read-only lifecycle sync allowed: status=%d result=%#v err=%v", recorder.status, synced, syncErr)
 			}
 		})
 	}
